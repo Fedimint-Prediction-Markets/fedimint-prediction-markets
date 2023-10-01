@@ -1,12 +1,15 @@
 use std::fmt;
+use std::hash::Hash;
 
-use config::DummyClientConfig;
+use bitcoin_hashes::sha256;
+use config::OddsMarketsClientConfig;
 use fedimint_core::core::{Decoder, ModuleInstanceId, ModuleKind};
+use fedimint_core::db::DatabaseValue;
 use fedimint_core::encoding::{Decodable, Encodable};
-use fedimint_core::epoch::SerdeSignatureShare;
 use fedimint_core::module::{CommonModuleInit, ModuleCommon, ModuleConsensusVersion};
-use fedimint_core::{plugin_types_trait_impl_common, Amount};
-use secp256k1::{KeyPair, Secp256k1, XOnlyPublicKey};
+use fedimint_core::{plugin_types_trait_impl_common, Amount, OutPoint};
+use secp256k1::schnorr::Signature;
+use secp256k1::{Message, Secp256k1, XOnlyPublicKey};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -16,109 +19,141 @@ use thiserror::Error;
 pub mod config;
 
 /// Unique name for this module
-pub const KIND: ModuleKind = ModuleKind::from_static_str("dummy");
+pub const KIND: ModuleKind = ModuleKind::from_static_str("odds-markets");
 
 /// Modules are non-compatible with older versions
 pub const CONSENSUS_VERSION: ModuleConsensusVersion = ModuleConsensusVersion(0);
 
 /// Non-transaction items that will be submitted to consensus
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize, Encodable, Decodable)]
-pub enum DummyConsensusItem {
-    /// User's message sign request signed by a single peer
-    Sign(String, SerdeSignatureShare),
-}
+pub enum OddsMarketsConsensusItem {}
 
 /// Input for a fedimint transaction
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Deserialize, Serialize, Encodable, Decodable)]
-pub struct DummyInput {
-    pub amount: Amount,
-    /// Associate the input with a user's pubkey
-    pub account: XOnlyPublicKey,
+pub enum OddsMarketsInput {
+    ConsumeOrderFreeBalance(),
+    CancelOrder(),
 }
 
 /// Output for a fedimint transaction
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Deserialize, Serialize, Encodable, Decodable)]
-pub struct DummyOutput {
-    pub amount: Amount,
-    /// Associate the output with a user's pubkey
-    pub account: XOnlyPublicKey,
+pub enum OddsMarketsOutput {
+    NewMarket(Market),
+    PayoutMarket(Payout, Signature),
+    NewOrder(),
 }
 
 /// Information needed by a client to update output funds
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Deserialize, Serialize, Encodable, Decodable)]
-pub struct DummyOutputOutcome(pub Amount, pub XOnlyPublicKey);
+pub enum OddsMarketsOutputOutcome {
+    NewMarket,
+    EndMarket,
+    NewOrder(),
+}
 
 /// Errors that might be returned by the server
 // TODO: Move to server lib?
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Error)]
-pub enum DummyError {
+pub enum OddsMarketsError {
     #[error("Not enough funds")]
     NotEnoughFunds,
+
+    #[error("New market does not pass server validation")]
+    FailedNewMarketValidation,
+
+    #[error("The market does not exist")]
+    MarketDoesNotExist,
+
+    #[error("The payout failed validation")]
+    FailedPayoutValidation,
+
+    #[error("A payout already exists for this market")]
+    PayoutAlreadyExists,
 }
 
 /// Contains the types defined above
-pub struct DummyModuleTypes;
+pub struct OddsMarketsModuleTypes;
 
 // Wire together the types for this module
 plugin_types_trait_impl_common!(
-    DummyModuleTypes,
-    DummyClientConfig,
-    DummyInput,
-    DummyOutput,
-    DummyOutputOutcome,
-    DummyConsensusItem
+    OddsMarketsModuleTypes,
+    OddsMarketsClientConfig,
+    OddsMarketsInput,
+    OddsMarketsOutput,
+    OddsMarketsOutputOutcome,
+    OddsMarketsConsensusItem
 );
 
 #[derive(Debug)]
-pub struct DummyCommonGen;
+pub struct OddsMarketsCommonGen;
 
-impl CommonModuleInit for DummyCommonGen {
+impl CommonModuleInit for OddsMarketsCommonGen {
     const CONSENSUS_VERSION: ModuleConsensusVersion = CONSENSUS_VERSION;
     const KIND: ModuleKind = KIND;
 
-    type ClientConfig = DummyClientConfig;
+    type ClientConfig = OddsMarketsClientConfig;
 
     fn decoder() -> Decoder {
-        DummyModuleTypes::decoder_builder().build()
+        OddsMarketsModuleTypes::decoder_builder().build()
     }
 }
 
-impl fmt::Display for DummyClientConfig {
+impl fmt::Display for OddsMarketsClientConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "DummyClientConfig")
+        write!(f, "OddsMarketsClientConfig")
     }
 }
-impl fmt::Display for DummyInput {
+impl fmt::Display for OddsMarketsInput {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "DummyInput {}", self.amount)
+        write!(f, "OddsMarketsInput")
     }
 }
 
-impl fmt::Display for DummyOutput {
+impl fmt::Display for OddsMarketsOutput {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "DummyOutput {}", self.amount)
+        write!(f, "OddsMarketsOutput")
     }
 }
 
-impl fmt::Display for DummyOutputOutcome {
+impl fmt::Display for OddsMarketsOutputOutcome {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "DummyOutputOutcome")
+        write!(f, "OddsMarketsOutputOutcome")
     }
 }
 
-impl fmt::Display for DummyConsensusItem {
+impl fmt::Display for OddsMarketsConsensusItem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "DummyConsensusItem")
+        write!(f, "OddsMarketsConsensusItem")
     }
 }
 
-/// A special key that creates assets for a test/example
-const FED_SECRET_PHRASE: &str = "Money printer go brrr...........";
-
-pub fn fed_public_key() -> XOnlyPublicKey {
-    fed_key_pair().x_only_public_key().0
+#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+pub struct Market {
+    pub contract_value: Amount,
+    pub outcome_control: XOnlyPublicKey,
+    pub description: MarketDescription,
 }
 
-pub fn fed_key_pair() -> KeyPair {
-    KeyPair::from_seckey_slice(&Secp256k1::new(), FED_SECRET_PHRASE.as_bytes()).expect("32 bytes")
+#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+pub struct MarketDescription {
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+pub struct Payout {
+    pub market: OutPoint,
+    pub positive_contract_payout: Amount,
+}
+
+impl Payout {
+    pub fn verify_schnorr(
+        &self,
+        pubkey: &XOnlyPublicKey,
+        sig: &Signature,
+    ) -> Result<(), secp256k1::Error> {
+        let secp256k1 = Secp256k1::new();
+        let msg = Message::from_hashed_data::<sha256::Hash>(self.to_bytes().as_slice());
+
+        secp256k1.verify_schnorr(sig, &msg, pubkey)
+    }
 }
