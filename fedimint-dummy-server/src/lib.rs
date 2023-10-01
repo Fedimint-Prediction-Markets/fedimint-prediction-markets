@@ -97,11 +97,7 @@ impl ServerModuleInit for OddsMarketsGen {
             .map(|&peer| {
                 let config = OddsMarketsConfig {
                     local: OddsMarketsConfigLocal {
-<<<<<<< HEAD
-                        example: "test".to_owned(),
-=======
                         examples: "test".to_owned(),
->>>>>>> 8e401a3 (feat: first commit)
                     },
                     private: OddsMarketsConfigPrivate {
                         example: "test".to_owned(),
@@ -126,11 +122,7 @@ impl ServerModuleInit for OddsMarketsGen {
 
         Ok(OddsMarketsConfig {
             local: OddsMarketsConfigLocal {
-<<<<<<< HEAD
-                example: "test".to_owned(),
-=======
                 examples: "test".to_owned(),
->>>>>>> 8e401a3 (feat: first commit)
             },
             private: OddsMarketsConfigPrivate {
                 example: "test".to_owned(),

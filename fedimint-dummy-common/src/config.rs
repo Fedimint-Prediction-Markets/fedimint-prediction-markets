@@ -52,11 +52,7 @@ pub struct OddsMarketsClientConfig {
 /// Locally unencrypted config unique to each member
 #[derive(Clone, Debug, Serialize, Deserialize, Decodable, Encodable)]
 pub struct OddsMarketsConfigLocal {
-<<<<<<< HEAD
-    pub example: String,
-=======
     pub examples: String,
->>>>>>> 8e401a3 (feat: first commit)
 }
 
 /// Will be the same for every federation member
