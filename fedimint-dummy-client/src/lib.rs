@@ -1,7 +1,8 @@
 use std::ffi;
+use std::str::FromStr;
 use std::sync::Arc;
 
-use common::Market;
+use common::{Market, MarketDescription};
 use fedimint_client::derivable_secret::DerivableSecret;
 use fedimint_client::module::init::ClientModuleInit;
 use fedimint_client::module::{ClientModule, IClientModule};
@@ -17,7 +18,7 @@ use fedimint_core::module::{
     TransactionItemAmount,
 };
 
-use fedimint_core::{apply, async_trait_maybe_send, Amount, OutPoint};
+use fedimint_core::{apply, async_trait_maybe_send, Amount, OutPoint, TransactionId};
 pub use fedimint_dummy_common as common;
 use fedimint_dummy_common::config::OddsMarketsClientConfig;
 use fedimint_dummy_common::{
@@ -27,6 +28,7 @@ use fedimint_dummy_common::{
 use secp256k1::{Secp256k1, XOnlyPublicKey};
 use states::OddsMarketsStateMachine;
 
+use crate::api::DummyFederationApi;
 use crate::db::DummyClientFundsKeyV0;
 
 pub mod api;
@@ -38,6 +40,9 @@ mod states;
 pub trait OddsMarketsClientExt {
     /// Create new market
     async fn create_market(&self, market: Market) -> anyhow::Result<OutPoint>;
+
+    /// Get Market
+    async fn get_market(&self, out_point: OutPoint) -> anyhow::Result<Market>;
 
     /// Payout market
     async fn payout_market(
@@ -70,8 +75,20 @@ impl OddsMarketsClientExt for Client {
             )
             .await?;
 
+        let tx_subscription = self.transaction_updates(op_id).await;
+        tx_subscription.await_tx_accepted(txid).await?;
+
         Ok(OutPoint { txid, out_idx: 0 })
     }
+
+    async fn get_market(&self, out_point: OutPoint) -> anyhow::Result<Market> {
+        let (_odds_markets, instance) = self.get_first_module::<OddsMarketsClientModule>(&KIND);
+
+        let market = instance.api.get_market(out_point).await?;
+
+        Ok(market)
+    }
+
     async fn payout_market(
         &self,
         _payout: XOnlyPublicKey,
@@ -147,7 +164,7 @@ impl ClientModule for OddsMarketsClientModule {
 
     async fn handle_cli_command(
         &self,
-        _client: &Client,
+        client: &Client,
         args: &[ffi::OsString],
     ) -> anyhow::Result<serde_json::Value> {
         if args.is_empty() {
@@ -159,6 +176,39 @@ impl ClientModule for OddsMarketsClientModule {
         let command = args[0].to_string_lossy();
 
         match command.as_ref() {
+            "create-market" => {
+                if args.len() != 2 {
+                    return Err(anyhow::format_err!(
+                        "`create-market` command expects 1 argument: <contract-value-msats>"
+                    ));
+                }
+
+                let secp = Secp256k1::new();
+                let key_pair = secp256k1::KeyPair::new(&secp, &mut rand::thread_rng());
+                let contract_value = Amount::from_str(&args[1].to_string_lossy())?;
+                let (public, _) = XOnlyPublicKey::from_keypair(&key_pair);
+
+                let market = Market {
+                    contract_value,
+                    outcome_control: public,
+                    description: MarketDescription {
+                        title: "test".to_owned(),
+                    },
+                };
+
+                Ok(serde_json::to_value(client.create_market(market).await?)?)
+            }
+
+            "get-market" => {
+                let Ok(txid) = TransactionId::from_str(&args[1].to_string_lossy()) else {
+                    return Err(anyhow::format_err!("Error getting transaction id"));
+                };
+
+                let out_point = OutPoint { txid, out_idx: 0 };
+
+                Ok(serde_json::to_value(client.get_market(out_point).await?)?)
+            }
+
             command => Err(anyhow::format_err!(
                 "Unknown command: {command}, supported commands: print-money"
             )),

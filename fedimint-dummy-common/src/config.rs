@@ -28,7 +28,7 @@ impl Default for OddsMarketsGenParams {
         Self {
             local: OddsMarketsGenParamsLocal {},
             consensus: OddsMarketsGenParamsConsensus {
-                new_market_fee: Amount::from_sats(0),
+                new_market_fee: Amount::from_sats(1),
                 max_contract_value: Amount::from_sats(100_000_000),
             },
         }
