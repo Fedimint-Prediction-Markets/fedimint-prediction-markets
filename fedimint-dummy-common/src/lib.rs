@@ -39,16 +39,23 @@ pub enum OddsMarketsInput {
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Deserialize, Serialize, Encodable, Decodable)]
 pub enum OddsMarketsOutput {
     NewMarket(Market),
+    NewOrder {
+        owner: XOnlyPublicKey,
+        market_outpoint: OutPoint,
+        outcome: u8,
+        side: Side,
+        price: Amount,
+        quantity: u64,
+    },
     PayoutMarket(Payout, Signature),
-    NewOrder(),
 }
 
 /// Information needed by a client to update output funds
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Deserialize, Serialize, Encodable, Decodable)]
 pub enum OddsMarketsOutputOutcome {
     NewMarket,
-    EndMarket,
-    NewOrder(),
+    NewOrder,
+    PayoutMarket,
 }
 
 /// Errors that might be returned by the server
@@ -63,6 +70,9 @@ pub enum OddsMarketsError {
 
     #[error("The market does not exist")]
     MarketDoesNotExist,
+
+    #[error("Order validation failed")]
+    FailedNewOrderValidation,
 
     #[error("The payout failed validation")]
     FailedPayoutValidation,
@@ -129,7 +139,9 @@ impl fmt::Display for OddsMarketsConsensusItem {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct Market {
-    pub contract_value: Amount,
+    pub contract_price: Amount,
+    pub outcomes: u8,
+
     pub outcome_control: XOnlyPublicKey,
     pub description: MarketDescription,
 }
@@ -140,9 +152,39 @@ pub struct MarketDescription {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+pub struct Order {
+    // static
+    pub owner: XOnlyPublicKey,
+    pub outcome: u8,
+    pub side: Side,
+    pub price: Amount,
+    pub time_priority: u64,
+
+    // mutated
+    pub quantity_remaining: u64,
+    pub quantity_balance: u64,
+    pub btc_balance: Amount,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+pub enum Side {
+    Buy,
+    Sell,
+}
+
+impl Into<rust_pie_ob::Side> for &Side {
+    fn into(self) -> rust_pie_ob::Side {
+        match self {
+            Side::Buy => rust_pie_ob::Side::Buy,
+            Side::Sell => rust_pie_ob::Side::Sell
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct Payout {
     pub market: OutPoint,
-    pub positive_contract_payout: Amount,
+    pub outcome_payouts: Vec<Amount>,
 }
 
 impl Payout {

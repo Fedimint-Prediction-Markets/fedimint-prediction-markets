@@ -28,6 +28,8 @@ fedimint-server = { workspace = true }
 tracing = "0.1.37"
 threshold_crypto = { workspace = true }
 tokio = { version = "1.26.0", features = ["sync"] }
-rust_ob = "2.2.1"
+rust_pie_ob = "0.3.0"
+rust_decimal = "1.32.0"
+
 
 

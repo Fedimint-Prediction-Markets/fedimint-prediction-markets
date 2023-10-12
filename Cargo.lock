@@ -1347,6 +1347,8 @@ dependencies = [
  "fedimint-core",
  "futures",
  "rand",
+ "rust_decimal",
+ "rust_pie_ob",
  "secp256k1",
  "serde",
  "strum",
@@ -1390,7 +1392,8 @@ dependencies = [
  "fedimint-server",
  "futures",
  "rand",
- "rust_ob",
+ "rust_decimal",
+ "rust_pie_ob",
  "secp256k1",
  "serde",
  "strum",
@@ -3929,11 +3932,21 @@ dependencies = [
 
 [[package]]
 name = "rust_ob"
-version = "2.2.1"
+version = "2.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f2ee91ded6a6f2537f452aed276659c06e024b2c848b3377e01f53ff4467d6d"
+checksum = "54375df417ddb7789a4af39870a0463860d27c6200ccbaf04adeca232e4cc263"
 dependencies = [
  "rust_decimal",
+]
+
+[[package]]
+name = "rust_pie_ob"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5768bc749b512d890227102a581eb7605da65bed6a6670b707a000fbb7bbef22"
+dependencies = [
+ "rust_decimal",
+ "rust_ob",
 ]
 
 [[package]]

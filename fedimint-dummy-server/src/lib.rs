@@ -6,14 +6,18 @@ use anyhow::bail;
 use async_trait::async_trait;
 
 use db::{
-    DbKeyPrefix, OddsMarketsMarketKey, OddsMarketsMarketPrefix, OddsMarketsOutPointKey,
-    OddsMarketsOutPointPrefix, OddsMarketsPayoutKey, OddsMarketsPayoutPrefix,
+    DbKeyPrefix, OddsMarketsMarketKey, OddsMarketsMarketPrefix, OddsMarketsNextOrderPriorityKey,
+    OddsMarketsNextOrderPriorityPrefix, OddsMarketsOrderKey, OddsMarketsOrderPrefixAll,
+    OddsMarketsOrderPrefixMarket, OddsMarketsOutcomeKey, OddsMarketsOutcomePrefix,
+    OddsMarketsPayoutKey, OddsMarketsPayoutPrefix,
 };
 use fedimint_core::config::{
     ConfigGenModuleParams, DkgResult, ServerModuleConfig, ServerModuleConsensusConfig,
     TypedServerModuleConfig, TypedServerModuleConsensusConfig,
 };
-use fedimint_core::db::{Database, DatabaseVersion, MigrationMap, ModuleDatabaseTransaction};
+use fedimint_core::db::{
+    AutocommitError, Database, DatabaseVersion, MigrationMap, ModuleDatabaseTransaction,
+};
 
 use fedimint_core::module::audit::Audit;
 use fedimint_core::module::{
@@ -28,14 +32,17 @@ pub use fedimint_dummy_common::config::{
     OddsMarketsClientConfig, OddsMarketsConfig, OddsMarketsConfigConsensus, OddsMarketsConfigLocal,
     OddsMarketsConfigPrivate, OddsMarketsGenParams,
 };
-use fedimint_dummy_common::{Market, Payout};
+use fedimint_dummy_common::{Market, MarketDescription, Order, Payout, Side};
 pub use fedimint_dummy_common::{
     OddsMarketsCommonGen, OddsMarketsConsensusItem, OddsMarketsError, OddsMarketsInput,
     OddsMarketsModuleTypes, OddsMarketsOutput, OddsMarketsOutputOutcome, CONSENSUS_VERSION, KIND,
 };
-use futures::StreamExt;
+use futures::{future, StreamExt};
 
+use rust_decimal::Decimal;
+use rust_pie_ob::PieOrderBook;
 use secp256k1::schnorr::Signature;
+use secp256k1::XOnlyPublicKey;
 
 use strum::IntoEnumIterator;
 
@@ -104,7 +111,9 @@ impl ServerModuleInit for OddsMarketsGen {
                     },
                     consensus: OddsMarketsConfigConsensus {
                         new_market_fee: params.consensus.new_market_fee,
+                        new_order_fee: params.consensus.new_order_fee,
                         max_contract_value: params.consensus.max_contract_value,
+                        max_order_quantity: params.consensus.max_order_quantity,
                     },
                 };
                 (peer, config.to_erased())
@@ -129,7 +138,9 @@ impl ServerModuleInit for OddsMarketsGen {
             },
             consensus: OddsMarketsConfigConsensus {
                 new_market_fee: params.consensus.new_market_fee,
+                new_order_fee: params.consensus.new_order_fee,
                 max_contract_value: params.consensus.max_contract_value,
+                max_order_quantity: params.consensus.max_order_quantity,
             },
         }
         .to_erased())
@@ -143,6 +154,7 @@ impl ServerModuleInit for OddsMarketsGen {
         let config = OddsMarketsConfigConsensus::from_erased(config)?;
         Ok(OddsMarketsClientConfig {
             new_market_fee: config.new_market_fee,
+            new_order_fee: config.new_order_fee,
         })
     }
 
@@ -171,10 +183,10 @@ impl ServerModuleInit for OddsMarketsGen {
 
         for table in filtered_prefixes {
             match table {
-                DbKeyPrefix::OutPoint => {
+                DbKeyPrefix::Outcome => {
                     push_db_pair_items!(
                         dbtx,
-                        OddsMarketsOutPointPrefix,
+                        OddsMarketsOutcomePrefix,
                         OddsMarketsOutPointKey,
                         OddsMarketsOutputOutcome,
                         items,
@@ -191,6 +203,16 @@ impl ServerModuleInit for OddsMarketsGen {
                         "Markets"
                     );
                 }
+                DbKeyPrefix::Order => {
+                    push_db_pair_items!(
+                        dbtx,
+                        OddsMarketsOrderPrefixAll,
+                        OddsMarketsOrderKey,
+                        Order,
+                        items,
+                        "Markets"
+                    );
+                }
                 DbKeyPrefix::Payout => {
                     push_db_pair_items!(
                         dbtx,
@@ -199,6 +221,16 @@ impl ServerModuleInit for OddsMarketsGen {
                         (Payout, Signature),
                         items,
                         "Payouts"
+                    );
+                }
+                DbKeyPrefix::NextOrderPriority => {
+                    push_db_pair_items!(
+                        dbtx,
+                        OddsMarketsNextOrderPriorityPrefix,
+                        OddsMarketsNextOrderPriorityKey,
+                        u64,
+                        items,
+                        "NextOrderPriority"
                     );
                 }
             }
@@ -212,6 +244,7 @@ impl ServerModuleInit for OddsMarketsGen {
 #[derive(Debug)]
 pub struct OddsMarkets {
     pub cfg: OddsMarketsConfig,
+
     /// Notifies us to propose an epoch
     pub propose_consensus: Notify,
 }
@@ -276,13 +309,13 @@ impl ServerModule for OddsMarkets {
         output: &'a OddsMarketsOutput,
         out_point: OutPoint,
     ) -> Result<TransactionItemAmount, ModuleError> {
-        let amount = Amount::ZERO;
+        let mut amount = Amount::ZERO;
         let mut fee = Amount::ZERO;
 
         match output {
             OddsMarketsOutput::NewMarket(market) => {
                 // verify market params
-                if market.contract_value > self.cfg.consensus.max_contract_value {
+                if market.contract_price > self.cfg.consensus.max_contract_value {
                     return Err(OddsMarketsError::FailedNewMarketValidation)
                         .into_module_error_other();
                 }
@@ -294,12 +327,173 @@ impl ServerModule for OddsMarkets {
                 dbtx.insert_new_entry(&OddsMarketsMarketKey { market: out_point }, market)
                     .await;
 
+                // save starting next order priority
+                dbtx.insert_new_entry(&OddsMarketsNextOrderPriorityKey { market: out_point }, &0)
+                    .await;
+
                 // save outcome status
                 dbtx.insert_new_entry(
-                    &OddsMarketsOutPointKey(out_point),
+                    &OddsMarketsOutcomeKey(out_point),
                     &OddsMarketsOutputOutcome::NewMarket,
                 )
                 .await;
+            }
+            OddsMarketsOutput::NewOrder {
+                owner,
+                market_outpoint,
+                outcome,
+                side,
+                price,
+                quantity,
+            } => {
+                // get market
+                let market = match dbtx
+                    .get_value(&OddsMarketsMarketKey {
+                        market: market_outpoint.to_owned(),
+                    })
+                    .await
+                {
+                    Some(m) => m,
+                    None => {
+                        return Err(OddsMarketsError::MarketDoesNotExist).into_module_error_other()
+                    }
+                };
+
+                // verify order params
+                if outcome >= &market.outcomes
+                    || price <= &Amount::ZERO
+                    || price >= &market.contract_price
+                    || quantity <= &self.cfg.consensus.max_order_quantity
+                {
+                    return Err(OddsMarketsError::FailedNewOrderValidation)
+                        .into_module_error_other();
+                }
+
+                // generate rust_pie_ob from market orders
+                let mut pie_order_book: PieOrderBook<OutPoint> = PieOrderBook::new(
+                    Decimal::from(market.contract_price.msats),
+                    market.outcomes.into(),
+                );
+
+                let mut market_existing_orders: Vec<_> = dbtx
+                    .find_by_prefix(&OddsMarketsOrderPrefixMarket {
+                        market: market_outpoint.to_owned(),
+                    })
+                    .await
+                    .filter(|order_entry| future::ready(order_entry.1.quantity_remaining != 0))
+                    .collect()
+                    .await;
+
+                market_existing_orders.sort_by(|order_entry1, order_entry2| {
+                    order_entry1
+                        .1
+                        .time_priority
+                        .cmp(&order_entry2.1.time_priority)
+                });
+
+                for (key, entry) in market_existing_orders {
+                    assert_eq!(
+                        pie_order_book
+                            .process_limit_order(
+                                key.order,
+                                usize::from(entry.outcome),
+                                side.into(),
+                                Decimal::from(entry.price.msats),
+                                Decimal::from(entry.quantity_remaining)
+                            )
+                            .unwrap()
+                            .len(),
+                        0
+                    );
+                }
+
+                // create order
+                let time_priority = {
+                    let p = dbtx
+                        .get_value(&OddsMarketsNextOrderPriorityKey {
+                            market: market_outpoint.to_owned(),
+                        })
+                        .await
+                        .expect("should always be Some");
+                    dbtx.insert_new_entry(
+                        &OddsMarketsNextOrderPriorityKey {
+                            market: market_outpoint.to_owned(),
+                        },
+                        &(p + 1),
+                    )
+                    .await;
+                    p
+                };
+
+                let order = Order {
+                    owner: owner.to_owned(),
+                    outcome: outcome.to_owned(),
+                    side: side.to_owned(),
+                    price: price.to_owned(),
+                    time_priority,
+                    quantity_remaining: quantity.to_owned(),
+                    quantity_balance: 0,
+                    btc_balance: Amount::ZERO,
+                };
+
+                // set amount and fee
+                if let Side::Buy = side {
+                    amount = order.price * order.quantity_remaining
+                }
+                fee = self.cfg.consensus.new_order_fee;
+
+                // save order
+                dbtx.insert_new_entry(
+                    &OddsMarketsOrderKey {
+                        market: market_outpoint.to_owned(),
+                        order: out_point.to_owned(),
+                    },
+                    &order,
+                )
+                .await;
+
+                // process order in orderbook
+                let order_match_vec = pie_order_book
+                    .process_limit_order(
+                        out_point,
+                        usize::from(order.outcome),
+                        (&order.side).into(),
+                        Decimal::from(order.price.msats),
+                        Decimal::from(order.quantity_remaining),
+                    )
+                    .expect("should never panic");
+
+                for order_match in order_match_vec {
+                    let mut order = dbtx
+                        .get_value(&OddsMarketsOrderKey {
+                            market: market_outpoint.to_owned(),
+                            order: order_match.order,
+                        })
+                        .await
+                        .expect("should always find order");
+
+                    let order_match_quantity: u64 =
+                        order_match.quantity.try_into().expect("should never fail");
+                    order.quantity_remaining -= order_match_quantity;
+                    if let Side::Buy = side {
+                        order.quantity_balance += order_match_quantity;
+                    }
+
+                    if let Side::Buy = side {
+                        order.btc_balance += order.price
+                            * order_match.quantity.try_into().expect("should never fail");
+                    }
+                    if order_match.cost.is_sign_positive() {
+                        order.btc_balance -= Amount::from_msats(
+                            order_match.cost.try_into().expect("should never fail"),
+                        )
+                    }
+                    if order_match.cost.is_sign_negative() {
+                        order.btc_balance += Amount::from_msats(
+                            (-order_match.cost).try_into().expect("should never fail"),
+                        )
+                    }
+                }
             }
             OddsMarketsOutput::PayoutMarket(payout, signature) => {
                 // check if payout already exists for market
@@ -326,8 +520,12 @@ impl ServerModule for OddsMarkets {
                 };
 
                 // validate payout parameters
-                if payout.positive_contract_payout < Amount::ZERO
-                    || payout.positive_contract_payout > market.contract_value
+                if payout
+                    .outcome_payouts
+                    .iter()
+                    .map(|a| a.to_owned())
+                    .sum::<Amount>()
+                    != market.contract_price
                 {
                     return Err(OddsMarketsError::FailedPayoutValidation).into_module_error_other();
                 }
@@ -347,9 +545,15 @@ impl ServerModule for OddsMarkets {
                     },
                     &(payout.to_owned(), signature.to_owned()),
                 )
-                .await
+                .await;
+
+                // save outcome status
+                dbtx.insert_new_entry(
+                    &OddsMarketsOutcomeKey(out_point),
+                    &OddsMarketsOutputOutcome::PayoutMarket,
+                )
+                .await;
             }
-            OddsMarketsOutput::NewOrder {} => {}
         }
 
         Ok(TransactionItemAmount { amount, fee })
@@ -360,7 +564,7 @@ impl ServerModule for OddsMarkets {
         dbtx: &mut ModuleDatabaseTransaction<'_>,
         out_point: OutPoint,
     ) -> Option<OddsMarketsOutputOutcome> {
-        dbtx.get_value(&OddsMarketsOutPointKey(out_point)).await
+        dbtx.get_value(&OddsMarketsOutcomeKey(out_point)).await
     }
 
     async fn audit(&self, _dbtx: &mut ModuleDatabaseTransaction<'_>, _audit: &mut Audit) {}
@@ -387,6 +591,18 @@ impl OddsMarkets {
         {
             Some(val) => return Ok(val),
             None => return Err(ApiError::not_found("market not found".into())),
+        };
+    }
+
+    async fn handle_get_order(
+        &self,
+        dbtx: &mut ModuleDatabaseTransaction<'_>,
+        market: OutPoint,
+        order: OutPoint,
+    ) -> Result<Order, ApiError> {
+        match dbtx.get_value(&OddsMarketsOrderKey { market, order }).await {
+            Some(val) => return Ok(val),
+            None => return Err(ApiError::not_found("order not found".into())),
         };
     }
 }

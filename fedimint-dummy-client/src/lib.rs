@@ -28,7 +28,7 @@ use fedimint_dummy_common::{
 use secp256k1::{Secp256k1, XOnlyPublicKey};
 use states::OddsMarketsStateMachine;
 
-use crate::api::DummyFederationApi;
+use crate::api::OddsMarketsFederationApi;
 use crate::db::DummyClientFundsKeyV0;
 
 pub mod api;
@@ -145,14 +145,17 @@ impl ClientModule for OddsMarketsClientModule {
         &self,
         output: &<Self::Common as ModuleCommon>::Output,
     ) -> TransactionItemAmount {
-        let amount = Amount::ZERO;
+        let mut amount = Amount::ZERO;
         let mut fee = Amount::ZERO;
 
         match output {
             OddsMarketsOutput::NewMarket(_) => {
                 fee = self.cfg.new_market_fee;
             }
-            OddsMarketsOutput::NewOrder() => {}
+            OddsMarketsOutput::NewOrder{market_outpoint, order} => {
+                amount = Amount::ZERO;
+                fee = self.cfg.new_order_fee;
+            }
             OddsMarketsOutput::PayoutMarket(_, _) => {}
         }
 
@@ -185,11 +188,12 @@ impl ClientModule for OddsMarketsClientModule {
 
                 let secp = Secp256k1::new();
                 let key_pair = secp256k1::KeyPair::new(&secp, &mut rand::thread_rng());
-                let contract_value = Amount::from_str(&args[1].to_string_lossy())?;
+                let contract_price = Amount::from_str(&args[1].to_string_lossy())?;
                 let (public, _) = XOnlyPublicKey::from_keypair(&key_pair);
 
                 let market = Market {
-                    contract_value,
+                    contract_price,
+                    outcomes: 2,
                     outcome_control: public,
                     description: MarketDescription {
                         title: "test".to_owned(),

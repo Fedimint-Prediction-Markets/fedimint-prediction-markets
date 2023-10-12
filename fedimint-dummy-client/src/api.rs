@@ -6,12 +6,12 @@ use fedimint_core::{apply, async_trait_maybe_send, OutPoint};
 use fedimint_dummy_common::Market;
 
 #[apply(async_trait_maybe_send!)]
-pub trait DummyFederationApi {
+pub trait OddsMarketsFederationApi {
     async fn get_market(&self, out_point: OutPoint) -> FederationResult<Market>;
 }
 
 #[apply(async_trait_maybe_send!)]
-impl<T: ?Sized> DummyFederationApi for T
+impl<T: ?Sized> OddsMarketsFederationApi for T
 where
     T: IModuleFederationApi + MaybeSend + MaybeSync + 'static,
 {

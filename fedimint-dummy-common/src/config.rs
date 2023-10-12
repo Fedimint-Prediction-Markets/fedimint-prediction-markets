@@ -20,7 +20,9 @@ pub struct OddsMarketsGenParamsLocal {}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OddsMarketsGenParamsConsensus {
     pub new_market_fee: Amount,
+    pub new_order_fee: Amount,
     pub max_contract_value: Amount,
+    pub max_order_quantity: u64,
 }
 
 impl Default for OddsMarketsGenParams {
@@ -28,8 +30,10 @@ impl Default for OddsMarketsGenParams {
         Self {
             local: OddsMarketsGenParamsLocal {},
             consensus: OddsMarketsGenParamsConsensus {
-                new_market_fee: Amount::from_sats(1),
+                new_market_fee: Amount::from_sats(100),
+                new_order_fee: Amount::from_sats(1),
                 max_contract_value: Amount::from_sats(100_000_000),
+                max_order_quantity: 1000000
             },
         }
     }
@@ -47,6 +51,7 @@ pub struct OddsMarketsConfig {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Encodable, Decodable, Hash)]
 pub struct OddsMarketsClientConfig {
     pub new_market_fee: Amount,
+    pub new_order_fee: Amount,
 }
 
 /// Locally unencrypted config unique to each member
@@ -59,7 +64,9 @@ pub struct OddsMarketsConfigLocal {
 #[derive(Clone, Debug, Serialize, Deserialize, Decodable, Encodable)]
 pub struct OddsMarketsConfigConsensus {
     pub new_market_fee: Amount,
+    pub new_order_fee: Amount,
     pub max_contract_value: Amount,
+    pub max_order_quantity: u64,
 }
 
 /// Will be encrypted and not shared such as private key material
