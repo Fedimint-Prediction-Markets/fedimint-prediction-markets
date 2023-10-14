@@ -8,7 +8,7 @@ async fn main() -> anyhow::Result<()> {
         .with_extra_module_inits_params(
             3,
             fedimint_dummy_server::KIND,
-            fedimint_dummy_server::OddsMarketsGenParams::default(),
+            fedimint_dummy_server::PredictionMarketsGenParams::default(),
         )
         .run()
         .await

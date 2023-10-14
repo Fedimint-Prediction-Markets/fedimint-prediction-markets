@@ -20,9 +20,9 @@ use fedimint_core::module::{
 
 use fedimint_core::{apply, async_trait_maybe_send, Amount, OutPoint, TransactionId};
 pub use fedimint_dummy_common as common;
-use fedimint_dummy_common::config::OddsMarketsClientConfig;
+use fedimint_dummy_common::config::PredictionMarketsClientConfig;
 use fedimint_dummy_common::{
-    OddsMarketsCommonGen, OddsMarketsInput, OddsMarketsModuleTypes, OddsMarketsOutput, KIND,
+    PredictionMarketsCommonGen, PredictionMarketsInput, PredictionMarketsModuleTypes, PredictionMarketsOutput, KIND,
 };
 
 use secp256k1::{Secp256k1, XOnlyPublicKey};
@@ -60,7 +60,7 @@ impl OddsMarketsClientExt for Client {
         let op_id = OperationId(rand::random());
 
         let output = ClientOutput {
-            output: OddsMarketsOutput::NewMarket(market),
+            output: PredictionMarketsOutput::NewMarket(market),
             state_machines: Arc::new(move |_, _| Vec::<OddsMarketsStateMachine>::new()),
         };
 
@@ -69,7 +69,7 @@ impl OddsMarketsClientExt for Client {
         let txid = self
             .finalize_and_submit_transaction(
                 op_id,
-                OddsMarketsCommonGen::KIND.as_str(),
+                PredictionMarketsCommonGen::KIND.as_str(),
                 out_point,
                 tx,
             )
@@ -100,7 +100,7 @@ impl OddsMarketsClientExt for Client {
 
 #[derive(Debug)]
 pub struct OddsMarketsClientModule {
-    cfg: OddsMarketsClientConfig,
+    cfg: PredictionMarketsClientConfig,
     key: KeyPair,
     notifier: ModuleNotifier<DynGlobalClientContext, OddsMarketsStateMachine>,
 }
@@ -116,7 +116,7 @@ impl Context for OddsMarketsClientContext {}
 
 #[apply(async_trait_maybe_send!)]
 impl ClientModule for OddsMarketsClientModule {
-    type Common = OddsMarketsModuleTypes;
+    type Common = PredictionMarketsModuleTypes;
     type ModuleStateMachineContext = OddsMarketsClientContext;
     type States = OddsMarketsStateMachine;
 
@@ -131,8 +131,8 @@ impl ClientModule for OddsMarketsClientModule {
         let fee = Amount::ZERO;
 
         match input {
-            OddsMarketsInput::CancelOrder() => {}
-            OddsMarketsInput::ConsumeOrderFreeBalance() => {}
+            PredictionMarketsInput::CancelOrder() => {}
+            PredictionMarketsInput::ConsumeOrderFreeBalance() => {}
         }
 
         TransactionItemAmount {
@@ -149,14 +149,14 @@ impl ClientModule for OddsMarketsClientModule {
         let mut fee = Amount::ZERO;
 
         match output {
-            OddsMarketsOutput::NewMarket(_) => {
+            PredictionMarketsOutput::NewMarket(_) => {
                 fee = self.cfg.new_market_fee;
             }
-            OddsMarketsOutput::NewOrder{market_outpoint, order} => {
+            PredictionMarketsOutput::NewOrder{market_outpoint, order} => {
                 amount = Amount::ZERO;
                 fee = self.cfg.new_order_fee;
             }
-            OddsMarketsOutput::PayoutMarket(_, _) => {}
+            PredictionMarketsOutput::PayoutMarket(_, _) => {}
         }
 
         TransactionItemAmount {
@@ -230,7 +230,7 @@ pub struct OddsMarketsClientGen;
 
 // TODO: Boilerplate-code
 impl ExtendsCommonModuleInit for OddsMarketsClientGen {
-    type Common = OddsMarketsCommonGen;
+    type Common = PredictionMarketsCommonGen;
 }
 
 /// Generates the client module
@@ -246,7 +246,7 @@ impl ClientModuleInit for OddsMarketsClientGen {
     async fn init(
         &self,
         _federation_id: FederationId,
-        cfg: OddsMarketsClientConfig,
+        cfg: PredictionMarketsClientConfig,
         _db: Database,
         _api_version: ApiVersion,
         module_root_secret: DerivableSecret,

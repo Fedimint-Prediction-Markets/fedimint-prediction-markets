@@ -8,7 +8,7 @@ use fedimint_core::core::{Decoder, IntoDynInstance, ModuleInstanceId};
 use fedimint_core::db::ModuleDatabaseTransaction;
 use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::{Amount, OutPoint, TransactionId};
-use fedimint_dummy_common::OddsMarketsOutputOutcome;
+use fedimint_dummy_common::PredictionMarketsOutputOutcome;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -101,7 +101,7 @@ async fn await_dummy_output_outcome(
 ) -> Result<(), DummyError> {
     global_context
         .api()
-        .await_output_outcome::<OddsMarketsOutputOutcome>(
+        .await_output_outcome::<PredictionMarketsOutputOutcome>(
             outpoint,
             Duration::from_millis(i32::MAX as u64),
             &module_decoder,

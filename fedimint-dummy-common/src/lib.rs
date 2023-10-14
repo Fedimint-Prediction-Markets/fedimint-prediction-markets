@@ -2,7 +2,7 @@ use std::fmt;
 use std::hash::Hash;
 
 use bitcoin_hashes::sha256;
-use config::OddsMarketsClientConfig;
+use config::PredictionMarketsClientConfig;
 use fedimint_core::core::{Decoder, ModuleInstanceId, ModuleKind};
 use fedimint_core::db::DatabaseValue;
 use fedimint_core::encoding::{Decodable, Encodable};
@@ -19,25 +19,27 @@ use thiserror::Error;
 pub mod config;
 
 /// Unique name for this module
-pub const KIND: ModuleKind = ModuleKind::from_static_str("odds-markets");
+pub const KIND: ModuleKind = ModuleKind::from_static_str("prediction-markets");
 
 /// Modules are non-compatible with older versions
 pub const CONSENSUS_VERSION: ModuleConsensusVersion = ModuleConsensusVersion(0);
 
 /// Non-transaction items that will be submitted to consensus
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize, Encodable, Decodable)]
-pub enum OddsMarketsConsensusItem {}
+pub enum PredictionMarketsConsensusItem {}
 
 /// Input for a fedimint transaction
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Deserialize, Serialize, Encodable, Decodable)]
-pub enum OddsMarketsInput {
+pub enum PredictionMarketsInput {
     ConsumeOrderFreeBalance(),
-    CancelOrder(),
+    CancelOrder {
+        order: OutPoint
+    },
 }
 
 /// Output for a fedimint transaction
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Deserialize, Serialize, Encodable, Decodable)]
-pub enum OddsMarketsOutput {
+pub enum PredictionMarketsOutput {
     NewMarket(Market),
     NewOrder {
         owner: XOnlyPublicKey,
@@ -52,7 +54,7 @@ pub enum OddsMarketsOutput {
 
 /// Information needed by a client to update output funds
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Deserialize, Serialize, Encodable, Decodable)]
-pub enum OddsMarketsOutputOutcome {
+pub enum PredictionMarketsOutputOutcome {
     NewMarket,
     NewOrder,
     PayoutMarket,
@@ -61,7 +63,7 @@ pub enum OddsMarketsOutputOutcome {
 /// Errors that might be returned by the server
 // TODO: Move to server lib?
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Error)]
-pub enum OddsMarketsError {
+pub enum PredictionMarketsError {
     #[error("Not enough funds")]
     NotEnoughFunds,
 
@@ -82,58 +84,58 @@ pub enum OddsMarketsError {
 }
 
 /// Contains the types defined above
-pub struct OddsMarketsModuleTypes;
+pub struct PredictionMarketsModuleTypes;
 
 // Wire together the types for this module
 plugin_types_trait_impl_common!(
-    OddsMarketsModuleTypes,
-    OddsMarketsClientConfig,
-    OddsMarketsInput,
-    OddsMarketsOutput,
-    OddsMarketsOutputOutcome,
-    OddsMarketsConsensusItem
+    PredictionMarketsModuleTypes,
+    PredictionMarketsClientConfig,
+    PredictionMarketsInput,
+    PredictionMarketsOutput,
+    PredictionMarketsOutputOutcome,
+    PredictionMarketsConsensusItem
 );
 
 #[derive(Debug)]
-pub struct OddsMarketsCommonGen;
+pub struct PredictionMarketsCommonGen;
 
-impl CommonModuleInit for OddsMarketsCommonGen {
+impl CommonModuleInit for PredictionMarketsCommonGen {
     const CONSENSUS_VERSION: ModuleConsensusVersion = CONSENSUS_VERSION;
     const KIND: ModuleKind = KIND;
 
-    type ClientConfig = OddsMarketsClientConfig;
+    type ClientConfig = PredictionMarketsClientConfig;
 
     fn decoder() -> Decoder {
-        OddsMarketsModuleTypes::decoder_builder().build()
+        PredictionMarketsModuleTypes::decoder_builder().build()
     }
 }
 
-impl fmt::Display for OddsMarketsClientConfig {
+impl fmt::Display for PredictionMarketsClientConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "OddsMarketsClientConfig")
+        write!(f, "PredictionMarketsClientConfig")
     }
 }
-impl fmt::Display for OddsMarketsInput {
+impl fmt::Display for PredictionMarketsInput {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "OddsMarketsInput")
-    }
-}
-
-impl fmt::Display for OddsMarketsOutput {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "OddsMarketsOutput")
+        write!(f, "PredictionMarketsInput")
     }
 }
 
-impl fmt::Display for OddsMarketsOutputOutcome {
+impl fmt::Display for PredictionMarketsOutput {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "OddsMarketsOutputOutcome")
+        write!(f, "PredictionMarketsOutput")
     }
 }
 
-impl fmt::Display for OddsMarketsConsensusItem {
+impl fmt::Display for PredictionMarketsOutputOutcome {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "OddsMarketsConsensusItem")
+        write!(f, "PredictionMarketsOutputOutcome")
+    }
+}
+
+impl fmt::Display for PredictionMarketsConsensusItem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "PredictionMarketsConsensusItem")
     }
 }
 
@@ -170,15 +172,6 @@ pub struct Order {
 pub enum Side {
     Buy,
     Sell,
-}
-
-impl Into<rust_pie_ob::Side> for &Side {
-    fn into(self) -> rust_pie_ob::Side {
-        match self {
-            Side::Buy => rust_pie_ob::Side::Buy,
-            Side::Sell => rust_pie_ob::Side::Sell
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]

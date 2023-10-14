@@ -29,13 +29,13 @@ use fedimint_core::server::DynServerModule;
 use fedimint_core::task::TaskGroup;
 use fedimint_core::{push_db_pair_items, Amount, OutPoint, PeerId, ServerModule};
 pub use fedimint_dummy_common::config::{
-    OddsMarketsClientConfig, OddsMarketsConfig, OddsMarketsConfigConsensus, OddsMarketsConfigLocal,
-    OddsMarketsConfigPrivate, OddsMarketsGenParams,
+    PredictionMarketsClientConfig, PredictionMarketsConfig, PredictionMarketsConfigConsensus, PredictionMarketsConfigLocal,
+    PredictionMarketsConfigPrivate, PredictionMarketsGenParams,
 };
 use fedimint_dummy_common::{Market, MarketDescription, Order, Payout, Side};
 pub use fedimint_dummy_common::{
-    OddsMarketsCommonGen, OddsMarketsConsensusItem, OddsMarketsError, OddsMarketsInput,
-    OddsMarketsModuleTypes, OddsMarketsOutput, OddsMarketsOutputOutcome, CONSENSUS_VERSION, KIND,
+    PredictionMarketsCommonGen, PredictionMarketsConsensusItem, PredictionMarketsError, PredictionMarketsInput,
+    PredictionMarketsModuleTypes, PredictionMarketsOutput, PredictionMarketsOutputOutcome, CONSENSUS_VERSION, KIND,
 };
 use futures::{future, StreamExt};
 
@@ -56,13 +56,13 @@ pub struct OddsMarketsGen;
 
 // TODO: Boilerplate-code
 impl ExtendsCommonModuleInit for OddsMarketsGen {
-    type Common = OddsMarketsCommonGen;
+    type Common = PredictionMarketsCommonGen;
 }
 
 /// Implementation of server module non-consensus functions
 #[async_trait]
 impl ServerModuleInit for OddsMarketsGen {
-    type Params = OddsMarketsGenParams;
+    type Params = PredictionMarketsGenParams;
     const DATABASE_VERSION: DatabaseVersion = DatabaseVersion(0);
 
     /// Returns the version of this module
@@ -102,14 +102,14 @@ impl ServerModuleInit for OddsMarketsGen {
         peers
             .iter()
             .map(|&peer| {
-                let config = OddsMarketsConfig {
-                    local: OddsMarketsConfigLocal {
+                let config = PredictionMarketsConfig {
+                    local: PredictionMarketsConfigLocal {
                         examples: "test".to_owned(),
                     },
-                    private: OddsMarketsConfigPrivate {
+                    private: PredictionMarketsConfigPrivate {
                         example: "test".to_owned(),
                     },
-                    consensus: OddsMarketsConfigConsensus {
+                    consensus: PredictionMarketsConfigConsensus {
                         new_market_fee: params.consensus.new_market_fee,
                         new_order_fee: params.consensus.new_order_fee,
                         max_contract_value: params.consensus.max_contract_value,
@@ -129,14 +129,14 @@ impl ServerModuleInit for OddsMarketsGen {
     ) -> DkgResult<ServerModuleConfig> {
         let params = self.parse_params(params).unwrap();
 
-        Ok(OddsMarketsConfig {
-            local: OddsMarketsConfigLocal {
+        Ok(PredictionMarketsConfig {
+            local: PredictionMarketsConfigLocal {
                 examples: "test".to_owned(),
             },
-            private: OddsMarketsConfigPrivate {
+            private: PredictionMarketsConfigPrivate {
                 example: "test".to_owned(),
             },
-            consensus: OddsMarketsConfigConsensus {
+            consensus: PredictionMarketsConfigConsensus {
                 new_market_fee: params.consensus.new_market_fee,
                 new_order_fee: params.consensus.new_order_fee,
                 max_contract_value: params.consensus.max_contract_value,
@@ -150,9 +150,9 @@ impl ServerModuleInit for OddsMarketsGen {
     fn get_client_config(
         &self,
         config: &ServerModuleConsensusConfig,
-    ) -> anyhow::Result<OddsMarketsClientConfig> {
-        let config = OddsMarketsConfigConsensus::from_erased(config)?;
-        Ok(OddsMarketsClientConfig {
+    ) -> anyhow::Result<PredictionMarketsClientConfig> {
+        let config = PredictionMarketsConfigConsensus::from_erased(config)?;
+        Ok(PredictionMarketsClientConfig {
             new_market_fee: config.new_market_fee,
             new_order_fee: config.new_order_fee,
         })
@@ -164,7 +164,7 @@ impl ServerModuleInit for OddsMarketsGen {
         _identity: &PeerId,
         config: ServerModuleConfig,
     ) -> anyhow::Result<()> {
-        let _config = config.to_typed::<OddsMarketsConfig>()?;
+        let _config = config.to_typed::<PredictionMarketsConfig>()?;
 
         Ok(())
     }
@@ -188,7 +188,7 @@ impl ServerModuleInit for OddsMarketsGen {
                         dbtx,
                         OddsMarketsOutcomePrefix,
                         OddsMarketsOutPointKey,
-                        OddsMarketsOutputOutcome,
+                        PredictionMarketsOutputOutcome,
                         items,
                         "Output Outcomes"
                     );
@@ -243,7 +243,7 @@ impl ServerModuleInit for OddsMarketsGen {
 /// Dummy module
 #[derive(Debug)]
 pub struct OddsMarkets {
-    pub cfg: OddsMarketsConfig,
+    pub cfg: PredictionMarketsConfig,
 
     /// Notifies us to propose an epoch
     pub propose_consensus: Notify,
@@ -253,7 +253,7 @@ pub struct OddsMarkets {
 #[async_trait]
 impl ServerModule for OddsMarkets {
     /// Define the consensus types
-    type Common = OddsMarketsModuleTypes;
+    type Common = PredictionMarketsModuleTypes;
     type Gen = OddsMarketsGen;
     type VerificationCache = OddsMarketsCache;
 
@@ -267,14 +267,14 @@ impl ServerModule for OddsMarkets {
     async fn consensus_proposal(
         &self,
         _dbtx: &mut ModuleDatabaseTransaction<'_>,
-    ) -> ConsensusProposal<OddsMarketsConsensusItem> {
+    ) -> ConsensusProposal<PredictionMarketsConsensusItem> {
         ConsensusProposal::new_auto_trigger(vec![])
     }
 
     async fn process_consensus_item<'a, 'b>(
         &'a self,
         _dbtx: &mut ModuleDatabaseTransaction<'b>,
-        _consensus_item: OddsMarketsConsensusItem,
+        _consensus_item: PredictionMarketsConsensusItem,
         _peer_id: PeerId,
     ) -> anyhow::Result<()> {
         bail!("currently no consensus items")
@@ -282,7 +282,7 @@ impl ServerModule for OddsMarkets {
 
     fn build_verification_cache<'a>(
         &'a self,
-        _inputs: impl Iterator<Item = &'a OddsMarketsInput> + Send,
+        _inputs: impl Iterator<Item = &'a PredictionMarketsInput> + Send,
     ) -> Self::VerificationCache {
         OddsMarketsCache
     }
@@ -290,7 +290,7 @@ impl ServerModule for OddsMarkets {
     async fn process_input<'a, 'b, 'c>(
         &'a self,
         _dbtx: &mut ModuleDatabaseTransaction<'c>,
-        _input: &'b OddsMarketsInput,
+        _input: &'b PredictionMarketsInput,
         _cache: &Self::VerificationCache,
     ) -> Result<InputMeta, ModuleError> {
         Ok(InputMeta {
@@ -306,17 +306,17 @@ impl ServerModule for OddsMarkets {
     async fn process_output<'a, 'b>(
         &'a self,
         dbtx: &mut ModuleDatabaseTransaction<'b>,
-        output: &'a OddsMarketsOutput,
+        output: &'a PredictionMarketsOutput,
         out_point: OutPoint,
     ) -> Result<TransactionItemAmount, ModuleError> {
         let mut amount = Amount::ZERO;
         let mut fee = Amount::ZERO;
 
         match output {
-            OddsMarketsOutput::NewMarket(market) => {
+            PredictionMarketsOutput::NewMarket(market) => {
                 // verify market params
                 if market.contract_price > self.cfg.consensus.max_contract_value {
-                    return Err(OddsMarketsError::FailedNewMarketValidation)
+                    return Err(PredictionMarketsError::FailedNewMarketValidation)
                         .into_module_error_other();
                 }
 
@@ -334,11 +334,11 @@ impl ServerModule for OddsMarkets {
                 // save outcome status
                 dbtx.insert_new_entry(
                     &OddsMarketsOutcomeKey(out_point),
-                    &OddsMarketsOutputOutcome::NewMarket,
+                    &PredictionMarketsOutputOutcome::NewMarket,
                 )
                 .await;
             }
-            OddsMarketsOutput::NewOrder {
+            PredictionMarketsOutput::NewOrder {
                 owner,
                 market_outpoint,
                 outcome,
@@ -355,7 +355,7 @@ impl ServerModule for OddsMarkets {
                 {
                     Some(m) => m,
                     None => {
-                        return Err(OddsMarketsError::MarketDoesNotExist).into_module_error_other()
+                        return Err(PredictionMarketsError::MarketDoesNotExist).into_module_error_other()
                     }
                 };
 
@@ -365,7 +365,7 @@ impl ServerModule for OddsMarkets {
                     || price >= &market.contract_price
                     || quantity <= &self.cfg.consensus.max_order_quantity
                 {
-                    return Err(OddsMarketsError::FailedNewOrderValidation)
+                    return Err(PredictionMarketsError::FailedNewOrderValidation)
                         .into_module_error_other();
                 }
 
@@ -495,7 +495,7 @@ impl ServerModule for OddsMarkets {
                     }
                 }
             }
-            OddsMarketsOutput::PayoutMarket(payout, signature) => {
+            PredictionMarketsOutput::PayoutMarket(payout, signature) => {
                 // check if payout already exists for market
                 if let Some(_) = dbtx
                     .get_value(&OddsMarketsPayoutKey {
@@ -503,7 +503,7 @@ impl ServerModule for OddsMarkets {
                     })
                     .await
                 {
-                    return Err(OddsMarketsError::PayoutAlreadyExists).into_module_error_other();
+                    return Err(PredictionMarketsError::PayoutAlreadyExists).into_module_error_other();
                 }
 
                 // get market
@@ -515,7 +515,7 @@ impl ServerModule for OddsMarkets {
                 {
                     Some(val) => val,
                     None => {
-                        return Err(OddsMarketsError::MarketDoesNotExist).into_module_error_other()
+                        return Err(PredictionMarketsError::MarketDoesNotExist).into_module_error_other()
                     }
                 };
 
@@ -527,12 +527,12 @@ impl ServerModule for OddsMarkets {
                     .sum::<Amount>()
                     != market.contract_price
                 {
-                    return Err(OddsMarketsError::FailedPayoutValidation).into_module_error_other();
+                    return Err(PredictionMarketsError::FailedPayoutValidation).into_module_error_other();
                 }
 
                 // validate payout signature
                 if let Err(_) = payout.verify_schnorr(&market.outcome_control, signature) {
-                    return Err(OddsMarketsError::FailedPayoutValidation).into_module_error_other();
+                    return Err(PredictionMarketsError::FailedPayoutValidation).into_module_error_other();
                 }
 
                 // process payout
@@ -550,7 +550,7 @@ impl ServerModule for OddsMarkets {
                 // save outcome status
                 dbtx.insert_new_entry(
                     &OddsMarketsOutcomeKey(out_point),
-                    &OddsMarketsOutputOutcome::PayoutMarket,
+                    &PredictionMarketsOutputOutcome::PayoutMarket,
                 )
                 .await;
             }
@@ -563,7 +563,7 @@ impl ServerModule for OddsMarkets {
         &self,
         dbtx: &mut ModuleDatabaseTransaction<'_>,
         out_point: OutPoint,
-    ) -> Option<OddsMarketsOutputOutcome> {
+    ) -> Option<PredictionMarketsOutputOutcome> {
         dbtx.get_value(&OddsMarketsOutcomeKey(out_point)).await
     }
 
@@ -615,7 +615,7 @@ impl fedimint_core::server::VerificationCache for OddsMarketsCache {}
 
 impl OddsMarkets {
     /// Create new module instance
-    pub fn new(cfg: OddsMarketsConfig) -> OddsMarkets {
+    pub fn new(cfg: PredictionMarketsConfig) -> OddsMarkets {
         OddsMarkets {
             cfg,
             propose_consensus: Notify::new(),

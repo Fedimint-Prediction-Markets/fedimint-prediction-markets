@@ -8,7 +8,7 @@ use secp256k1::schnorr::Signature;
 use serde::Serialize;
 use strum_macros::EnumIter;
 
-use crate::OddsMarketsOutputOutcome;
+use crate::PredictionMarketsOutputOutcome;
 
 /// Namespaces DB keys for this module
 #[repr(u8)]
@@ -36,7 +36,7 @@ pub struct OddsMarketsOutcomePrefix;
 
 impl_db_record!(
     key = OddsMarketsOutcomeKey,
-    value = OddsMarketsOutputOutcome,
+    value = PredictionMarketsOutputOutcome,
     db_prefix = DbKeyPrefix::Outcome,
 );
 
