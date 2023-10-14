@@ -8,18 +8,28 @@ use secp256k1::schnorr::Signature;
 use serde::Serialize;
 use strum_macros::EnumIter;
 
-use crate::PredictionMarketsOutputOutcome;
+use crate::{
+    PredictionMarketsOutput, PredictionMarketsOutput::NewMarket, PredictionMarketsOutput::NewOrder,
+    PredictionMarketsOutputOutcome,
+};
 
 /// Namespaces DB keys for this module
 #[repr(u8)]
 #[derive(Clone, EnumIter, Debug)]
 pub enum DbKeyPrefix {
+    /// [PredictionMarketsOutput] [OutPoint] to [PredictionMarketsOutputOutcome]
     Outcome = 0x01,
+
+    /// [NewMarket] [OutPoint] to [Market]
     Market = 0x02,
+
+    /// [NewOrder] [OutPoint] to [Order]
     Order = 0x03,
-    Payout = 0x04,
+
     NextOrderPriority = 0x05,
 }
+
+struct Test;
 
 impl std::fmt::Display for DbKeyPrefix {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -27,70 +37,53 @@ impl std::fmt::Display for DbKeyPrefix {
     }
 }
 
-/// Outcome information
+/// OutputToOutcomeStatus
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
-pub struct OddsMarketsOutcomeKey(pub OutPoint);
+pub struct OutputToOutcomeStatusKey(pub OutPoint);
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct OddsMarketsOutcomePrefix;
+pub struct OutputToOutcomeStatusPrefix;
 
 impl_db_record!(
-    key = OddsMarketsOutcomeKey,
+    key = OutputToOutcomeStatusKey,
     value = PredictionMarketsOutputOutcome,
     db_prefix = DbKeyPrefix::Outcome,
 );
 
 impl_db_lookup!(
-    key = OddsMarketsOutcomeKey,
-    query_prefix = OddsMarketsOutcomePrefix
+    key = OutputToOutcomeStatusKey,
+    query_prefix = OutputToOutcomeStatusPrefix
 );
 
-/// Market information
+/// Market
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
-pub struct OddsMarketsMarketKey {
-    pub market: OutPoint,
-}
+pub struct MarketKey(pub OutPoint);
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct OddsMarketsMarketPrefix;
+pub struct MarketPrefix;
 
 impl_db_record!(
-    key = OddsMarketsMarketKey,
+    key = MarketKey,
     value = Market,
     db_prefix = DbKeyPrefix::Market,
 );
 
-impl_db_lookup!(
-    key = OddsMarketsMarketKey,
-    query_prefix = OddsMarketsMarketPrefix
-);
+impl_db_lookup!(key = MarketKey, query_prefix = MarketPrefix);
 
-/// Order information
+/// Order
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
-pub struct OddsMarketsOrderKey {
-    pub market: OutPoint,
-    pub order: OutPoint,
-}
+pub struct OrderKey(pub OutPoint);
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct OddsMarketsOrderPrefixAll;
-
-#[derive(Debug, Encodable, Decodable)]
-pub struct OddsMarketsOrderPrefixMarket {
-    pub market: OutPoint,
-}
+pub struct OrderPrefix;
 
 impl_db_record!(
-    key = OddsMarketsOrderKey,
+    key = OrderKey,
     value = Order,
     db_prefix = DbKeyPrefix::Order,
 );
 
-impl_db_lookup!(
-    key = OddsMarketsOrderKey,
-    query_prefix = OddsMarketsOrderPrefixAll,
-    query_prefix = OddsMarketsOrderPrefixMarket
-);
+impl_db_lookup!(key = OrderKey, query_prefix = OrderPrefix,);
 
 // Payout information
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]

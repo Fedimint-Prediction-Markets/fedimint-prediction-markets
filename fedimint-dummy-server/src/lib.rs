@@ -6,9 +6,9 @@ use anyhow::bail;
 use async_trait::async_trait;
 
 use db::{
-    DbKeyPrefix, OddsMarketsMarketKey, OddsMarketsMarketPrefix, OddsMarketsNextOrderPriorityKey,
-    OddsMarketsNextOrderPriorityPrefix, OddsMarketsOrderKey, OddsMarketsOrderPrefixAll,
-    OddsMarketsOrderPrefixMarket, OddsMarketsOutcomeKey, OddsMarketsOutcomePrefix,
+    DbKeyPrefix, MarketKey, MarketPrefix, OddsMarketsNextOrderPriorityKey,
+    OddsMarketsNextOrderPriorityPrefix, OrderKey, OrderPrefix,
+    OddsMarketsOrderPrefixMarket, OutputToOutcomeStatusKey, OutputToOutcomeStatusPrefix,
     OddsMarketsPayoutKey, OddsMarketsPayoutPrefix,
 };
 use fedimint_core::config::{
@@ -39,8 +39,6 @@ pub use fedimint_dummy_common::{
 };
 use futures::{future, StreamExt};
 
-use rust_decimal::Decimal;
-use rust_pie_ob::PieOrderBook;
 use secp256k1::schnorr::Signature;
 use secp256k1::XOnlyPublicKey;
 
@@ -186,7 +184,7 @@ impl ServerModuleInit for OddsMarketsGen {
                 DbKeyPrefix::Outcome => {
                     push_db_pair_items!(
                         dbtx,
-                        OddsMarketsOutcomePrefix,
+                        OutputToOutcomeStatusPrefix,
                         OddsMarketsOutPointKey,
                         PredictionMarketsOutputOutcome,
                         items,
@@ -196,7 +194,7 @@ impl ServerModuleInit for OddsMarketsGen {
                 DbKeyPrefix::Market => {
                     push_db_pair_items!(
                         dbtx,
-                        OddsMarketsMarketPrefix,
+                        MarketPrefix,
                         OddsMarketsMarketKey,
                         Market,
                         items,
@@ -206,7 +204,7 @@ impl ServerModuleInit for OddsMarketsGen {
                 DbKeyPrefix::Order => {
                     push_db_pair_items!(
                         dbtx,
-                        OddsMarketsOrderPrefixAll,
+                        OrderPrefix,
                         OddsMarketsOrderKey,
                         Order,
                         items,
@@ -324,7 +322,7 @@ impl ServerModule for OddsMarkets {
                 fee = self.cfg.consensus.new_market_fee;
 
                 // save market
-                dbtx.insert_new_entry(&OddsMarketsMarketKey { market: out_point }, market)
+                dbtx.insert_new_entry(&MarketKey { market: out_point }, market)
                     .await;
 
                 // save starting next order priority
@@ -333,7 +331,7 @@ impl ServerModule for OddsMarkets {
 
                 // save outcome status
                 dbtx.insert_new_entry(
-                    &OddsMarketsOutcomeKey(out_point),
+                    &OutputToOutcomeStatusKey(out_point),
                     &PredictionMarketsOutputOutcome::NewMarket,
                 )
                 .await;
@@ -348,7 +346,7 @@ impl ServerModule for OddsMarkets {
             } => {
                 // get market
                 let market = match dbtx
-                    .get_value(&OddsMarketsMarketKey {
+                    .get_value(&MarketKey {
                         market: market_outpoint.to_owned(),
                     })
                     .await
@@ -380,7 +378,7 @@ impl ServerModule for OddsMarkets {
                         market: market_outpoint.to_owned(),
                     })
                     .await
-                    .filter(|order_entry| future::ready(order_entry.1.quantity_remaining != 0))
+                    .filter(|order_entry| future::ready(order_entry.1.quantity_waiting_for_match != 0))
                     .collect()
                     .await;
 
@@ -399,7 +397,7 @@ impl ServerModule for OddsMarkets {
                                 usize::from(entry.outcome),
                                 side.into(),
                                 Decimal::from(entry.price.msats),
-                                Decimal::from(entry.quantity_remaining)
+                                Decimal::from(entry.quantity_waiting_for_match)
                             )
                             .unwrap()
                             .len(),
@@ -431,20 +429,20 @@ impl ServerModule for OddsMarkets {
                     side: side.to_owned(),
                     price: price.to_owned(),
                     time_priority,
-                    quantity_remaining: quantity.to_owned(),
-                    quantity_balance: 0,
+                    quantity_waiting_for_match: quantity.to_owned(),
+                    contract_balance: 0,
                     btc_balance: Amount::ZERO,
                 };
 
                 // set amount and fee
                 if let Side::Buy = side {
-                    amount = order.price * order.quantity_remaining
+                    amount = order.price * order.quantity_waiting_for_match
                 }
                 fee = self.cfg.consensus.new_order_fee;
 
                 // save order
                 dbtx.insert_new_entry(
-                    &OddsMarketsOrderKey {
+                    &OrderKey {
                         market: market_outpoint.to_owned(),
                         order: out_point.to_owned(),
                     },
@@ -459,13 +457,13 @@ impl ServerModule for OddsMarkets {
                         usize::from(order.outcome),
                         (&order.side).into(),
                         Decimal::from(order.price.msats),
-                        Decimal::from(order.quantity_remaining),
+                        Decimal::from(order.quantity_waiting_for_match),
                     )
                     .expect("should never panic");
 
                 for order_match in order_match_vec {
                     let mut order = dbtx
-                        .get_value(&OddsMarketsOrderKey {
+                        .get_value(&OrderKey {
                             market: market_outpoint.to_owned(),
                             order: order_match.order,
                         })
@@ -474,9 +472,9 @@ impl ServerModule for OddsMarkets {
 
                     let order_match_quantity: u64 =
                         order_match.quantity.try_into().expect("should never fail");
-                    order.quantity_remaining -= order_match_quantity;
+                    order.quantity_waiting_for_match -= order_match_quantity;
                     if let Side::Buy = side {
-                        order.quantity_balance += order_match_quantity;
+                        order.contract_balance += order_match_quantity;
                     }
 
                     if let Side::Buy = side {
@@ -508,7 +506,7 @@ impl ServerModule for OddsMarkets {
 
                 // get market
                 let market = match dbtx
-                    .get_value(&OddsMarketsMarketKey {
+                    .get_value(&MarketKey {
                         market: payout.market,
                     })
                     .await
@@ -549,7 +547,7 @@ impl ServerModule for OddsMarkets {
 
                 // save outcome status
                 dbtx.insert_new_entry(
-                    &OddsMarketsOutcomeKey(out_point),
+                    &OutputToOutcomeStatusKey(out_point),
                     &PredictionMarketsOutputOutcome::PayoutMarket,
                 )
                 .await;
@@ -564,7 +562,7 @@ impl ServerModule for OddsMarkets {
         dbtx: &mut ModuleDatabaseTransaction<'_>,
         out_point: OutPoint,
     ) -> Option<PredictionMarketsOutputOutcome> {
-        dbtx.get_value(&OddsMarketsOutcomeKey(out_point)).await
+        dbtx.get_value(&OutputToOutcomeStatusKey(out_point)).await
     }
 
     async fn audit(&self, _dbtx: &mut ModuleDatabaseTransaction<'_>, _audit: &mut Audit) {}
@@ -586,7 +584,7 @@ impl OddsMarkets {
         out_point: OutPoint,
     ) -> Result<Market, ApiError> {
         match dbtx
-            .get_value(&OddsMarketsMarketKey { market: out_point })
+            .get_value(&MarketKey { market: out_point })
             .await
         {
             Some(val) => return Ok(val),
@@ -600,7 +598,7 @@ impl OddsMarkets {
         market: OutPoint,
         order: OutPoint,
     ) -> Result<Order, ApiError> {
-        match dbtx.get_value(&OddsMarketsOrderKey { market, order }).await {
+        match dbtx.get_value(&OrderKey { market, order }).await {
             Some(val) => return Ok(val),
             None => return Err(ApiError::not_found("order not found".into())),
         };

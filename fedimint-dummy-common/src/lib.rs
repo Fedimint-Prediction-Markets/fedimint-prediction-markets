@@ -32,9 +32,8 @@ pub enum PredictionMarketsConsensusItem {}
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Deserialize, Serialize, Encodable, Decodable)]
 pub enum PredictionMarketsInput {
     ConsumeOrderFreeBalance(),
-    CancelOrder {
-        order: OutPoint
-    },
+    CancelOrder(OutPoint),
+    PayoutMarket(Payout),
 }
 
 /// Output for a fedimint transaction
@@ -49,7 +48,6 @@ pub enum PredictionMarketsOutput {
         price: Amount,
         quantity: u64,
     },
-    PayoutMarket(Payout, Signature),
 }
 
 /// Information needed by a client to update output funds
@@ -57,7 +55,6 @@ pub enum PredictionMarketsOutput {
 pub enum PredictionMarketsOutputOutcome {
     NewMarket,
     NewOrder,
-    PayoutMarket,
 }
 
 /// Errors that might be returned by the server
@@ -142,10 +139,12 @@ impl fmt::Display for PredictionMarketsConsensusItem {
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct Market {
     pub contract_price: Amount,
-    pub outcomes: u8,
+    pub outcomes: OutcomeSize,
 
     pub outcome_control: XOnlyPublicKey,
     pub description: MarketDescription,
+
+    pub payout: Option<Payout>
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
@@ -157,16 +156,19 @@ pub struct MarketDescription {
 pub struct Order {
     // static
     pub owner: XOnlyPublicKey,
-    pub outcome: u8,
+    pub outcome: OutcomeSize,
     pub side: Side,
     pub price: Amount,
+    pub original_quantity: ContractAmount,
     pub time_priority: u64,
 
     // mutated
-    pub quantity_remaining: u64,
-    pub quantity_balance: u64,
+    pub quantity_waiting_for_match: ContractAmount,
+    pub contract_balance: ContractAmount,
     pub btc_balance: Amount,
 }
+
+pub type OutcomeSize = u8;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub enum Side {
@@ -175,20 +177,9 @@ pub enum Side {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+pub struct ContractAmount(pub u64);
+
+#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct Payout {
-    pub market: OutPoint,
     pub outcome_payouts: Vec<Amount>,
-}
-
-impl Payout {
-    pub fn verify_schnorr(
-        &self,
-        pubkey: &XOnlyPublicKey,
-        sig: &Signature,
-    ) -> Result<(), secp256k1::Error> {
-        let secp256k1 = Secp256k1::new();
-        let msg = Message::from_hashed_data::<sha256::Hash>(self.to_bytes().as_slice());
-
-        secp256k1.verify_schnorr(sig, &msg, pubkey)
-    }
 }
