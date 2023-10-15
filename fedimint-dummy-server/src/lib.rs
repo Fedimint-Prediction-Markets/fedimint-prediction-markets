@@ -5,6 +5,7 @@ use std::string::ToString;
 use anyhow::bail;
 use async_trait::async_trait;
 
+use db::DbKeyPrefix;
 use fedimint_core::config::{
     ConfigGenModuleParams, DkgResult, ServerModuleConfig, ServerModuleConsensusConfig,
     TypedServerModuleConfig, TypedServerModuleConsensusConfig,
@@ -26,7 +27,7 @@ pub use fedimint_dummy_common::config::{
     PredictionMarketsClientConfig, PredictionMarketsConfig, PredictionMarketsConfigConsensus, PredictionMarketsConfigLocal,
     PredictionMarketsConfigPrivate, PredictionMarketsGenParams,
 };
-use fedimint_dummy_common::{Market, MarketDescription, Order, Payout, Side};
+use fedimint_dummy_common::{Market, MarketDescription, Order, Payout, Side, TimePriority};
 pub use fedimint_dummy_common::{
     PredictionMarketsCommonGen, PredictionMarketsConsensusItem, PredictionMarketsError, PredictionMarketsInput,
     PredictionMarketsModuleTypes, PredictionMarketsOutput, PredictionMarketsOutputOutcome, CONSENSUS_VERSION, KIND,
@@ -178,51 +179,61 @@ impl ServerModuleInit for OddsMarketsGen {
                 DbKeyPrefix::Outcome => {
                     push_db_pair_items!(
                         dbtx,
-                        OutputToOutcomeStatusPrefix,
-                        OddsMarketsOutPointKey,
+                        db::OutcomePrefixAll,
+                        db::OutcomeKey,
                         PredictionMarketsOutputOutcome,
                         items,
-                        "Output Outcomes"
+                        "Output Outcome"
                     );
                 }
                 DbKeyPrefix::Market => {
                     push_db_pair_items!(
                         dbtx,
-                        MarketPrefix,
-                        OddsMarketsMarketKey,
+                        db::MarketPrefixAll,
+                        db::MarketKey,
                         Market,
                         items,
-                        "Markets"
+                        "Market"
                     );
                 }
                 DbKeyPrefix::Order => {
                     push_db_pair_items!(
                         dbtx,
-                        OrderPrefix,
-                        OddsMarketsOrderKey,
+                        db::OrderPrefixAll,
+                        db::OrderKey,
                         Order,
                         items,
-                        "Markets"
+                        "Order"
                     );
                 }
-                DbKeyPrefix::Payout => {
+                DbKeyPrefix::NextOrderTimePriority=> {
                     push_db_pair_items!(
                         dbtx,
-                        OddsMarketsPayoutPrefix,
-                        OddsMarketsPayoutKey,
-                        (Payout, Signature),
+                        db::NextOrderTimePriorityPrefixAll,
+                        db::NextOrderTimePriorityKey,
+                        TimePriority,
                         items,
-                        "Payouts"
+                        "NextOrderTimePriority"
                     );
                 }
-                DbKeyPrefix::NextOrderPriority => {
+                DbKeyPrefix::OrdersByMarket => {
                     push_db_pair_items!(
                         dbtx,
-                        OddsMarketsNextOrderPriorityPrefix,
-                        OddsMarketsNextOrderPriorityKey,
-                        u64,
+                        db::OrdersByMarketPrefixAll,
+                        db::OrdersByMarketKey,
+                        (),
                         items,
-                        "NextOrderPriority"
+                        "OrdersByMarket"
+                    );
+                }
+                DbKeyPrefix::OrderPriceTimePriority => {
+                    push_db_pair_items!(
+                        dbtx,
+                        db::OrderPriceTimePriorityPrefixAll,
+                        db::OrderPriceTimePriorityKey,
+                        OutPoint,
+                        items,
+                        "OrdersByMarket"
                     );
                 }
             }

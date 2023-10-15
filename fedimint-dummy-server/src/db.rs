@@ -61,7 +61,7 @@ impl std::fmt::Display for DbKeyPrefix {
 pub struct OutcomeKey(pub OutPoint);
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct OutcomePrefix;
+pub struct OutcomePrefixAll;
 
 impl_db_record!(
     key = OutcomeKey,
@@ -71,7 +71,7 @@ impl_db_record!(
 
 impl_db_lookup!(
     key = OutcomeKey,
-    query_prefix = OutcomePrefix
+    query_prefix = OutcomePrefixAll
 );
 
 /// Market
@@ -79,7 +79,7 @@ impl_db_lookup!(
 pub struct MarketKey(pub OutPoint);
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct MarketPrefix;
+pub struct MarketPrefixAll;
 
 impl_db_record!(
     key = MarketKey,
@@ -87,14 +87,14 @@ impl_db_record!(
     db_prefix = DbKeyPrefix::Market,
 );
 
-impl_db_lookup!(key = MarketKey, query_prefix = MarketPrefix);
+impl_db_lookup!(key = MarketKey, query_prefix = MarketPrefixAll);
 
 /// Order
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
 pub struct OrderKey(pub OutPoint);
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct OrderPrefix;
+pub struct OrderPrefixAll;
 
 impl_db_record!(
     key = OrderKey,
@@ -102,7 +102,7 @@ impl_db_record!(
     db_prefix = DbKeyPrefix::Order,
 );
 
-impl_db_lookup!(key = OrderKey, query_prefix = OrderPrefix,);
+impl_db_lookup!(key = OrderKey, query_prefix = OrderPrefixAll,);
 
 /// NextOrderTimePriority
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
@@ -111,7 +111,7 @@ pub struct NextOrderTimePriorityKey {
 }
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct NextOrderTimePriorityPrefix;
+pub struct NextOrderTimePriorityPrefixAll;
 
 impl_db_record!(
     key = NextOrderTimePriorityKey,
@@ -121,7 +121,7 @@ impl_db_record!(
 
 impl_db_lookup!(
     key = NextOrderTimePriorityKey,
-    query_prefix = NextOrderTimePriorityPrefix
+    query_prefix = NextOrderTimePriorityPrefixAll
 );
 
 /// OrdersByMarket
@@ -132,9 +132,12 @@ pub struct OrdersByMarketKey {
 }
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct OrdersByMarketPrefix {
+pub struct OrdersByMarketPrefix1 {
     pub market: OutPoint,
 }
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct OrdersByMarketPrefixAll;
 
 impl_db_record!(
     key = OrdersByMarketKey,
@@ -144,7 +147,8 @@ impl_db_record!(
 
 impl_db_lookup!(
     key = OrdersByMarketKey,
-    query_prefix = OrdersByMarketPrefix
+    query_prefix = OrdersByMarketPrefix1,
+    query_prefix = OrdersByMarketPrefixAll
 );
 
 /// OrderPriceTimePriority
@@ -158,11 +162,14 @@ pub struct OrderPriceTimePriorityKey {
 }
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct OrderPriceTimePriorityPrefix {
+pub struct OrderPriceTimePriorityPrefix3 {
     pub market: OutPoint,
     pub outcome: OutcomeSize,
     pub side: Side,
 }
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct OrderPriceTimePriorityPrefixAll;
 
 impl_db_record!(
     key = OrderPriceTimePriorityKey,
@@ -172,7 +179,8 @@ impl_db_record!(
 
 impl_db_lookup!(
     key = OrderPriceTimePriorityKey,
-    query_prefix = OrderPriceTimePriorityPrefix
+    query_prefix = OrderPriceTimePriorityPrefix3,
+    query_prefix = OrderPriceTimePriorityPrefixAll
 );
 
 // template
