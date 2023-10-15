@@ -28,7 +28,7 @@ pub enum PredictionMarketsConsensusItem {}
 /// Input for a fedimint transaction
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Deserialize, Serialize, Encodable, Decodable)]
 pub enum PredictionMarketsInput {
-    ConsumeOrderFreeBalance,
+    ConsumeOrderFreeBalance { order: OutPoint },
     CancelOrder { order: OutPoint },
     PayoutMarket { market: OutPoint, payout: Payout },
 }
@@ -44,11 +44,11 @@ pub enum PredictionMarketsOutput {
     },
     NewOrder {
         owner: XOnlyPublicKey,
-        market_outpoint: OutPoint,
+        market: OutPoint,
         outcome: OutcomeSize,
         side: Side,
         price: Amount,
-        quantity: u64,
+        quantity: ContractAmount,
     },
 }
 
@@ -183,7 +183,7 @@ pub enum Side {
     Sell,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ContractAmount(pub u64);
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]

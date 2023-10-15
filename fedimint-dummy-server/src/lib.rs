@@ -24,13 +24,16 @@ use fedimint_core::server::DynServerModule;
 use fedimint_core::task::TaskGroup;
 use fedimint_core::{push_db_pair_items, Amount, OutPoint, PeerId, ServerModule};
 pub use fedimint_dummy_common::config::{
-    PredictionMarketsClientConfig, PredictionMarketsConfig, PredictionMarketsConfigConsensus, PredictionMarketsConfigLocal,
-    PredictionMarketsConfigPrivate, PredictionMarketsGenParams,
+    PredictionMarketsClientConfig, PredictionMarketsConfig, PredictionMarketsConfigConsensus,
+    PredictionMarketsConfigLocal, PredictionMarketsConfigPrivate, PredictionMarketsGenParams,
 };
-use fedimint_dummy_common::{Market, MarketDescription, Order, Payout, Side, TimePriority};
+use fedimint_dummy_common::{
+    ContractAmount, Market, MarketDescription, Order, Payout, Side, TimePriority,
+};
 pub use fedimint_dummy_common::{
-    PredictionMarketsCommonGen, PredictionMarketsConsensusItem, PredictionMarketsError, PredictionMarketsInput,
-    PredictionMarketsModuleTypes, PredictionMarketsOutput, PredictionMarketsOutputOutcome, CONSENSUS_VERSION, KIND,
+    PredictionMarketsCommonGen, PredictionMarketsConsensusItem, PredictionMarketsError,
+    PredictionMarketsInput, PredictionMarketsModuleTypes, PredictionMarketsOutput,
+    PredictionMarketsOutputOutcome, CONSENSUS_VERSION, KIND,
 };
 use futures::{future, StreamExt};
 
@@ -45,16 +48,16 @@ mod db;
 
 /// Generates the module
 #[derive(Debug, Clone)]
-pub struct OddsMarketsGen;
+pub struct PredictionMarketsGen;
 
 // TODO: Boilerplate-code
-impl ExtendsCommonModuleInit for OddsMarketsGen {
+impl ExtendsCommonModuleInit for PredictionMarketsGen {
     type Common = PredictionMarketsCommonGen;
 }
 
 /// Implementation of server module non-consensus functions
 #[async_trait]
-impl ServerModuleInit for OddsMarketsGen {
+impl ServerModuleInit for PredictionMarketsGen {
     type Params = PredictionMarketsGenParams;
     const DATABASE_VERSION: DatabaseVersion = DatabaseVersion(0);
 
@@ -74,7 +77,7 @@ impl ServerModuleInit for OddsMarketsGen {
         _db: Database,
         _task_group: &mut TaskGroup,
     ) -> anyhow::Result<DynServerModule> {
-        Ok(OddsMarkets::new(cfg.to_typed()?).into())
+        Ok(PredictionMarkets::new(cfg.to_typed()?).into())
     }
 
     /// DB migrations to move from old to newer versions
@@ -206,7 +209,7 @@ impl ServerModuleInit for OddsMarketsGen {
                         "Order"
                     );
                 }
-                DbKeyPrefix::NextOrderTimePriority=> {
+                DbKeyPrefix::NextOrderTimePriority => {
                     push_db_pair_items!(
                         dbtx,
                         db::NextOrderTimePriorityPrefixAll,
@@ -245,7 +248,7 @@ impl ServerModuleInit for OddsMarketsGen {
 
 /// Dummy module
 #[derive(Debug)]
-pub struct OddsMarkets {
+pub struct PredictionMarkets {
     pub cfg: PredictionMarketsConfig,
 
     /// Notifies us to propose an epoch
@@ -254,11 +257,11 @@ pub struct OddsMarkets {
 
 /// Implementation of consensus for the server module
 #[async_trait]
-impl ServerModule for OddsMarkets {
+impl ServerModule for PredictionMarkets {
     /// Define the consensus types
     type Common = PredictionMarketsModuleTypes;
-    type Gen = OddsMarketsGen;
-    type VerificationCache = OddsMarketsCache;
+    type Gen = PredictionMarketsGen;
+    type VerificationCache = PredictionMarketsCache;
 
     async fn await_consensus_proposal(&self, dbtx: &mut ModuleDatabaseTransaction<'_>) {
         // Wait until we have a proposal
@@ -287,22 +290,29 @@ impl ServerModule for OddsMarkets {
         &'a self,
         _inputs: impl Iterator<Item = &'a PredictionMarketsInput> + Send,
     ) -> Self::VerificationCache {
-        OddsMarketsCache
+        PredictionMarketsCache
     }
 
     async fn process_input<'a, 'b, 'c>(
         &'a self,
-        _dbtx: &mut ModuleDatabaseTransaction<'c>,
-        _input: &'b PredictionMarketsInput,
+        dbtx: &mut ModuleDatabaseTransaction<'c>,
+        input: &'b PredictionMarketsInput,
         _cache: &Self::VerificationCache,
     ) -> Result<InputMeta, ModuleError> {
+        let mut amount = Amount::ZERO;
+        let mut fee = Amount::ZERO;
+        let mut pub_keys = vec![];
+
+        match input {
+            PredictionMarketsInput::ConsumeOrderFreeBalance { order } => {}
+            PredictionMarketsInput::CancelOrder { order } => {}
+            PredictionMarketsInput::PayoutMarket { market, payout } => {}
+        }
+
         Ok(InputMeta {
-            amount: TransactionItemAmount {
-                amount: Amount::ZERO,
-                fee: Amount::ZERO,
-            },
+            amount: TransactionItemAmount { amount, fee },
             // IMPORTANT: include the pubkey to validate the user signed this tx
-            pub_keys: vec![],
+            pub_keys,
         })
     }
 
@@ -316,34 +326,53 @@ impl ServerModule for OddsMarkets {
         let mut fee = Amount::ZERO;
 
         match output {
-            PredictionMarketsOutput::NewMarket(market) => {
+            PredictionMarketsOutput::NewMarket {
+                contract_price,
+                outcomes,
+                outcome_control,
+                description,
+            } => {
                 // verify market params
-                if market.contract_price > self.cfg.consensus.max_contract_value {
+                if contract_price > &self.cfg.consensus.max_contract_value {
                     return Err(PredictionMarketsError::FailedNewMarketValidation)
                         .into_module_error_other();
                 }
 
-                // set new market fee
-                fee = self.cfg.consensus.new_market_fee;
+                // --- init market ---
 
                 // save market
-                dbtx.insert_new_entry(&MarketKey { market: out_point }, market)
-                    .await;
-
-                // save starting next order priority
-                dbtx.insert_new_entry(&OddsMarketsNextOrderPriorityKey { market: out_point }, &0)
-                    .await;
-
-                // save outcome status
                 dbtx.insert_new_entry(
-                    &OutputToOutcomeStatusKey(out_point),
+                    &db::MarketKey(out_point),
+                    &Market {
+                        contract_price: contract_price.to_owned(),
+                        outcomes: outcomes.to_owned(),
+                        outcome_control: outcome_control.to_owned(),
+                        description: description.to_owned(),
+                        payout: None,
+                    },
+                )
+                .await;
+
+                // save starting next order time priority
+                dbtx.insert_new_entry(
+                    &db::NextOrderTimePriorityKey { market: out_point },
+                    &TimePriority(0),
+                )
+                .await;
+
+                // save outcome
+                dbtx.insert_new_entry(
+                    &db::OutcomeKey(out_point),
                     &PredictionMarketsOutputOutcome::NewMarket,
                 )
                 .await;
+
+                // set new market fee
+                fee = self.cfg.consensus.new_market_fee;
             }
             PredictionMarketsOutput::NewOrder {
                 owner,
-                market_outpoint,
+                market: market_out_point,
                 outcome,
                 side,
                 price,
@@ -351,14 +380,13 @@ impl ServerModule for OddsMarkets {
             } => {
                 // get market
                 let market = match dbtx
-                    .get_value(&MarketKey {
-                        market: market_outpoint.to_owned(),
-                    })
+                    .get_value(&db::MarketKey(market_out_point.to_owned()))
                     .await
                 {
                     Some(m) => m,
                     None => {
-                        return Err(PredictionMarketsError::MarketDoesNotExist).into_module_error_other()
+                        return Err(PredictionMarketsError::MarketDoesNotExist)
+                            .into_module_error_other()
                     }
                 };
 
@@ -372,88 +400,32 @@ impl ServerModule for OddsMarkets {
                         .into_module_error_other();
                 }
 
-                // generate rust_pie_ob from market orders
-                let mut pie_order_book: PieOrderBook<OutPoint> = PieOrderBook::new(
-                    Decimal::from(market.contract_price.msats),
-                    market.outcomes.into(),
-                );
-
-                let mut market_existing_orders: Vec<_> = dbtx
-                    .find_by_prefix(&OddsMarketsOrderPrefixMarket {
-                        market: market_outpoint.to_owned(),
-                    })
-                    .await
-                    .filter(|order_entry| future::ready(order_entry.1.quantity_waiting_for_match != 0))
-                    .collect()
-                    .await;
-
-                market_existing_orders.sort_by(|order_entry1, order_entry2| {
-                    order_entry1
-                        .1
-                        .time_priority
-                        .cmp(&order_entry2.1.time_priority)
-                });
-
-                for (key, entry) in market_existing_orders {
-                    assert_eq!(
-                        pie_order_book
-                            .process_limit_order(
-                                key.order,
-                                usize::from(entry.outcome),
-                                side.into(),
-                                Decimal::from(entry.price.msats),
-                                Decimal::from(entry.quantity_waiting_for_match)
-                            )
-                            .unwrap()
-                            .len(),
-                        0
-                    );
-                }
-
                 // create order
-                let time_priority = {
-                    let p = dbtx
-                        .get_value(&OddsMarketsNextOrderPriorityKey {
-                            market: market_outpoint.to_owned(),
-                        })
-                        .await
-                        .expect("should always be Some");
-                    dbtx.insert_new_entry(
-                        &OddsMarketsNextOrderPriorityKey {
-                            market: market_outpoint.to_owned(),
-                        },
-                        &(p + 1),
-                    )
-                    .await;
-                    p
-                };
-
                 let order = Order {
                     owner: owner.to_owned(),
                     outcome: outcome.to_owned(),
                     side: side.to_owned(),
                     price: price.to_owned(),
-                    time_priority,
+                    original_quantity: quantity.to_owned(),
+                    time_priority: Self::get_next_order_time_priority(
+                        dbtx,
+                        market_out_point.to_owned(),
+                    )
+                    .await,
                     quantity_waiting_for_match: quantity.to_owned(),
-                    contract_balance: 0,
+                    contract_balance: ContractAmount(0),
                     btc_balance: Amount::ZERO,
                 };
 
                 // set amount and fee
                 if let Side::Buy = side {
-                    amount = order.price * order.quantity_waiting_for_match
+                    amount = order.price * order.quantity_waiting_for_match.0
                 }
                 fee = self.cfg.consensus.new_order_fee;
 
                 // save order
-                dbtx.insert_new_entry(
-                    &OrderKey {
-                        market: market_outpoint.to_owned(),
-                        order: out_point.to_owned(),
-                    },
-                    &order,
-                )
-                .await;
+                dbtx.insert_new_entry(&db::OrderKey(out_point.to_owned()), &order)
+                    .await;
 
                 // process order in orderbook
                 let order_match_vec = pie_order_book
@@ -506,7 +478,8 @@ impl ServerModule for OddsMarkets {
                     })
                     .await
                 {
-                    return Err(PredictionMarketsError::PayoutAlreadyExists).into_module_error_other();
+                    return Err(PredictionMarketsError::PayoutAlreadyExists)
+                        .into_module_error_other();
                 }
 
                 // get market
@@ -518,7 +491,8 @@ impl ServerModule for OddsMarkets {
                 {
                     Some(val) => val,
                     None => {
-                        return Err(PredictionMarketsError::MarketDoesNotExist).into_module_error_other()
+                        return Err(PredictionMarketsError::MarketDoesNotExist)
+                            .into_module_error_other()
                     }
                 };
 
@@ -530,12 +504,14 @@ impl ServerModule for OddsMarkets {
                     .sum::<Amount>()
                     != market.contract_price
                 {
-                    return Err(PredictionMarketsError::FailedPayoutValidation).into_module_error_other();
+                    return Err(PredictionMarketsError::FailedPayoutValidation)
+                        .into_module_error_other();
                 }
 
                 // validate payout signature
                 if let Err(_) = payout.verify_schnorr(&market.outcome_control, signature) {
-                    return Err(PredictionMarketsError::FailedPayoutValidation).into_module_error_other();
+                    return Err(PredictionMarketsError::FailedPayoutValidation)
+                        .into_module_error_other();
                 }
 
                 // process payout
@@ -573,25 +549,30 @@ impl ServerModule for OddsMarkets {
     async fn audit(&self, _dbtx: &mut ModuleDatabaseTransaction<'_>, _audit: &mut Audit) {}
 
     fn api_endpoints(&self) -> Vec<ApiEndpoint<Self>> {
-        vec![api_endpoint! {
-            "get_market",
-            async |module: &OddsMarkets, context, out_point: OutPoint| -> Market {
-                module.handle_get_market(&mut context.dbtx(), out_point).await
-            }
-        }]
+        vec![
+            api_endpoint! {
+                "get_market",
+                async |module: &PredictionMarkets, context, out_point: OutPoint| -> Market {
+                    module.handle_get_market(&mut context.dbtx(), out_point).await
+                }
+            },
+            api_endpoint! {
+                "get_order",
+                async |module: &PredictionMarkets, context, out_point: OutPoint| -> Order {
+                    module.handle_get_order(&mut context.dbtx(), out_point).await
+                }
+            },
+        ]
     }
 }
 
-impl OddsMarkets {
+impl PredictionMarkets {
     async fn handle_get_market(
         &self,
         dbtx: &mut ModuleDatabaseTransaction<'_>,
-        out_point: OutPoint,
+        market: OutPoint,
     ) -> Result<Market, ApiError> {
-        match dbtx
-            .get_value(&MarketKey { market: out_point })
-            .await
-        {
+        match dbtx.get_value(&db::MarketKey(market)).await {
             Some(val) => return Ok(val),
             None => return Err(ApiError::not_found("market not found".into())),
         };
@@ -600,26 +581,44 @@ impl OddsMarkets {
     async fn handle_get_order(
         &self,
         dbtx: &mut ModuleDatabaseTransaction<'_>,
-        market: OutPoint,
         order: OutPoint,
     ) -> Result<Order, ApiError> {
-        match dbtx.get_value(&OrderKey { market, order }).await {
+        match dbtx.get_value(&db::OrderKey(order)).await {
             Some(val) => return Ok(val),
             None => return Err(ApiError::not_found("order not found".into())),
         };
+    }
+
+    async fn get_next_order_time_priority(
+        dbtx: &mut ModuleDatabaseTransaction<'_>,
+        market: OutPoint,
+    ) -> TimePriority {
+        let current = dbtx
+            .get_value(&db::NextOrderTimePriorityKey { market })
+            .await
+            .expect("should always produce value");
+
+        // increment
+        dbtx.insert_new_entry(
+            &db::NextOrderTimePriorityKey { market },
+            &TimePriority(current.0 + 1),
+        )
+        .await;
+
+        current
     }
 }
 
 /// An in-memory cache we could use for faster validation
 #[derive(Debug, Clone)]
-pub struct OddsMarketsCache;
+pub struct PredictionMarketsCache;
 
-impl fedimint_core::server::VerificationCache for OddsMarketsCache {}
+impl fedimint_core::server::VerificationCache for PredictionMarketsCache {}
 
-impl OddsMarkets {
+impl PredictionMarkets {
     /// Create new module instance
-    pub fn new(cfg: PredictionMarketsConfig) -> OddsMarkets {
-        OddsMarkets {
+    pub fn new(cfg: PredictionMarketsConfig) -> PredictionMarkets {
+        PredictionMarkets {
             cfg,
             propose_consensus: Notify::new(),
         }

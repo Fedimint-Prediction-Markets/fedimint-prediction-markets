@@ -4,7 +4,7 @@ use fedimintd::fedimintd::Fedimintd;
 async fn main() -> anyhow::Result<()> {
     Fedimintd::new()?
         .with_default_modules()
-        .with_module(fedimint_dummy_server::OddsMarketsGen)
+        .with_module(fedimint_dummy_server::PredictionMarketsGen)
         .with_extra_module_inits_params(
             3,
             fedimint_dummy_server::KIND,
