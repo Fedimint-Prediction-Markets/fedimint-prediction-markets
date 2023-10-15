@@ -1,15 +1,12 @@
 use std::fmt;
 use std::hash::Hash;
 
-use bitcoin_hashes::sha256;
 use config::PredictionMarketsClientConfig;
 use fedimint_core::core::{Decoder, ModuleInstanceId, ModuleKind};
-use fedimint_core::db::DatabaseValue;
 use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::module::{CommonModuleInit, ModuleCommon, ModuleConsensusVersion};
 use fedimint_core::{plugin_types_trait_impl_common, Amount, OutPoint};
-use secp256k1::schnorr::Signature;
-use secp256k1::{Message, Secp256k1, XOnlyPublicKey};
+use secp256k1::XOnlyPublicKey;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -31,19 +28,24 @@ pub enum PredictionMarketsConsensusItem {}
 /// Input for a fedimint transaction
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Deserialize, Serialize, Encodable, Decodable)]
 pub enum PredictionMarketsInput {
-    ConsumeOrderFreeBalance(),
-    CancelOrder(OutPoint),
-    PayoutMarket(Payout),
+    ConsumeOrderFreeBalance,
+    CancelOrder { order: OutPoint },
+    PayoutMarket { market: OutPoint, payout: Payout },
 }
 
 /// Output for a fedimint transaction
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Deserialize, Serialize, Encodable, Decodable)]
 pub enum PredictionMarketsOutput {
-    NewMarket(Market),
+    NewMarket {
+        contract_price: Amount,
+        outcomes: OutcomeSize,
+        outcome_control: XOnlyPublicKey,
+        description: MarketDescription,
+    },
     NewOrder {
         owner: XOnlyPublicKey,
         market_outpoint: OutPoint,
-        outcome: u8,
+        outcome: OutcomeSize,
         side: Side,
         price: Amount,
         quantity: u64,
@@ -144,12 +146,17 @@ pub struct Market {
     pub outcome_control: XOnlyPublicKey,
     pub description: MarketDescription,
 
-    pub payout: Option<Payout>
+    pub payout: Option<Payout>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct MarketDescription {
     pub title: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+pub struct Payout {
+    pub outcome_payouts: Vec<Amount>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
@@ -160,7 +167,7 @@ pub struct Order {
     pub side: Side,
     pub price: Amount,
     pub original_quantity: ContractAmount,
-    pub time_priority: u64,
+    pub time_priority: TimePriority,
 
     // mutated
     pub quantity_waiting_for_match: ContractAmount,
@@ -180,6 +187,4 @@ pub enum Side {
 pub struct ContractAmount(pub u64);
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
-pub struct Payout {
-    pub outcome_payouts: Vec<Amount>,
-}
+pub struct TimePriority(pub u64);

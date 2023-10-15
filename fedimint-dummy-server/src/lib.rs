@@ -5,12 +5,6 @@ use std::string::ToString;
 use anyhow::bail;
 use async_trait::async_trait;
 
-use db::{
-    DbKeyPrefix, MarketKey, MarketPrefix, OddsMarketsNextOrderPriorityKey,
-    OddsMarketsNextOrderPriorityPrefix, OrderKey, OrderPrefix,
-    OddsMarketsOrderPrefixMarket, OutputToOutcomeStatusKey, OutputToOutcomeStatusPrefix,
-    OddsMarketsPayoutKey, OddsMarketsPayoutPrefix,
-};
 use fedimint_core::config::{
     ConfigGenModuleParams, DkgResult, ServerModuleConfig, ServerModuleConsensusConfig,
     TypedServerModuleConfig, TypedServerModuleConsensusConfig,

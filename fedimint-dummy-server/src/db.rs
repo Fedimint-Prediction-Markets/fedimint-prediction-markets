@@ -1,13 +1,14 @@
 use fedimint_core::encoding::{Decodable, Encodable};
 
-use fedimint_core::{impl_db_lookup, impl_db_record, OutPoint};
-use fedimint_dummy_common::{Market, Order, Payout};
+use fedimint_core::{impl_db_lookup, impl_db_record, Amount, OutPoint};
 
-use secp256k1::schnorr::Signature;
+#[allow(unused_imports)]
+use fedimint_dummy_common::{Market, Order, OutcomeSize, Payout, Side, TimePriority};
 
 use serde::Serialize;
 use strum_macros::EnumIter;
 
+#[allow(unused_imports)]
 use crate::{
     PredictionMarketsOutput, PredictionMarketsOutput::NewMarket, PredictionMarketsOutput::NewOrder,
     PredictionMarketsOutputOutcome,
@@ -17,19 +18,37 @@ use crate::{
 #[repr(u8)]
 #[derive(Clone, EnumIter, Debug)]
 pub enum DbKeyPrefix {
+    /// ----- 00-1f reserved for struct storage -----
+
     /// [PredictionMarketsOutput] [OutPoint] to [PredictionMarketsOutputOutcome]
-    Outcome = 0x01,
+    Outcome = 0x00,
 
     /// [NewMarket] [OutPoint] to [Market]
-    Market = 0x02,
+    Market = 0x01,
 
     /// [NewOrder] [OutPoint] to [Order]
-    Order = 0x03,
+    Order = 0x02,
 
-    NextOrderPriority = 0x05,
+    /// ----- 20-3f reserved for market operation -----
+
+    /// Used to produce time priority for new orders
+    ///
+    /// Market's [OutPoint] to [TimePriority]
+    NextOrderTimePriority = 0x20,
+
+    /// Used for payouts
+    ///
+    /// (Market's [OutPoint], Order's [OutPoint]) to ()
+    OrdersByMarket = 0x21,
+
+    /// Used to implement orderbook. Only holds active orders.
+    ///
+    /// Amount is (contract_price - price of order) for buys
+    /// Amount is (price of order) for sells
+    ///
+    /// (Market's [OutPoint], [OutcomeSize], [Side], [Amount], [TimePriority]) to (Order's [OutPoint])
+    OrderPriceTimePriority = 0x22,
 }
-
-struct Test;
 
 impl std::fmt::Display for DbKeyPrefix {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -37,22 +56,22 @@ impl std::fmt::Display for DbKeyPrefix {
     }
 }
 
-/// OutputToOutcomeStatus
+/// Outcome
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
-pub struct OutputToOutcomeStatusKey(pub OutPoint);
+pub struct OutcomeKey(pub OutPoint);
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct OutputToOutcomeStatusPrefix;
+pub struct OutcomePrefix;
 
 impl_db_record!(
-    key = OutputToOutcomeStatusKey,
+    key = OutcomeKey,
     value = PredictionMarketsOutputOutcome,
     db_prefix = DbKeyPrefix::Outcome,
 );
 
 impl_db_lookup!(
-    key = OutputToOutcomeStatusKey,
-    query_prefix = OutputToOutcomeStatusPrefix
+    key = OutcomeKey,
+    query_prefix = OutcomePrefix
 );
 
 /// Market
@@ -85,42 +104,93 @@ impl_db_record!(
 
 impl_db_lookup!(key = OrderKey, query_prefix = OrderPrefix,);
 
-// Payout information
+/// NextOrderTimePriority
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
-pub struct OddsMarketsPayoutKey {
+pub struct NextOrderTimePriorityKey {
     pub market: OutPoint,
 }
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct OddsMarketsPayoutPrefix;
+pub struct NextOrderTimePriorityPrefix;
 
 impl_db_record!(
-    key = OddsMarketsPayoutKey,
-    value = (Payout, Signature),
-    db_prefix = DbKeyPrefix::Payout,
+    key = NextOrderTimePriorityKey,
+    value = TimePriority,
+    db_prefix = DbKeyPrefix::NextOrderTimePriority,
 );
 
 impl_db_lookup!(
-    key = OddsMarketsPayoutKey,
-    query_prefix = OddsMarketsPayoutPrefix
+    key = NextOrderTimePriorityKey,
+    query_prefix = NextOrderTimePriorityPrefix
 );
 
-// Next order priority
+/// OrdersByMarket
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
-pub struct OddsMarketsNextOrderPriorityKey {
+pub struct OrdersByMarketKey {
     pub market: OutPoint,
+    pub order: OutPoint,
 }
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct OddsMarketsNextOrderPriorityPrefix;
+pub struct OrdersByMarketPrefix {
+    pub market: OutPoint,
+}
 
 impl_db_record!(
-    key = OddsMarketsNextOrderPriorityKey,
-    value = u64,
-    db_prefix = DbKeyPrefix::NextOrderPriority,
+    key = OrdersByMarketKey,
+    value = (),
+    db_prefix = DbKeyPrefix::OrdersByMarket,
 );
 
 impl_db_lookup!(
-    key = OddsMarketsNextOrderPriorityKey,
-    query_prefix = OddsMarketsNextOrderPriorityPrefix
+    key = OrdersByMarketKey,
+    query_prefix = OrdersByMarketPrefix
 );
+
+/// OrderPriceTimePriority
+#[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
+pub struct OrderPriceTimePriorityKey {
+    pub market: OutPoint,
+    pub outcome: OutcomeSize,
+    pub side: Side,
+    pub price_priority: Amount,
+    pub time_priority: TimePriority
+}
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct OrderPriceTimePriorityPrefix {
+    pub market: OutPoint,
+    pub outcome: OutcomeSize,
+    pub side: Side,
+}
+
+impl_db_record!(
+    key = OrderPriceTimePriorityKey,
+    value = OutPoint,
+    db_prefix = DbKeyPrefix::OrderPriceTimePriority,
+);
+
+impl_db_lookup!(
+    key = OrderPriceTimePriorityKey,
+    query_prefix = OrderPriceTimePriorityPrefix
+);
+
+// template
+// #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
+// pub struct Key {
+//     pub market: OutPoint,
+// }
+
+// #[derive(Debug, Encodable, Decodable)]
+// pub struct Prefix;
+
+// impl_db_record!(
+//     key = Key,
+//     value = FILL,
+//     db_prefix = DbKeyPrefix::FILL,
+// );
+
+// impl_db_lookup!(
+//     key = Key,
+//     query_prefix = Prefix
+// );
