@@ -28,7 +28,7 @@ pub use fedimint_dummy_common::config::{
     PredictionMarketsConfigLocal, PredictionMarketsConfigPrivate, PredictionMarketsGenParams,
 };
 use fedimint_dummy_common::{
-    ContractAmount, Market, MarketDescription, Order, Payout, Side, TimePriority,
+    ContractAmount, ContractSource, Market, MarketDescription, Order, Payout, Side, TimePriority,
 };
 pub use fedimint_dummy_common::{
     PredictionMarketsCommonGen, PredictionMarketsConsensusItem, PredictionMarketsError,
@@ -304,6 +304,49 @@ impl ServerModule for PredictionMarkets {
         let mut pub_keys = vec![];
 
         match input {
+            PredictionMarketsInput::NewSellOrder {
+                owner,
+                market: market_out_point,
+                outcome,
+                price,
+                sources,
+            } => {
+                // get market
+                let market = match dbtx
+                    .get_value(&db::MarketKey(market_out_point.to_owned()))
+                    .await
+                {
+                    Some(m) => m,
+                    None => {
+                        return Err(PredictionMarketsError::MarketDoesNotExist)
+                            .into_module_error_other()
+                    }
+                };
+
+                // get quantity from sources
+                let quantity;
+                (quantity, pub_keys) =
+                    match Self::get_quantity_and_public_keys_from_contract_source(dbtx, sources)
+                        .await
+                    {
+                        Ok(v) => v,
+                        Err(_) => {
+                            return Err(PredictionMarketsError::FailedNewOrderValidation)
+                                .into_module_error_other()
+                        }
+                    };
+
+                // verify order params
+                if outcome >= &market.outcomes
+                    || price <= &Amount::ZERO
+                    || price >= &market.contract_price
+                    || quantity <= ContractAmount(0)
+                    || quantity > self.cfg.consensus.max_order_quantity
+                {
+                    return Err(PredictionMarketsError::FailedNewOrderValidation)
+                        .into_module_error_other();
+                }
+            }
             PredictionMarketsInput::ConsumeOrderFreeBalance { order } => {}
             PredictionMarketsInput::CancelOrder { order } => {}
             PredictionMarketsInput::PayoutMarket { market, payout } => {}
@@ -370,11 +413,10 @@ impl ServerModule for PredictionMarkets {
                 // set new market fee
                 fee = self.cfg.consensus.new_market_fee;
             }
-            PredictionMarketsOutput::NewOrder {
+            PredictionMarketsOutput::NewBuyOrder {
                 owner,
                 market: market_out_point,
                 outcome,
-                side,
                 price,
                 quantity,
             } => {
@@ -394,7 +436,8 @@ impl ServerModule for PredictionMarkets {
                 if outcome >= &market.outcomes
                     || price <= &Amount::ZERO
                     || price >= &market.contract_price
-                    || quantity <= &self.cfg.consensus.max_order_quantity
+                    || quantity <= &ContractAmount(0)
+                    || quantity > &self.cfg.consensus.max_order_quantity
                 {
                     return Err(PredictionMarketsError::FailedNewOrderValidation)
                         .into_module_error_other();
@@ -404,7 +447,7 @@ impl ServerModule for PredictionMarkets {
                 let order = Order {
                     owner: owner.to_owned(),
                     outcome: outcome.to_owned(),
-                    side: side.to_owned(),
+                    side: Side::Buy,
                     price: price.to_owned(),
                     original_quantity: quantity.to_owned(),
                     time_priority: Self::get_next_order_time_priority(
@@ -418,9 +461,7 @@ impl ServerModule for PredictionMarkets {
                 };
 
                 // set amount and fee
-                if let Side::Buy = side {
-                    amount = order.price * order.quantity_waiting_for_match.0
-                }
+                amount = order.price * order.quantity_waiting_for_match.0;
                 fee = self.cfg.consensus.new_order_fee;
 
                 // save order
@@ -428,47 +469,6 @@ impl ServerModule for PredictionMarkets {
                     .await;
 
                 // process order in orderbook
-                let order_match_vec = pie_order_book
-                    .process_limit_order(
-                        out_point,
-                        usize::from(order.outcome),
-                        (&order.side).into(),
-                        Decimal::from(order.price.msats),
-                        Decimal::from(order.quantity_waiting_for_match),
-                    )
-                    .expect("should never panic");
-
-                for order_match in order_match_vec {
-                    let mut order = dbtx
-                        .get_value(&OrderKey {
-                            market: market_outpoint.to_owned(),
-                            order: order_match.order,
-                        })
-                        .await
-                        .expect("should always find order");
-
-                    let order_match_quantity: u64 =
-                        order_match.quantity.try_into().expect("should never fail");
-                    order.quantity_waiting_for_match -= order_match_quantity;
-                    if let Side::Buy = side {
-                        order.contract_balance += order_match_quantity;
-                    }
-
-                    if let Side::Buy = side {
-                        order.btc_balance += order.price
-                            * order_match.quantity.try_into().expect("should never fail");
-                    }
-                    if order_match.cost.is_sign_positive() {
-                        order.btc_balance -= Amount::from_msats(
-                            order_match.cost.try_into().expect("should never fail"),
-                        )
-                    }
-                    if order_match.cost.is_sign_negative() {
-                        order.btc_balance += Amount::from_msats(
-                            (-order_match.cost).try_into().expect("should never fail"),
-                        )
-                    }
-                }
             }
             PredictionMarketsOutput::PayoutMarket(payout, signature) => {
                 // check if payout already exists for market
@@ -606,6 +606,41 @@ impl PredictionMarkets {
         .await;
 
         current
+    }
+
+    async fn get_quantity_and_public_keys_from_contract_source(
+        dbtx: &mut ModuleDatabaseTransaction<'_>,
+        sources: &Vec<ContractSource>,
+    ) -> Result<(ContractAmount, Vec<XOnlyPublicKey>), ()> {
+        let mut total_amount = ContractAmount(0);
+        let mut order_public_keys = Vec::new();
+
+        for ContractSource {
+            order: order_out_point,
+            amount,
+        } in sources.iter()
+        {
+            let mut order = match dbtx
+                .get_value(&db::OrderKey(order_out_point.to_owned()))
+                .await
+            {
+                Some(v) => v,
+                None => return Err(()),
+            };
+
+            order.contract_balance.0 = match order.contract_balance.0.checked_sub(amount.0) {
+                Some(v) => v,
+                None => return Err(()),
+            };
+
+            dbtx.insert_new_entry(&db::OrderKey(order_out_point.to_owned()), &order)
+                .await;
+
+            total_amount.0 += amount.0;
+            order_public_keys.push(order.owner)
+        }
+
+        Ok((total_amount, order_public_keys))
     }
 }
 

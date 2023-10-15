@@ -28,9 +28,23 @@ pub enum PredictionMarketsConsensusItem {}
 /// Input for a fedimint transaction
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Deserialize, Serialize, Encodable, Decodable)]
 pub enum PredictionMarketsInput {
-    ConsumeOrderFreeBalance { order: OutPoint },
-    CancelOrder { order: OutPoint },
-    PayoutMarket { market: OutPoint, payout: Payout },
+    NewSellOrder {
+        owner: XOnlyPublicKey,
+        market: OutPoint,
+        outcome: OutcomeSize,
+        price: Amount,
+        sources: Vec<ContractSource>,
+    },
+    ConsumeOrderFreeBalance {
+        order: OutPoint,
+    },
+    CancelOrder {
+        order: OutPoint,
+    },
+    PayoutMarket {
+        market: OutPoint,
+        payout: Payout,
+    },
 }
 
 /// Output for a fedimint transaction
@@ -42,11 +56,10 @@ pub enum PredictionMarketsOutput {
         outcome_control: XOnlyPublicKey,
         description: MarketDescription,
     },
-    NewOrder {
+    NewBuyOrder {
         owner: XOnlyPublicKey,
         market: OutPoint,
         outcome: OutcomeSize,
-        side: Side,
         price: Amount,
         quantity: ContractAmount,
     },
@@ -183,8 +196,17 @@ pub enum Side {
     Sell,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash, PartialOrd, Ord,
+)]
 pub struct ContractAmount(pub u64);
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct TimePriority(pub u64);
+
+/// new sells use this to specify where to source quantity
+#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+pub struct ContractSource {
+    pub order: OutPoint,
+    pub amount: ContractAmount,
+}

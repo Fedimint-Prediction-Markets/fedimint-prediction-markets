@@ -10,7 +10,7 @@ use strum_macros::EnumIter;
 
 #[allow(unused_imports)]
 use crate::{
-    PredictionMarketsOutput, PredictionMarketsOutput::NewMarket, PredictionMarketsOutput::NewOrder,
+    PredictionMarketsOutput, PredictionMarketsOutput::NewMarket, PredictionMarketsOutput::NewBuyOrder,
     PredictionMarketsOutputOutcome,
 };
 

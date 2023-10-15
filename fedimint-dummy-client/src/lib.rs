@@ -152,7 +152,7 @@ impl ClientModule for OddsMarketsClientModule {
             PredictionMarketsOutput::NewMarket(_) => {
                 fee = self.cfg.new_market_fee;
             }
-            PredictionMarketsOutput::NewOrder{market, order} => {
+            PredictionMarketsOutput::NewBuyOrder{market, order} => {
                 amount = Amount::ZERO;
                 fee = self.cfg.new_order_fee;
             }
