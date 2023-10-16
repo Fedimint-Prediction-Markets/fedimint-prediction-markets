@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use std::string::ToString;
 
@@ -28,7 +28,8 @@ pub use fedimint_dummy_common::config::{
     PredictionMarketsConfigLocal, PredictionMarketsConfigPrivate, PredictionMarketsGenParams,
 };
 use fedimint_dummy_common::{
-    ContractAmount, ContractSource, Market, MarketDescription, Order, Payout, Side, TimePriority,
+    ContractAmount, ContractSource, Market, MarketDescription, Order, OutcomeSize, Payout, Side,
+    TimePriority,
 };
 pub use fedimint_dummy_common::{
     PredictionMarketsCommonGen, PredictionMarketsConsensusItem, PredictionMarketsError,
@@ -325,24 +326,16 @@ impl ServerModule for PredictionMarkets {
 
                 // get quantity from sources
                 let quantity;
-                (quantity, pub_keys) =
-                    match Self::get_quantity_and_public_keys_from_contract_source(dbtx, sources)
-                        .await
-                    {
-                        Ok(v) => v,
-                        Err(_) => {
-                            return Err(PredictionMarketsError::FailedNewOrderValidation)
-                                .into_module_error_other()
-                        }
-                    };
+                (quantity, pub_keys) = match Self::process_contract_sources(dbtx, sources).await {
+                    Ok(v) => v,
+                    Err(_) => {
+                        return Err(PredictionMarketsError::FailedNewOrderValidation)
+                            .into_module_error_other()
+                    }
+                };
 
                 // verify order params
-                if outcome >= &market.outcomes
-                    || price <= &Amount::ZERO
-                    || price >= &market.contract_price
-                    || quantity <= ContractAmount(0)
-                    || quantity > self.cfg.consensus.max_order_quantity
-                {
+                if !self.validate_order_params(&market, outcome, price, &quantity) {
                     return Err(PredictionMarketsError::FailedNewOrderValidation)
                         .into_module_error_other();
                 }
@@ -432,13 +425,7 @@ impl ServerModule for PredictionMarkets {
                     }
                 };
 
-                // verify order params
-                if outcome >= &market.outcomes
-                    || price <= &Amount::ZERO
-                    || price >= &market.contract_price
-                    || quantity <= &ContractAmount(0)
-                    || quantity > &self.cfg.consensus.max_order_quantity
-                {
+                if !self.validate_order_params(&market, outcome, price, quantity) {
                     return Err(PredictionMarketsError::FailedNewOrderValidation)
                         .into_module_error_other();
                 }
@@ -608,18 +595,25 @@ impl PredictionMarkets {
         current
     }
 
-    async fn get_quantity_and_public_keys_from_contract_source(
+    async fn process_contract_sources(
         dbtx: &mut ModuleDatabaseTransaction<'_>,
         sources: &Vec<ContractSource>,
     ) -> Result<(ContractAmount, Vec<XOnlyPublicKey>), ()> {
         let mut total_amount = ContractAmount(0);
         let mut order_public_keys = Vec::new();
 
+        let mut duplicate_check = HashMap::new();
+
         for ContractSource {
             order: order_out_point,
             amount,
-        } in sources.iter()
+        } in sources
         {
+            // check for duplicate orders in sources
+            if let Some(_) = duplicate_check.insert(order_out_point, ()) {
+                return Err(());
+            }
+
             let mut order = match dbtx
                 .get_value(&db::OrderKey(order_out_point.to_owned()))
                 .await
@@ -628,19 +622,35 @@ impl PredictionMarkets {
                 None => return Err(()),
             };
 
-            order.contract_balance.0 = match order.contract_balance.0.checked_sub(amount.0) {
-                Some(v) => v,
-                None => return Err(()),
-            };
+            if &order.contract_balance < amount || amount <= &ContractAmount::ZERO {
+                return Err(());
+            }
+
+            order.contract_balance = order.contract_balance - amount.to_owned();
 
             dbtx.insert_new_entry(&db::OrderKey(order_out_point.to_owned()), &order)
                 .await;
 
-            total_amount.0 += amount.0;
+            total_amount = total_amount + amount.to_owned();
             order_public_keys.push(order.owner)
         }
 
         Ok((total_amount, order_public_keys))
+    }
+
+    // returns true on success
+    pub fn validate_order_params(
+        &self,
+        market: &Market,
+        outcome: &OutcomeSize,
+        price: &Amount,
+        quantity: &ContractAmount,
+    ) -> bool {
+        !(outcome >= &market.outcomes
+            || price <= &Amount::ZERO
+            || price >= &market.contract_price
+            || quantity <= &ContractAmount(0)
+            || quantity > &self.cfg.consensus.max_order_quantity)
     }
 }
 

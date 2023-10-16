@@ -1,5 +1,6 @@
 use std::fmt;
 use std::hash::Hash;
+use std::ops::{Add, Sub};
 
 use config::PredictionMarketsClientConfig;
 use fedimint_core::core::{Decoder, ModuleInstanceId, ModuleKind};
@@ -197,9 +198,47 @@ pub enum Side {
 }
 
 #[derive(
-    Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash, PartialOrd, Ord,
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    Encodable,
+    Decodable,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
 )]
 pub struct ContractAmount(pub u64);
+impl ContractAmount {
+    pub const ZERO: ContractAmount = ContractAmount(0);
+}
+
+impl Add for ContractAmount {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self(
+            self.0
+                .checked_add(rhs.0)
+                .expect("PredictionMarkets: ContractAmount: addition overflow"),
+        )
+    }
+}
+
+impl Sub for ContractAmount {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self(
+            self.0
+                .checked_sub(rhs.0)
+                .expect("PredictionMarkets: ContractAmount: subtraction overflow"),
+        )
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct TimePriority(pub u64);
