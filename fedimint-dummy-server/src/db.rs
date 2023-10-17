@@ -5,6 +5,7 @@ use fedimint_core::{impl_db_lookup, impl_db_record, Amount, OutPoint};
 #[allow(unused_imports)]
 use fedimint_dummy_common::{Market, Order, OutcomeSize, Payout, Side, TimePriority};
 
+use secp256k1::XOnlyPublicKey;
 use serde::Serialize;
 use strum_macros::EnumIter;
 
@@ -26,7 +27,7 @@ pub enum DbKeyPrefix {
     /// [NewMarket] [OutPoint] to [Market]
     Market = 0x01,
 
-    /// [NewOrder] [OutPoint] to [Order]
+    /// Owner's [XOnlyPublicKey] to [Order]
     Order = 0x02,
 
     /// ----- 20-3f reserved for market operation -----
@@ -46,7 +47,7 @@ pub enum DbKeyPrefix {
     /// Amount is (contract_price - price of order) for buys
     /// Amount is (price of order) for sells
     ///
-    /// (Market's [OutPoint], [OutcomeSize], [Side], [Amount], [TimePriority]) to (Order's [OutPoint])
+    /// (Market's [OutPoint], [OutcomeSize], [Side], [Amount], [TimePriority]) to (Order's [XOnlyPublicKey])
     OrderPriceTimePriority = 0x22,
 }
 
@@ -91,7 +92,7 @@ impl_db_lookup!(key = MarketKey, query_prefix = MarketPrefixAll);
 
 /// Order
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
-pub struct OrderKey(pub OutPoint);
+pub struct OrderKey(pub XOnlyPublicKey);
 
 #[derive(Debug, Encodable, Decodable)]
 pub struct OrderPrefixAll;
@@ -128,7 +129,7 @@ impl_db_lookup!(
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
 pub struct OrdersByMarketKey {
     pub market: OutPoint,
-    pub order: OutPoint,
+    pub order: XOnlyPublicKey,
 }
 
 #[derive(Debug, Encodable, Decodable)]
@@ -173,7 +174,7 @@ pub struct OrderPriceTimePriorityPrefixAll;
 
 impl_db_record!(
     key = OrderPriceTimePriorityKey,
-    value = OutPoint,
+    value = XOnlyPublicKey,
     db_prefix = DbKeyPrefix::OrderPriceTimePriority,
 );
 

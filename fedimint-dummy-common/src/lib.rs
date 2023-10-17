@@ -37,10 +37,10 @@ pub enum PredictionMarketsInput {
         sources: Vec<ContractSource>,
     },
     ConsumeOrderFreeBalance {
-        order: OutPoint,
+        order: XOnlyPublicKey,
     },
     CancelOrder {
-        order: OutPoint,
+        order: XOnlyPublicKey,
     },
     PayoutMarket {
         market: OutPoint,
@@ -77,21 +77,27 @@ pub enum PredictionMarketsOutputOutcome {
 // TODO: Move to server lib?
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Error)]
 pub enum PredictionMarketsError {
+    // general
     #[error("Not enough funds")]
     NotEnoughFunds,
 
+    // markets
     #[error("New market does not pass server validation")]
-    FailedNewMarketValidation,
-
-    #[error("The market does not exist")]
+    MarketValidationFailed,
+    #[error("Market does not exist")]
     MarketDoesNotExist,
 
-    #[error("Order validation failed")]
-    FailedNewOrderValidation,
+    // orders
+    #[error("New order does not pass server validation")]
+    OrderValidationFailed,
+    #[error("Order does not exist")]
+    OrderDoesNotExist,
+    #[error("Order with owner XOnlyPublicKey already exists. Each XOnlyPublicKey can only control 1 order.")]
+    OrderAlreadyExists,
 
-    #[error("The payout failed validation")]
-    FailedPayoutValidation,
-
+    // payouts
+    #[error("Payout validation failed")]
+    PayoutValidationFailed,
     #[error("A payout already exists for this market")]
     PayoutAlreadyExists,
 }
@@ -152,6 +158,7 @@ impl fmt::Display for PredictionMarketsConsensusItem {
     }
 }
 
+/// Markets are identified by the OutPoint they were created in.
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct Market {
     pub contract_price: Amount,
@@ -173,10 +180,11 @@ pub struct Payout {
     pub outcome_payouts: Vec<Amount>,
 }
 
+/// Orders are identified by the [XOnlyPublicKey] that controls them. Each [XOnlyPublicKey]
+/// can only control a single order.
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct Order {
     // static
-    pub owner: XOnlyPublicKey,
     pub outcome: OutcomeSize,
     pub side: Side,
     pub price: Amount,
@@ -246,6 +254,6 @@ pub struct TimePriority(pub u64);
 /// new sells use this to specify where to source quantity
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct ContractSource {
-    pub order: OutPoint,
+    pub order: XOnlyPublicKey,
     pub amount: ContractAmount,
 }
