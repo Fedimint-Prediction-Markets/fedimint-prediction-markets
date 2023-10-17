@@ -11,8 +11,8 @@ use strum_macros::EnumIter;
 
 #[allow(unused_imports)]
 use crate::{
-    PredictionMarketsOutput, PredictionMarketsOutput::NewMarket, PredictionMarketsOutput::NewBuyOrder,
-    PredictionMarketsOutputOutcome,
+    PredictionMarketsOutput, PredictionMarketsOutput::NewBuyOrder,
+    PredictionMarketsOutput::NewMarket, PredictionMarketsOutputOutcome,
 };
 
 /// Namespaces DB keys for this module
@@ -70,10 +70,7 @@ impl_db_record!(
     db_prefix = DbKeyPrefix::Outcome,
 );
 
-impl_db_lookup!(
-    key = OutcomeKey,
-    query_prefix = OutcomePrefixAll
-);
+impl_db_lookup!(key = OutcomeKey, query_prefix = OutcomePrefixAll);
 
 /// Market
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
@@ -159,7 +156,24 @@ pub struct OrderPriceTimePriorityKey {
     pub outcome: OutcomeSize,
     pub side: Side,
     pub price_priority: Amount,
-    pub time_priority: TimePriority
+    pub time_priority: TimePriority,
+}
+
+impl OrderPriceTimePriorityKey {
+    pub fn from_order(order: &Order, market_contract_price: Amount) -> Self {
+        let price_priority = match order.side {
+            Side::Buy => market_contract_price - order.price,
+            Side::Sell => order.price,
+        };
+
+        OrderPriceTimePriorityKey {
+            market: order.market,
+            outcome: order.outcome,
+            side: order.side,
+            price_priority,
+            time_priority: order.time_priority,
+        }
+    }
 }
 
 #[derive(Debug, Encodable, Decodable)]

@@ -38,7 +38,6 @@ pub use fedimint_dummy_common::{
 };
 use futures::{future, StreamExt};
 
-use secp256k1::schnorr::Signature;
 use secp256k1::XOnlyPublicKey;
 
 use strum::IntoEnumIterator;
@@ -332,13 +331,16 @@ impl ServerModule for PredictionMarkets {
 
                 // get quantity from sources, verifying public keys of sources
                 let quantity;
-                (quantity, pub_keys) = match Self::process_contract_sources(dbtx, sources).await {
-                    Ok(v) => v,
-                    Err(_) => {
-                        return Err(PredictionMarketsError::OrderValidationFailed)
-                            .into_module_error_other()
-                    }
-                };
+                (quantity, pub_keys) =
+                    match Self::process_contract_sources(dbtx, sources, market_out_point, outcome)
+                        .await
+                    {
+                        Ok(v) => v,
+                        Err(_) => {
+                            return Err(PredictionMarketsError::OrderValidationFailed)
+                                .into_module_error_other()
+                        }
+                    };
 
                 // verify order params
                 if !self.validate_order_params(&market, outcome, price, &quantity) {
@@ -386,7 +388,34 @@ impl ServerModule for PredictionMarkets {
                     }
                 };
 
-                // TODO: cancel order
+                let market = dbtx
+                    .get_value(&db::MarketKey(order.market))
+                    .await
+                    .expect("should always find market");
+
+                if order.quantity_waiting_for_match != ContractAmount::ZERO {
+                    dbtx.remove_entry(&db::OrderPriceTimePriorityKey::from_order(
+                        &order,
+                        market.contract_price,
+                    ))
+                    .await
+                    .expect("should always remove order");
+                }
+
+                match order.side {
+                    Side::Buy => {
+                        order.btc_balance =
+                            order.btc_balance + (order.price * order.quantity_waiting_for_match.0)
+                    }
+                    Side::Sell => {
+                        order.contract_balance =
+                            order.contract_balance + order.quantity_waiting_for_match
+                    }
+                }
+                order.quantity_waiting_for_match = ContractAmount::ZERO;
+
+                dbtx.insert_new_entry(&db::OrderKey(order_owner.to_owned()), &order)
+                    .await;
 
                 amount = Amount::ZERO;
                 fee = Amount::ZERO;
@@ -549,13 +578,13 @@ impl ServerModule for PredictionMarkets {
             api_endpoint! {
                 "get_market",
                 async |module: &PredictionMarkets, context, market: OutPoint| -> Market {
-                    module.handle_get_market(&mut context.dbtx(), market).await
+                    module.api_get_market(&mut context.dbtx(), market).await
                 }
             },
             api_endpoint! {
                 "get_order",
                 async |module: &PredictionMarkets, context, order: XOnlyPublicKey| -> Order {
-                    module.handle_get_order(&mut context.dbtx(), order).await
+                    module.api_get_order(&mut context.dbtx(), order).await
                 }
             },
         ]
@@ -563,7 +592,7 @@ impl ServerModule for PredictionMarkets {
 }
 
 impl PredictionMarkets {
-    async fn handle_get_market(
+    async fn api_get_market(
         &self,
         dbtx: &mut ModuleDatabaseTransaction<'_>,
         market: OutPoint,
@@ -574,7 +603,7 @@ impl PredictionMarkets {
         };
     }
 
-    async fn handle_get_order(
+    async fn api_get_order(
         &self,
         dbtx: &mut ModuleDatabaseTransaction<'_>,
         order: XOnlyPublicKey,
@@ -607,6 +636,8 @@ impl PredictionMarkets {
     async fn process_contract_sources(
         dbtx: &mut ModuleDatabaseTransaction<'_>,
         sources: &Vec<ContractSource>,
+        market: &OutPoint,
+        outcome: &OutcomeSize,
     ) -> Result<(ContractAmount, Vec<XOnlyPublicKey>), ()> {
         let mut total_amount = ContractAmount(0);
         let mut order_public_keys = Vec::new();
@@ -628,7 +659,11 @@ impl PredictionMarkets {
                 None => return Err(()),
             };
 
-            if &order.contract_balance < amount || amount <= &ContractAmount::ZERO {
+            if market != &order.market
+                || outcome != &order.outcome
+                || &order.contract_balance < amount
+                || amount <= &ContractAmount::ZERO
+            {
                 return Err(());
             }
 
@@ -659,7 +694,6 @@ impl PredictionMarkets {
             || quantity > &self.cfg.consensus.max_order_quantity)
     }
 
-    /// process new order into db
     async fn process_new_order(
         &self,
         dbtx: &mut ModuleDatabaseTransaction<'_>,
@@ -670,7 +704,8 @@ impl PredictionMarkets {
         price: Amount,
         quantity: ContractAmount,
     ) {
-        let order = Order {
+        let mut order = Order {
+            market: market_out_point,
             outcome,
             side,
             price,
@@ -699,6 +734,42 @@ impl PredictionMarkets {
             .get_value(&db::MarketKey(market_out_point.to_owned()))
             .await
             .expect("should always find market");
+
+        let mut order_cache: HashMap<XOnlyPublicKey, Order> = HashMap::new();
+
+        while order.quantity_waiting_for_match > ContractAmount::ZERO {}
+
+        if order.quantity_waiting_for_match != ContractAmount::ZERO {
+            dbtx.insert_new_entry(
+                &db::OrderPriceTimePriorityKey::from_order(&order, market.contract_price),
+                &order_owner,
+            )
+            .await
+        }
+
+        order_cache.insert(order_owner, order);
+        for (owner, order) in order_cache {
+            dbtx.insert_new_entry(&db::OrderKey(owner), &order).await;
+        }
+    }
+
+    /// returns a mutable referece of order in cache.
+    /// panics if order does not exist in db
+    async fn get_order_with_cache<'a>(
+        cache: &'a mut HashMap<XOnlyPublicKey, Order>,
+        dbtx: &mut ModuleDatabaseTransaction<'_>,
+        order_owner: &XOnlyPublicKey,
+    ) -> &'a mut Order {
+        if !cache.contains_key(order_owner) {
+            let order = dbtx
+                .get_value(&db::OrderKey(order_owner.to_owned()))
+                .await
+                .expect("PredictionMarkets::get_order_with_cache panics if order does not exist");
+
+            cache.insert(order_owner.to_owned(), order);
+        }
+
+        cache.get_mut(order_owner).unwrap()
     }
 }
 

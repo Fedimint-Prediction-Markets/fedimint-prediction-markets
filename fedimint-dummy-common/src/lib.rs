@@ -185,6 +185,7 @@ pub struct Payout {
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct Order {
     // static
+    pub market: OutPoint,
     pub outcome: OutcomeSize,
     pub side: Side,
     pub price: Amount,
@@ -199,7 +200,7 @@ pub struct Order {
 
 pub type OutcomeSize = u8;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub enum Side {
     Buy,
     Sell,
@@ -248,7 +249,7 @@ impl Sub for ContractAmount {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct TimePriority(pub u64);
 
 /// new sells use this to specify where to source quantity
