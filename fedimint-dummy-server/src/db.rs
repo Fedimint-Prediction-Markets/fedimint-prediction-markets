@@ -3,7 +3,7 @@ use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::{impl_db_lookup, impl_db_record, Amount, OutPoint};
 
 #[allow(unused_imports)]
-use fedimint_dummy_common::{Market, Order, OutcomeSize, Payout, Side, TimePriority};
+use fedimint_dummy_common::{Market, Order, Outcome, Payout, Side, TimePriority};
 
 use secp256k1::XOnlyPublicKey;
 use serde::Serialize;
@@ -153,7 +153,7 @@ impl_db_lookup!(
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
 pub struct OrderPriceTimePriorityKey {
     pub market: OutPoint,
-    pub outcome: OutcomeSize,
+    pub outcome: Outcome,
     pub side: Side,
     pub price_priority: Amount,
     pub time_priority: TimePriority,
@@ -179,7 +179,7 @@ impl OrderPriceTimePriorityKey {
 #[derive(Debug, Encodable, Decodable)]
 pub struct OrderPriceTimePriorityPrefix3 {
     pub market: OutPoint,
-    pub outcome: OutcomeSize,
+    pub outcome: Outcome,
     pub side: Side,
 }
 
