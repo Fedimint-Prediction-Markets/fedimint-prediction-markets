@@ -39,6 +39,7 @@ pub enum PredictionMarketsInput {
     },
     ConsumeOrderFreeBalance {
         order: XOnlyPublicKey,
+        amount: Amount
     },
     CancelOrder {
         order: XOnlyPublicKey,
@@ -71,7 +72,7 @@ pub enum PredictionMarketsOutput {
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Deserialize, Serialize, Encodable, Decodable)]
 pub enum PredictionMarketsOutputOutcome {
     NewMarket,
-    NewOrder,
+    NewBuyOrder,
 }
 
 /// Errors that might be returned by the server

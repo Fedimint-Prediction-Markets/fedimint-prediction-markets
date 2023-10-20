@@ -149,6 +149,8 @@ impl ServerModuleInit for PredictionMarketsGen {
         Ok(PredictionMarketsClientConfig {
             new_market_fee: config.new_market_fee,
             new_order_fee: config.new_order_fee,
+            max_contract_value: config.max_contract_value,
+            max_order_quantity: config.max_order_quantity,
         })
     }
 
@@ -364,7 +366,10 @@ impl ServerModule for PredictionMarkets {
                 )
                 .await;
             }
-            PredictionMarketsInput::ConsumeOrderFreeBalance { order: order_owner } => {
+            PredictionMarketsInput::ConsumeOrderFreeBalance {
+                order: order_owner,
+                amount: amount_to_free,
+            } => {
                 let mut order = match dbtx.get_value(&db::OrderKey(order_owner.to_owned())).await {
                     Some(v) => v,
                     None => {
@@ -373,11 +378,15 @@ impl ServerModule for PredictionMarkets {
                     }
                 };
 
-                amount = order.btc_balance;
+                if &order.btc_balance < amount_to_free {
+                    return Err(PredictionMarketsError::NotEnoughFunds).into_module_error_other();
+                }
+
+                amount = amount_to_free.to_owned();
                 fee = Amount::ZERO;
                 pub_keys = vec![order_owner.to_owned()];
 
-                order.btc_balance = Amount::ZERO;
+                order.btc_balance = order.btc_balance - amount_to_free.to_owned();
                 dbtx.insert_new_entry(&db::OrderKey(order_owner.to_owned()), &order)
                     .await;
             }
@@ -580,6 +589,13 @@ impl ServerModule for PredictionMarkets {
                     Side::Buy,
                     price.to_owned(),
                     quantity.to_owned(),
+                )
+                .await;
+
+                // save outcome
+                dbtx.insert_new_entry(
+                    &db::OutcomeKey(out_point),
+                    &PredictionMarketsOutputOutcome::NewBuyOrder,
                 )
                 .await;
             }

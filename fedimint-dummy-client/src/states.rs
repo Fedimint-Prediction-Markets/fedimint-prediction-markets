@@ -13,11 +13,11 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::db::DummyClientFundsKeyV0;
-use crate::{get_funds, OddsMarketsClientContext};
+use crate::{OddsMarketsClientContext};
 
 /// Tracks a transaction
 #[derive(Debug, Clone, Eq, PartialEq, Decodable, Encodable)]
-pub enum OddsMarketsStateMachine {
+pub enum PredictionMarketsStateMachine {
     Input(Amount, TransactionId, OperationId),
     Output(Amount, TransactionId, OperationId),
     InputDone(OperationId),
@@ -25,7 +25,7 @@ pub enum OddsMarketsStateMachine {
     Refund(OperationId),
 }
 
-impl State for OddsMarketsStateMachine {
+impl State for PredictionMarketsStateMachine {
     type ModuleContext = OddsMarketsClientContext;
     type GlobalContext = DynGlobalClientContext;
 
@@ -35,19 +35,19 @@ impl State for OddsMarketsStateMachine {
         global_context: &Self::GlobalContext,
     ) -> Vec<StateTransition<Self>> {
         match self.clone() {
-            OddsMarketsStateMachine::Input(amount, txid, id) => vec![StateTransition::new(
+            PredictionMarketsStateMachine::Input(amount, txid, id) => vec![StateTransition::new(
                 await_tx_accepted(global_context.clone(), id, txid),
                 move |dbtx, res, _state: Self| match res {
                     // accepted, we are done
-                    Ok(_) => Box::pin(async move { OddsMarketsStateMachine::InputDone(id) }),
+                    Ok(_) => Box::pin(async move { PredictionMarketsStateMachine::InputDone(id) }),
                     // tx rejected, we refund ourselves
                     Err(_) => Box::pin(async move {
-                        add_funds(amount, dbtx.module_tx()).await;
-                        OddsMarketsStateMachine::Refund(id)
+                        
+                        PredictionMarketsStateMachine::Refund(id)
                     }),
                 },
             )],
-            OddsMarketsStateMachine::Output(amount, txid, id) => vec![StateTransition::new(
+            PredictionMarketsStateMachine::Output(amount, txid, id) => vec![StateTransition::new(
                 await_dummy_output_outcome(
                     global_context.clone(),
                     OutPoint { txid, out_idx: 0 },
@@ -56,33 +56,28 @@ impl State for OddsMarketsStateMachine {
                 move |dbtx, res, _state: Self| match res {
                     // output accepted, add funds
                     Ok(_) => Box::pin(async move {
-                        add_funds(amount, dbtx.module_tx()).await;
-                        OddsMarketsStateMachine::OutputDone(amount, id)
+                        
+                        PredictionMarketsStateMachine::OutputDone(amount, id)
                     }),
                     // output rejected, do not add funds
-                    Err(_) => Box::pin(async move { OddsMarketsStateMachine::Refund(id) }),
+                    Err(_) => Box::pin(async move { PredictionMarketsStateMachine::Refund(id) }),
                 },
             )],
-            OddsMarketsStateMachine::InputDone(_) => vec![],
-            OddsMarketsStateMachine::OutputDone(_, _) => vec![],
-            OddsMarketsStateMachine::Refund(_) => vec![],
+            PredictionMarketsStateMachine::InputDone(_) => vec![],
+            PredictionMarketsStateMachine::OutputDone(_, _) => vec![],
+            PredictionMarketsStateMachine::Refund(_) => vec![],
         }
     }
 
     fn operation_id(&self) -> OperationId {
         match self {
-            OddsMarketsStateMachine::Input(_, _, id) => *id,
-            OddsMarketsStateMachine::Output(_, _, id) => *id,
-            OddsMarketsStateMachine::InputDone(id) => *id,
-            OddsMarketsStateMachine::OutputDone(_, id) => *id,
-            OddsMarketsStateMachine::Refund(id) => *id,
+            PredictionMarketsStateMachine::Input(_, _, id) => *id,
+            PredictionMarketsStateMachine::Output(_, _, id) => *id,
+            PredictionMarketsStateMachine::InputDone(id) => *id,
+            PredictionMarketsStateMachine::OutputDone(_, id) => *id,
+            PredictionMarketsStateMachine::Refund(id) => *id,
         }
     }
-}
-
-async fn add_funds(amount: Amount, mut dbtx: ModuleDatabaseTransaction<'_>) {
-    let funds = get_funds(&mut dbtx).await + amount;
-    dbtx.insert_entry(&DummyClientFundsKeyV0, &funds).await;
 }
 
 // TODO: Boiler-plate, should return OutputOutcome
@@ -112,7 +107,7 @@ async fn await_dummy_output_outcome(
 }
 
 // TODO: Boiler-plate
-impl IntoDynInstance for OddsMarketsStateMachine {
+impl IntoDynInstance for PredictionMarketsStateMachine {
     type DynType = DynState<DynGlobalClientContext>;
 
     fn into_dyn(self, instance_id: ModuleInstanceId) -> Self::DynType {

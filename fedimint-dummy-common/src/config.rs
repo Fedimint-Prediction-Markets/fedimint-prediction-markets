@@ -52,6 +52,8 @@ pub struct PredictionMarketsConfig {
 pub struct PredictionMarketsClientConfig {
     pub new_market_fee: Amount,
     pub new_order_fee: Amount,
+    pub max_contract_value: Amount,
+    pub max_order_quantity: ContractAmount,
 }
 
 /// Locally unencrypted config unique to each member

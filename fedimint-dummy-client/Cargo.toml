@@ -24,3 +24,4 @@ serde_json = { version = "1.0.91", features = ["preserve_order"] }
 tracing = "0.1.37"
 thiserror = "1.0.39"
 threshold_crypto = { workspace = true }
+bitcoin = "0.29.2"
