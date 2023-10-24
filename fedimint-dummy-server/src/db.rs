@@ -49,6 +49,14 @@ pub enum DbKeyPrefix {
     ///
     /// (Market's [OutPoint], [OutcomeSize], [Side], [Amount], [TimePriority]) to (Order's [XOnlyPublicKey])
     OrderPriceTimePriority = 0x22,
+
+    /// ----- 40-4f reserved for api lookup indexes -----
+
+    /// Indexes outcome control keys to the markets they belong to
+    /// Used by client for data recovery in case of data loss
+    ///
+    /// ([XOnlyPublicKey], Market's [OutPoint]) to ()
+    OutcomeControlMarkets = 0x40,
 }
 
 impl std::fmt::Display for DbKeyPrefix {
@@ -196,6 +204,33 @@ impl_db_lookup!(
     key = OrderPriceTimePriorityKey,
     query_prefix = OrderPriceTimePriorityPrefix3,
     query_prefix = OrderPriceTimePriorityPrefixAll
+);
+
+// OutcomeControlMarkets
+#[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
+pub struct OutcomeControlMarketsKey {
+    pub outcome_control: XOnlyPublicKey,
+    pub market: OutPoint,
+}
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct OutcomeControlMarketsPrefix1 {
+    pub outcome_control: XOnlyPublicKey,
+}
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct OutcomeControlMarketsPrefixAll;
+
+impl_db_record!(
+    key = OutcomeControlMarketsKey,
+    value = (),
+    db_prefix = DbKeyPrefix::OutcomeControlMarkets,
+);
+
+impl_db_lookup!(
+    key = OutcomeControlMarketsKey,
+    query_prefix = OutcomeControlMarketsPrefix1,
+    query_prefix = OutcomeControlMarketsPrefixAll
 );
 
 // template

@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use anyhow::bail;
 use bitcoin::Denomination;
-use common::{Market, MarketDescription, Outcome, Payout, Side};
+use common::{
+    ContractAmount, Market, MarketDescription, Order, OrderIDClientSide, Outcome, Payout, Side,
+};
 use fedimint_client::derivable_secret::{ChildId, DerivableSecret};
 use fedimint_client::module::init::ClientModuleInit;
 use fedimint_client::module::{ClientModule, IClientModule};
@@ -20,7 +22,7 @@ use fedimint_core::module::{
     TransactionItemAmount,
 };
 
-use fedimint_core::{apply, async_trait_maybe_send, Amount, OutPoint, TransactionId};
+use fedimint_core::{apply, async_trait_maybe_send, outcome, Amount, OutPoint, TransactionId};
 pub use fedimint_dummy_common as common;
 use fedimint_dummy_common::config::PredictionMarketsClientConfig;
 use fedimint_dummy_common::{
@@ -28,6 +30,7 @@ use fedimint_dummy_common::{
     PredictionMarketsOutput, KIND,
 };
 
+use futures::StreamExt;
 use secp256k1::{Secp256k1, XOnlyPublicKey};
 use states::PredictionMarketsStateMachine;
 
@@ -41,7 +44,7 @@ mod states;
 #[apply(async_trait_maybe_send!)]
 pub trait OddsMarketsClientExt {
     /// Create new market
-    async fn create_market(
+    async fn new_market(
         &self,
         contract_price: Amount,
         outcomes: Outcome,
@@ -60,7 +63,18 @@ pub trait OddsMarketsClientExt {
         market: OutPoint,
         outcome: Outcome,
         side: Side,
-    ) -> anyhow::Result<XOnlyPublicKey>;
+        price: Amount,
+        quantity: ContractAmount,
+    ) -> anyhow::Result<OrderIDClientSide>;
+
+    /// get order information from federation and update local db.
+    async fn get_order_from_federation(
+        &self,
+        id: OrderIDClientSide,
+    ) -> anyhow::Result<Option<Order>>;
+
+    /// Get order present in our local db, may be out of date.
+    async fn get_order_from_db(&self, id: OrderIDClientSide) -> anyhow::Result<Order>;
 
     /// Cancel order
     async fn cancel_order(&self, order: XOnlyPublicKey) -> anyhow::Result<()>;
@@ -68,7 +82,7 @@ pub trait OddsMarketsClientExt {
 
 #[apply(async_trait_maybe_send!)]
 impl OddsMarketsClientExt for Client {
-    async fn create_market(
+    async fn new_market(
         &self,
         contract_price: Amount,
         outcomes: Outcome,
@@ -80,9 +94,9 @@ impl OddsMarketsClientExt for Client {
 
         let key = prediction_markets
             .root_secret
-            .child_key(ChildId(0))
+            .child_key(MARKET_OUTCOME)
             .to_secp_key(&Secp256k1::new());
-        let (outcome_control, _ ) = XOnlyPublicKey::from_keypair(&key);
+        let (outcome_control, _) = XOnlyPublicKey::from_keypair(&key);
 
         let output = ClientOutput {
             output: PredictionMarketsOutput::NewMarket {
@@ -108,7 +122,14 @@ impl OddsMarketsClientExt for Client {
         let tx_subscription = self.transaction_updates(op_id).await;
         tx_subscription.await_tx_accepted(txid).await?;
 
-        Ok(OutPoint { txid, out_idx: 0 })
+        let outpoint = OutPoint { txid, out_idx: 0 };
+
+        let mut dbtx = instance.db.begin_transaction().await;
+        dbtx.insert_entry(&db::OutcomeControlMarketsKey { market: outpoint }, &())
+            .await;
+        dbtx.commit_tx().await;
+
+        Ok(outpoint)
     }
 
     async fn get_market(&self, market_out_point: OutPoint) -> anyhow::Result<Market> {
@@ -126,8 +147,104 @@ impl OddsMarketsClientExt for Client {
         market: OutPoint,
         outcome: Outcome,
         side: Side,
-    ) -> anyhow::Result<XOnlyPublicKey> {
-        bail!("t")
+        price: Amount,
+        quantity: ContractAmount,
+    ) -> anyhow::Result<OrderIDClientSide> {
+        let (prediction_markets, instance) =
+            self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+        let op_id = OperationId(rand::random());
+
+        let mut dbtx = instance.db.begin_transaction().await;
+
+        let id = {
+            let mut stream = dbtx
+                .find_by_prefix_sorted_descending(&db::OrderPrefixAll)
+                .await;
+            match stream.next().await {
+                Some((key, _)) => key.id.0 + 1,
+                None => 0,
+            }
+        };
+
+        let order_key = prediction_markets
+            .root_secret
+            .child_key(ORDER)
+            .child_key(ChildId(id))
+            .to_secp_key(&Secp256k1::new());
+        let (owner, _) = XOnlyPublicKey::from_keypair(&order_key);
+
+        let mut tx = TransactionBuilder::new();
+        match side {
+            Side::Buy => {
+                let output = ClientOutput {
+                    output: PredictionMarketsOutput::NewBuyOrder {
+                        owner,
+                        market,
+                        outcome,
+                        price,
+                        quantity,
+                    },
+                    state_machines: Arc::new(move |_, _| {
+                        Vec::<PredictionMarketsStateMachine>::new()
+                    }),
+                };
+
+                tx = tx.with_output(output.into_dyn(instance.id));
+            }
+            Side::Sell => {}
+        }
+
+        let outpoint = |txid, _| OutPoint { txid, out_idx: 0 };
+        let txid = self
+            .finalize_and_submit_transaction(
+                op_id,
+                PredictionMarketsCommonGen::KIND.as_str(),
+                outpoint,
+                tx,
+            )
+            .await?;
+
+        let tx_subscription = self.transaction_updates(op_id).await;
+        tx_subscription.await_tx_accepted(txid).await?;
+
+        self.get_order_from_federation(OrderIDClientSide(id))
+            .await?;
+
+        Ok(OrderIDClientSide(id))
+    }
+
+    async fn get_order_from_federation(
+        &self,
+        id: OrderIDClientSide,
+    ) -> anyhow::Result<Option<Order>> {
+        let (prediction_markets, instance) =
+            self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+
+        let mut dbtx = instance.db.begin_transaction().await;
+
+        let order_key = prediction_markets
+            .root_secret
+            .child_key(ORDER)
+            .child_key(ChildId(id.0))
+            .to_secp_key(&Secp256k1::new());
+        let (owner, _) = XOnlyPublicKey::from_keypair(&order_key);
+
+        let order_option = instance.api.get_order(owner).await?;
+        if let Some(order) = order_option.as_ref() {
+            dbtx.insert_new_entry(&db::OrderKey { id }, order).await;
+        }
+
+        dbtx.commit_tx().await;
+
+        Ok(order_option)
+    }
+
+    async fn get_order_from_db(&self, id: OrderIDClientSide) -> anyhow::Result<Order> {
+        let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+
+        let mut dbtx = instance.db.begin_transaction().await;
+
+        Ok(dbtx.get_value(&db::OrderKey { id }).await.unwrap())
     }
 
     async fn cancel_order(&self, order: XOnlyPublicKey) -> anyhow::Result<()> {
@@ -142,23 +259,25 @@ pub struct PredictionMarketsClientModule {
     notifier: ModuleNotifier<DynGlobalClientContext, PredictionMarketsStateMachine>,
 }
 
+impl PredictionMarketsClientModule {}
+
 /// Data needed by the state machine
 #[derive(Debug, Clone)]
-pub struct OddsMarketsClientContext {
+pub struct PredictionMarketsClientContext {
     pub dummy_decoder: Decoder,
 }
 
 // TODO: Boiler-plate
-impl Context for OddsMarketsClientContext {}
+impl Context for PredictionMarketsClientContext {}
 
 #[apply(async_trait_maybe_send!)]
 impl ClientModule for PredictionMarketsClientModule {
     type Common = PredictionMarketsModuleTypes;
-    type ModuleStateMachineContext = OddsMarketsClientContext;
+    type ModuleStateMachineContext = PredictionMarketsClientContext;
     type States = PredictionMarketsStateMachine;
 
     fn context(&self) -> Self::ModuleStateMachineContext {
-        OddsMarketsClientContext {
+        PredictionMarketsClientContext {
             dummy_decoder: self.decoder(),
         }
     }
@@ -239,10 +358,10 @@ impl ClientModule for PredictionMarketsClientModule {
         let command = args[0].to_string_lossy();
 
         match command.as_ref() {
-            "create-market" => {
+            "new-market" => {
                 if args.len() != 3 {
                     return Err(anyhow::format_err!(
-                        "`create-market` command expects 2 argument: <contract_price_msats> <outcomes>"
+                        "`new-market` command expects 2 argument: <contract_price_msats> <outcomes>"
                     ));
                 }
 
@@ -250,18 +369,26 @@ impl ClientModule for PredictionMarketsClientModule {
                     Amount::from_str_in(&args[1].to_string_lossy(), Denomination::MilliSatoshi)?;
                 let outcomes: Outcome = args[2].to_string_lossy().parse()?;
 
-                let market_out_point = client.create_market(
-                    contract_price,
-                    outcomes,
-                    MarketDescription {
-                        title: "test".to_owned(),
-                    },
-                ).await?;
+                let market_out_point = client
+                    .new_market(
+                        contract_price,
+                        outcomes,
+                        MarketDescription {
+                            title: "test".to_owned(),
+                        },
+                    )
+                    .await?;
 
                 Ok(serde_json::to_value(market_out_point)?)
             }
 
             "get-market" => {
+                if args.len() != 2 {
+                    return Err(anyhow::format_err!(
+                        "`get-market` command expects 1 argument: <market_out_point>"
+                    ));
+                }
+
                 let Ok(txid) = TransactionId::from_str(&args[1].to_string_lossy()) else {
                     bail!("Error getting transaction id");
                 };
@@ -269,6 +396,47 @@ impl ClientModule for PredictionMarketsClientModule {
                 let out_point = OutPoint { txid, out_idx: 0 };
 
                 Ok(serde_json::to_value(client.get_market(out_point).await?)?)
+            }
+
+            "new-order" => {
+                if args.len() != 6 {
+                    return Err(anyhow::format_err!(
+                        "`create-market` command expects 5 argument: <market_out_point> <outcome> <side> <price_msats> <quantity>"
+                    ));
+                }
+
+                let Ok(txid) = TransactionId::from_str(&args[1].to_string_lossy()) else {
+                    bail!("Error getting transaction id");
+                };
+
+                let out_point = OutPoint { txid, out_idx: 0 };
+
+                let outcome: Outcome = args[2].to_string_lossy().parse()?;
+
+                let side = Side::try_from(args[3].to_string_lossy().into_owned().as_str())?;
+
+                let price =
+                    Amount::from_str_in(&args[4].to_string_lossy(), Denomination::MilliSatoshi)?;
+
+                let quantity = ContractAmount(args[5].to_string_lossy().parse()?);
+
+                Ok(serde_json::to_value(
+                    client.new_order(out_point, outcome, side, price, quantity).await?,
+                )?)
+            }
+
+            "get-order" => {
+                if args.len() != 2 {
+                    return Err(anyhow::format_err!(
+                        "`create-market` command expects 1 argument: <order_id>"
+                    ));
+                }
+
+                let id = OrderIDClientSide(args[1].to_string_lossy().parse()?);
+
+                Ok(serde_json::to_value(
+                    client.get_order_from_federation(id).await?,
+                )?)
             }
 
             command => Err(anyhow::format_err!(
@@ -314,3 +482,6 @@ impl ClientModuleInit for PredictionMarketsClientGen {
         })
     }
 }
+
+const MARKET_OUTCOME: ChildId = ChildId(0);
+const ORDER: ChildId = ChildId(1);

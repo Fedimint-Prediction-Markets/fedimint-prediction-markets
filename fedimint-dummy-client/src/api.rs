@@ -9,7 +9,11 @@ use secp256k1::XOnlyPublicKey;
 #[apply(async_trait_maybe_send!)]
 pub trait OddsMarketsFederationApi {
     async fn get_market(&self, out_point: OutPoint) -> FederationResult<Market>;
-    async fn get_order(&self, order: XOnlyPublicKey) -> FederationResult<Order>;
+    async fn get_order(&self, order: XOnlyPublicKey) -> FederationResult<Option<Order>>;
+    async fn get_outcome_control_markets(
+        &self,
+        outcome_control: XOnlyPublicKey,
+    ) -> FederationResult<Vec<OutPoint>>;
 }
 
 #[apply(async_trait_maybe_send!)]
@@ -22,8 +26,19 @@ where
             .await
     }
 
-    async fn get_order(&self, order: XOnlyPublicKey) -> FederationResult<Order> {
+    async fn get_order(&self, order: XOnlyPublicKey) -> FederationResult<Option<Order>> {
         self.request_current_consensus("get_order".to_string(), ApiRequestErased::new(order))
             .await
+    }
+
+    async fn get_outcome_control_markets(
+        &self,
+        outcome_control: XOnlyPublicKey,
+    ) -> FederationResult<Vec<OutPoint>> {
+        self.request_current_consensus(
+            "get_outcome_control_markets".to_string(),
+            ApiRequestErased::new(outcome_control),
+        )
+        .await
     }
 }

@@ -1,8 +1,10 @@
+use std::arch::x86_64::_CMP_TRUE_UQ;
 use std::cmp::Ordering;
 use std::fmt;
 use std::hash::Hash;
 use std::ops::{Add, Sub};
 
+use anyhow::Error;
 use config::PredictionMarketsClientConfig;
 use fedimint_core::core::{Decoder, ModuleInstanceId, ModuleKind};
 use fedimint_core::encoding::{Decodable, Encodable};
@@ -222,6 +224,18 @@ impl Side {
     }
 }
 
+impl TryFrom<&str> for Side {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value.to_lowercase().as_str() {
+            "buy" => Ok(Self::Buy),
+            "sell" => Ok(Self::Sell),
+            _ => Err(Error::msg("could not parse side"))
+        }
+    }
+}
+
 #[derive(
     Debug,
     Clone,
@@ -297,7 +311,7 @@ impl PartialOrd for SignedAmount {
 impl Ord for SignedAmount {
     fn cmp(&self, other: &Self) -> Ordering {
         match (self.negative, other.negative) {
-            (false, false) => other.amount.msats.cmp(&self.amount.msats),
+            (true, true) => other.amount.msats.cmp(&self.amount.msats),
             (true, false) => {
                 if self.amount == Amount::ZERO && other.amount == Amount::ZERO {
                     Ordering::Equal
@@ -312,7 +326,7 @@ impl Ord for SignedAmount {
                     Ordering::Greater
                 }
             }
-            (true, true) => self.amount.msats.cmp(&other.amount.msats),
+            (false, false) => self.amount.msats.cmp(&other.amount.msats),
         }
     }
 }
@@ -360,3 +374,7 @@ impl Sub for SignedAmount {
         self + rhs
     }
 }
+
+/// Same as the ChildID used from the order root secret to derive order owner
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+pub struct OrderIDClientSide(pub u64);

@@ -12,8 +12,7 @@ use fedimint_dummy_common::PredictionMarketsOutputOutcome;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::db::DummyClientFundsKeyV0;
-use crate::{OddsMarketsClientContext};
+use crate::PredictionMarketsClientContext;
 
 /// Tracks a transaction
 #[derive(Debug, Clone, Eq, PartialEq, Decodable, Encodable)]
@@ -26,7 +25,7 @@ pub enum PredictionMarketsStateMachine {
 }
 
 impl State for PredictionMarketsStateMachine {
-    type ModuleContext = OddsMarketsClientContext;
+    type ModuleContext = PredictionMarketsClientContext;
     type GlobalContext = DynGlobalClientContext;
 
     fn transitions(
