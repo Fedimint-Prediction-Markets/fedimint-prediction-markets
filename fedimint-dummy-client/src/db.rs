@@ -1,6 +1,6 @@
 use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::{impl_db_lookup, impl_db_record, OutPoint};
-use fedimint_dummy_common::{Order, Market, OrderIDClientSide};
+use fedimint_dummy_common::{Order, Market, OrderIDClientSide, Outcome};
 
 #[repr(u8)]
 #[derive(Clone, Debug)]
@@ -17,6 +17,9 @@ pub enum DbKeyPrefix {
     
     /// Markets that our outcome control key has some portion of control over to ()
     OutcomeControlMarkets = 0x20,
+
+    /// (Market's [OutPoint], [OrderIDClientSide]) to ()
+    OrdersByMarketOutcome = 0x21
 }
 
 // Market
@@ -75,6 +78,37 @@ impl_db_record!(
 impl_db_lookup!(
     key = OutcomeControlMarketsKey,
     query_prefix = OutcomeControlMarketsPrefixAll
+);
+
+// OrdersByMarketOutcome
+#[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash)]
+pub struct OrdersByMarketOutcomeKey {
+    pub market: OutPoint,
+    pub outcome: Outcome,
+    pub order: OrderIDClientSide
+}
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct OrdersByMarketPrefix1 {
+    pub market: OutPoint,
+}
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct OrdersByMarketPrefix2 {
+    pub market: OutPoint,
+    pub outcome: Outcome,
+}
+
+impl_db_record!(
+    key = OrdersByMarketOutcomeKey,
+    value = (),
+    db_prefix = DbKeyPrefix::OrdersByMarketOutcome,
+);
+
+impl_db_lookup!(
+    key = OrdersByMarketOutcomeKey,
+    query_prefix = OrdersByMarketPrefix1,
+    query_prefix = OrdersByMarketPrefix2
 );
 
 // template

@@ -1,4 +1,3 @@
-use std::arch::x86_64::_CMP_TRUE_UQ;
 use std::cmp::Ordering;
 use std::fmt;
 use std::hash::Hash;
@@ -207,6 +206,10 @@ pub struct Order {
     pub btc_balance: Amount,
 }
 
+/// Same as the ChildID used from the order root secret to derive order owner
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+pub struct OrderIDClientSide(pub u64);
+
 pub type Outcome = u8;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
@@ -375,6 +378,3 @@ impl Sub for SignedAmount {
     }
 }
 
-/// Same as the ChildID used from the order root secret to derive order owner
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
-pub struct OrderIDClientSide(pub u64);

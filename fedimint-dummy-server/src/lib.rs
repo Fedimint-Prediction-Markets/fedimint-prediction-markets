@@ -26,8 +26,7 @@ pub use fedimint_dummy_common::config::{
     PredictionMarketsConfigLocal, PredictionMarketsConfigPrivate, PredictionMarketsGenParams,
 };
 use fedimint_dummy_common::{
-    ContractAmount, ContractSource, Market, MarketDescription, Order, Outcome, Payout, Side,
-    SignedAmount, TimePriority,
+    ContractAmount, ContractSource, Market, Order, Outcome, Side, SignedAmount, TimePriority,
 };
 pub use fedimint_dummy_common::{
     PredictionMarketsCommonGen, PredictionMarketsConsensusItem, PredictionMarketsError,
@@ -445,7 +444,9 @@ impl ServerModule for PredictionMarkets {
                 // validate payout
                 let total_payout: Amount =
                     payout.outcome_payouts.iter().map(|v| v.to_owned()).sum();
-                if total_payout != market.contract_price {
+                if total_payout != market.contract_price
+                    || market.outcomes != payout.outcome_payouts.len() as Outcome
+                {
                     return Err(PredictionMarketsError::PayoutValidationFailed)
                         .into_module_error_other();
                 }
@@ -478,8 +479,7 @@ impl ServerModule for PredictionMarkets {
                         + (payout_per_quantity.to_owned() * order.contract_balance.0);
                     order.contract_balance = ContractAmount::ZERO;
 
-                    dbtx.insert_entry(&db::OrderKey(order_owner), &order)
-                        .await;
+                    dbtx.insert_entry(&db::OrderKey(order_owner), &order).await;
                 }
 
                 // save payout to market
@@ -737,9 +737,9 @@ impl PredictionMarkets {
                 return Err(());
             }
 
-            let mut order = match dbtx.get_value(&db::OrderKey(order_owner.to_owned())).await {
-                Some(v) => v,
-                None => return Err(()),
+            let Some(mut order) = dbtx.get_value(&db::OrderKey(order_owner.to_owned())).await
+            else {
+                return Err(());
             };
 
             if market != &order.market
@@ -867,7 +867,9 @@ impl PredictionMarkets {
                     order.quantity_waiting_for_match - satisfied_quantity;
 
                 match side {
-                    Side::Buy => order.contract_balance = order.contract_balance + satisfied_quantity,
+                    Side::Buy => {
+                        order.contract_balance = order.contract_balance + satisfied_quantity
+                    }
                     Side::Sell => {
                         order.btc_balance = order.btc_balance + (own_price * satisfied_quantity.0)
                     }
@@ -1057,8 +1059,7 @@ impl PredictionMarkets {
                 Side::Sell => order.btc_balance = order.btc_balance + (order.price * satisfied.0),
             }
 
-            dbtx.insert_entry(&db::OrderKey(order_owner), &order)
-                .await;
+            dbtx.insert_entry(&db::OrderKey(order_owner), &order).await;
             if order.quantity_waiting_for_match == ContractAmount::ZERO {
                 dbtx.remove_entry(&db::OrderPriceTimePriorityKey::from_order(
                     &order,
