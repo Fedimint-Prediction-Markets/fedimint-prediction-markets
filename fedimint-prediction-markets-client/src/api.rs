@@ -3,7 +3,7 @@ use fedimint_core::api::{FederationApiExt, FederationResult, IModuleFederationAp
 use fedimint_core::module::ApiRequestErased;
 use fedimint_core::task::{MaybeSend, MaybeSync};
 use fedimint_core::{apply, async_trait_maybe_send, OutPoint};
-use fedimint_dummy_common::{Market, Order};
+use fedimint_prediction_markets_common::{Market, Order};
 use secp256k1::XOnlyPublicKey;
 
 #[apply(async_trait_maybe_send!)]

@@ -13,4 +13,4 @@ path = "src/fedimintd.rs"
 anyhow = "1.0.66"
 fedimintd = { workspace = true }
 tokio = { version = "1.25.0", features = ["full", "tracing"] }
-fedimint-dummy-server = { path = "../fedimint-dummy-server" }
+fedimint-prediction-markets-server = { path = "../fedimint-prediction-markets-server" }

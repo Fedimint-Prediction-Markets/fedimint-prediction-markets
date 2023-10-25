@@ -21,14 +21,14 @@ use fedimint_core::module::{
 use fedimint_core::server::DynServerModule;
 use fedimint_core::task::TaskGroup;
 use fedimint_core::{push_db_pair_items, Amount, OutPoint, PeerId, ServerModule};
-pub use fedimint_dummy_common::config::{
+pub use fedimint_prediction_markets_common::config::{
     PredictionMarketsClientConfig, PredictionMarketsConfig, PredictionMarketsConfigConsensus,
     PredictionMarketsConfigLocal, PredictionMarketsConfigPrivate, PredictionMarketsGenParams,
 };
-use fedimint_dummy_common::{
+use fedimint_prediction_markets_common::{
     ContractAmount, ContractSource, Market, Order, Outcome, Side, SignedAmount, TimePriority,
 };
-pub use fedimint_dummy_common::{
+pub use fedimint_prediction_markets_common::{
     PredictionMarketsCommonGen, PredictionMarketsConsensusItem, PredictionMarketsError,
     PredictionMarketsInput, PredictionMarketsModuleTypes, PredictionMarketsOutput,
     PredictionMarketsOutputOutcome, CONSENSUS_VERSION, KIND,

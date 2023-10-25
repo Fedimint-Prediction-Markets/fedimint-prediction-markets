@@ -8,7 +8,7 @@ use fedimint_core::core::{Decoder, IntoDynInstance, ModuleInstanceId};
 use fedimint_core::db::ModuleDatabaseTransaction;
 use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::{Amount, OutPoint, TransactionId};
-use fedimint_dummy_common::PredictionMarketsOutputOutcome;
+use fedimint_prediction_markets_common::PredictionMarketsOutputOutcome;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 

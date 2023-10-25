@@ -1,5 +1,5 @@
 [package]
-name = "fedimint-dummy-client"
+name = "fedimint-prediction-markets-client"
 version = "0.1.0"
 authors = ["The Fedimint Developers"]
 edition = "2021"
@@ -7,13 +7,13 @@ description = "fedimint-dummy is a dummy example fedimint module."
 license = "MIT"
 
 [lib]
-name = "fedimint_dummy_client"
+name = "fedimint_prediction_markets_client"
 path = "src/lib.rs"
 
 [dependencies]
 async-trait = "0.1"
 anyhow = "1.0.66"
-fedimint-dummy-common ={ path = "../fedimint-dummy-common" }
+fedimint-prediction-markets-common ={ path = "../fedimint-prediction-markets-common" }
 fedimint-client = { workspace = true }
 fedimint-core ={ workspace = true }
 futures = "0.3"

@@ -4,11 +4,11 @@ use fedimintd::fedimintd::Fedimintd;
 async fn main() -> anyhow::Result<()> {
     Fedimintd::new()?
         .with_default_modules()
-        .with_module(fedimint_dummy_server::PredictionMarketsGen)
+        .with_module(fedimint_prediction_markets_server::PredictionMarketsGen)
         .with_extra_module_inits_params(
             3,
-            fedimint_dummy_server::KIND,
-            fedimint_dummy_server::PredictionMarketsGenParams::default(),
+            fedimint_prediction_markets_server::KIND,
+            fedimint_prediction_markets_server::PredictionMarketsGenParams::default(),
         )
         .run()
         .await

@@ -1,5 +1,5 @@
 [package]
-name = "fedimint-dummy-server"
+name = "fedimint-prediction-markets-server"
 version = "0.1.0"
 authors = ["The Fedimint Developers"]
 edition = "2021"
@@ -7,7 +7,7 @@ description = "fedimint-dummy is a dummy example fedimint module."
 license = "MIT"
 
 [lib]
-name = "fedimint_dummy_server"
+name = "fedimint_prediction_markets_server"
 path = "src/lib.rs"
 
 [dependencies]
@@ -17,7 +17,7 @@ bitcoin_hashes = "0.11.0"
 erased-serde = "0.3"
 futures = "0.3"
 fedimint-core = { workspace = true }
-fedimint-dummy-common = { path = "../fedimint-dummy-common" }
+fedimint-prediction-markets-common = { path = "../fedimint-prediction-markets-common" }
 rand = "0.8"
 serde = { version = "1.0.149", features = [ "derive" ] }
 secp256k1 = "0.24.2"

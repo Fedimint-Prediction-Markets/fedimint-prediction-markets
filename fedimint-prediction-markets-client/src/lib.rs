@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::bail;
 use bitcoin::Denomination;
-use common::{
+use fedimint_prediction_markets_common::{
     ContractAmount, ContractSource, Market, MarketDescription, Order, OrderIDClientSide, Outcome,
     Payout, Side,
 };
@@ -24,9 +24,8 @@ use fedimint_core::module::{
 };
 
 use fedimint_core::{apply, async_trait_maybe_send, Amount, OutPoint, TransactionId};
-pub use fedimint_dummy_common as common;
-use fedimint_dummy_common::config::PredictionMarketsClientConfig;
-use fedimint_dummy_common::{
+use fedimint_prediction_markets_common::config::PredictionMarketsClientConfig;
+use fedimint_prediction_markets_common::{
     PredictionMarketsCommonGen, PredictionMarketsInput, PredictionMarketsModuleTypes,
     PredictionMarketsOutput, KIND,
 };

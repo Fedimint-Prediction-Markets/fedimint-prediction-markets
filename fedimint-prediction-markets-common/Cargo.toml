@@ -1,5 +1,5 @@
 [package]
-name = "fedimint-dummy-common"
+name = "fedimint-prediction-markets-common"
 version = "0.1.0"
 authors = ["The Fedimint Developers"]
 edition = "2021"
@@ -7,7 +7,7 @@ description = "fedimint-dummy is a dummy example fedimint module."
 license = "MIT"
 
 [lib]
-name = "fedimint_dummy_common"
+name = "fedimint_prediction_markets_common"
 path = "src/lib.rs"
 
 [dependencies]

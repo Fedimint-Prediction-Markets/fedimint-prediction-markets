@@ -4,7 +4,7 @@ use fedimint_cli::FedimintCli;
 async fn main() -> anyhow::Result<()> {
     FedimintCli::new()?
         .with_default_modules()
-        .with_module(fedimint_dummy_client::PredictionMarketsClientGen)
+        .with_module(fedimint_prediction_markets_client::PredictionMarketsClientGen)
         .run()
         .await;
     Ok(())

@@ -1,6 +1,6 @@
 use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::{impl_db_lookup, impl_db_record, OutPoint};
-use fedimint_dummy_common::{Order, Market, OrderIDClientSide, Outcome};
+use fedimint_prediction_markets_common::{Order, Market, OrderIDClientSide, Outcome};
 
 #[repr(u8)]
 #[derive(Clone, Debug)]

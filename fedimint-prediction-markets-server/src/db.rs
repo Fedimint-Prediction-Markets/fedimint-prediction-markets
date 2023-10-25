@@ -3,7 +3,7 @@ use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::{impl_db_lookup, impl_db_record, Amount, OutPoint};
 
 #[allow(unused_imports)]
-use fedimint_dummy_common::{Market, Order, Outcome, Payout, Side, TimePriority};
+use fedimint_prediction_markets_common::{Market, Order, Outcome, Payout, Side, TimePriority};
 
 use secp256k1::XOnlyPublicKey;
 use serde::Serialize;

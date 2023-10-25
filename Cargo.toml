@@ -2,9 +2,9 @@
 members = [
     "fedimintd",
     "fedimint-cli",
-    "fedimint-dummy-common",
-    "fedimint-dummy-client",
-    "fedimint-dummy-server",
+    "fedimint-prediction-markets-common",
+    "fedimint-prediction-markets-client",
+    "fedimint-prediction-markets-server",
     "tests",
 ]
 resolver = "2"
