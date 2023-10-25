@@ -107,6 +107,7 @@ impl ServerModuleInit for PredictionMarketsGen {
                         new_order_fee: params.consensus.new_order_fee,
                         max_contract_value: params.consensus.max_contract_value,
                         max_order_quantity: params.consensus.max_order_quantity,
+                        max_market_outcomes: params.consensus.max_market_outcomes
                     },
                 };
                 (peer, config.to_erased())
@@ -134,6 +135,7 @@ impl ServerModuleInit for PredictionMarketsGen {
                 new_order_fee: params.consensus.new_order_fee,
                 max_contract_value: params.consensus.max_contract_value,
                 max_order_quantity: params.consensus.max_order_quantity,
+                max_market_outcomes: params.consensus.max_market_outcomes
             },
         }
         .to_erased())
@@ -150,6 +152,7 @@ impl ServerModuleInit for PredictionMarketsGen {
             new_order_fee: config.new_order_fee,
             max_contract_value: config.max_contract_value,
             max_order_quantity: config.max_order_quantity,
+            max_market_outcomes: config.max_market_outcomes,
         })
     }
 
@@ -445,7 +448,7 @@ impl ServerModule for PredictionMarkets {
                 let total_payout: Amount =
                     payout.outcome_payouts.iter().map(|v| v.to_owned()).sum();
                 if total_payout != market.contract_price
-                    || market.outcomes != payout.outcome_payouts.len() as Outcome
+                    || payout.outcome_payouts.len() != usize::from(market.outcomes)
                 {
                     return Err(PredictionMarketsError::PayoutValidationFailed)
                         .into_module_error_other();

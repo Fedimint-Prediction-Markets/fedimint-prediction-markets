@@ -35,7 +35,7 @@ use futures::StreamExt;
 use secp256k1::{KeyPair, Secp256k1, XOnlyPublicKey};
 use states::PredictionMarketsStateMachine;
 
-use crate::api::OddsMarketsFederationApi;
+use crate::api::PredictionMarketsFederationApi;
 
 pub mod api;
 mod db;
@@ -589,7 +589,7 @@ impl ClientModule for PredictionMarketsClientModule {
 
                 let outcome: Outcome = args[2].to_string_lossy().parse()?;
 
-                let side = Side::try_from(args[3].to_string_lossy().into_owned().as_str())?;
+                let side = Side::try_from(args[3].to_string_lossy().as_ref())?;
 
                 let price =
                     Amount::from_str_in(&args[4].to_string_lossy(), Denomination::MilliSatoshi)?;
@@ -630,7 +630,7 @@ impl ClientModule for PredictionMarketsClientModule {
             }
 
             command => Err(anyhow::format_err!(
-                "Unknown command: {command}, supported commands: print-money"
+                "Unknown command: {command}, supported commands: new-market, get-market, payout-market, new-order, get-order, cancel-order"
             )),
         }
     }

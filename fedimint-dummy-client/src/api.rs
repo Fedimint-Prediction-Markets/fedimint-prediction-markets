@@ -7,7 +7,7 @@ use fedimint_dummy_common::{Market, Order};
 use secp256k1::XOnlyPublicKey;
 
 #[apply(async_trait_maybe_send!)]
-pub trait OddsMarketsFederationApi {
+pub trait PredictionMarketsFederationApi {
     async fn get_market(&self, out_point: OutPoint) -> FederationResult<Market>;
     async fn get_order(&self, order: XOnlyPublicKey) -> FederationResult<Option<Order>>;
     async fn get_outcome_control_markets(
@@ -17,7 +17,7 @@ pub trait OddsMarketsFederationApi {
 }
 
 #[apply(async_trait_maybe_send!)]
-impl<T: ?Sized> OddsMarketsFederationApi for T
+impl<T: ?Sized> PredictionMarketsFederationApi for T
 where
     T: IModuleFederationApi + MaybeSend + MaybeSync + 'static,
 {

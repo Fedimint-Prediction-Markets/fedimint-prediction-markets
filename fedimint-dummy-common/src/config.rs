@@ -3,7 +3,7 @@ use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::{plugin_types_trait_impl_config, Amount};
 use serde::{Deserialize, Serialize};
 
-use crate::{PredictionMarketsCommonGen, ContractAmount};
+use crate::{PredictionMarketsCommonGen, ContractAmount, Outcome};
 
 /// Parameters necessary to generate this module's configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,6 +23,7 @@ pub struct PredictionMarketsGenParamsConsensus {
     pub new_order_fee: Amount,
     pub max_contract_value: Amount,
     pub max_order_quantity: ContractAmount,
+    pub max_market_outcomes: Outcome
 }
 
 impl Default for PredictionMarketsGenParams {
@@ -33,7 +34,8 @@ impl Default for PredictionMarketsGenParams {
                 new_market_fee: Amount::from_sats(100),
                 new_order_fee: Amount::from_sats(1),
                 max_contract_value: Amount::from_sats(100_000_000),
-                max_order_quantity: ContractAmount(1000000)
+                max_order_quantity: ContractAmount(1000000),
+                max_market_outcomes: 100
             },
         }
     }
@@ -54,6 +56,7 @@ pub struct PredictionMarketsClientConfig {
     pub new_order_fee: Amount,
     pub max_contract_value: Amount,
     pub max_order_quantity: ContractAmount,
+    pub max_market_outcomes: Outcome
 }
 
 /// Locally unencrypted config unique to each member
@@ -69,6 +72,7 @@ pub struct PredictionMarketsConfigConsensus {
     pub new_order_fee: Amount,
     pub max_contract_value: Amount,
     pub max_order_quantity: ContractAmount,
+    pub max_market_outcomes: Outcome
 }
 
 /// Will be encrypted and not shared such as private key material
