@@ -1,13 +1,10 @@
+use std::collections::BTreeMap;
 use std::ffi;
 use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::bail;
 use bitcoin::Denomination;
-use fedimint_prediction_markets_common::{
-    ContractAmount, ContractSource, Market, MarketDescription, Order, OrderIDClientSide, Outcome,
-    Payout, Side,
-};
 use fedimint_client::derivable_secret::{ChildId, DerivableSecret};
 use fedimint_client::module::init::ClientModuleInit;
 use fedimint_client::module::{ClientModule, IClientModule};
@@ -21,6 +18,10 @@ use fedimint_core::db::Database;
 use fedimint_core::module::{
     ApiVersion, CommonModuleInit, ExtendsCommonModuleInit, ModuleCommon, MultiApiVersion,
     TransactionItemAmount,
+};
+use fedimint_prediction_markets_common::{
+    ContractAmount, ContractSource, Market, MarketDescription, Order, OrderIDClientSide, Outcome,
+    Payout, Side,
 };
 
 use fedimint_core::{apply, async_trait_maybe_send, Amount, OutPoint, TransactionId};
@@ -79,6 +80,9 @@ pub trait OddsMarketsClientExt {
 
     /// Get order present in our local db, may be out of date.
     async fn get_order_from_db(&self, id: OrderIDClientSide) -> Option<Order>;
+
+    /// Get all orders in the db. 
+    async fn get_all_orders_from_db(&self) -> BTreeMap<OrderIDClientSide,Order>;
 
     /// Cancel order
     async fn cancel_order(&self, id: OrderIDClientSide) -> anyhow::Result<()>;
@@ -352,6 +356,20 @@ impl OddsMarketsClientExt for Client {
         dbtx.get_value(&db::OrderKey { id }).await
     }
 
+    async fn get_all_orders_from_db(&self) -> BTreeMap<OrderIDClientSide, Order> {
+        let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+
+        let mut dbtx = instance.db.begin_transaction().await;
+
+        let orders:BTreeMap<_,_> = dbtx
+            .find_by_prefix(&db::OrderPrefixAll)
+            .await.map(|(key,value)| (key.id, value))
+            .collect()
+            .await;
+
+        orders
+    }
+
     async fn cancel_order(&self, id: OrderIDClientSide) -> anyhow::Result<()> {
         let (prediction_markets, instance) =
             self.get_first_module::<PredictionMarketsClientModule>(&KIND);
@@ -600,6 +618,12 @@ impl ClientModule for PredictionMarketsClientModule {
                         .new_order(out_point, outcome, side, price, quantity)
                         .await?,
                 )?)
+            }
+
+            "list-orders" => {
+                let orders = client.get_all_orders_from_db().await;
+
+                Ok(serde_json::to_value(orders)?)
             }
 
             "get-order" => {

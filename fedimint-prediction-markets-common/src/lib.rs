@@ -207,8 +207,10 @@ pub struct Order {
 }
 
 /// Same as the ChildID used from the order root secret to derive order owner
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct OrderIDClientSide(pub u64);
+
+
 
 pub type Outcome = u8;
 
