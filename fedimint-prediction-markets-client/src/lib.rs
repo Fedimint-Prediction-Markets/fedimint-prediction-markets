@@ -20,7 +20,7 @@ use fedimint_core::module::{
     TransactionItemAmount,
 };
 use fedimint_prediction_markets_common::{
-    ContractAmount, ContractSource, Market, MarketDescription, Order, OrderIDClientSide, Outcome,
+    ContractOfOutcomeAmount, ContractOfOutcomeSource, Market, MarketDescription, Order, OrderIDClientSide, Outcome,
     Payout, Side,
 };
 
@@ -53,7 +53,7 @@ pub trait OddsMarketsClientExt {
     ) -> anyhow::Result<OutPoint>;
 
     /// Get Market
-    async fn get_market(&self, market: OutPoint) -> anyhow::Result<Market>;
+    async fn get_market(&self, market: OutPoint) -> anyhow::Result<Option<Market>>;
 
     /// Payout market
     async fn payout_market(
@@ -69,7 +69,7 @@ pub trait OddsMarketsClientExt {
         outcome: Outcome,
         side: Side,
         price: Amount,
-        quantity: ContractAmount,
+        quantity: ContractOfOutcomeAmount,
     ) -> anyhow::Result<OrderIDClientSide>;
 
     /// get order information from federation and update local db.
@@ -137,7 +137,7 @@ impl OddsMarketsClientExt for Client {
         Ok(outpoint)
     }
 
-    async fn get_market(&self, market_out_point: OutPoint) -> anyhow::Result<Market> {
+    async fn get_market(&self, market_out_point: OutPoint) -> anyhow::Result<Option<Market>> {
         let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
 
         Ok(instance.api.get_market(market_out_point).await?)
@@ -186,7 +186,7 @@ impl OddsMarketsClientExt for Client {
         outcome: Outcome,
         side: Side,
         price: Amount,
-        quantity: ContractAmount,
+        quantity: ContractOfOutcomeAmount,
     ) -> anyhow::Result<OrderIDClientSide> {
         let (prediction_markets, instance) =
             self.get_first_module::<PredictionMarketsClientModule>(&KIND);
@@ -233,7 +233,7 @@ impl OddsMarketsClientExt for Client {
                 let mut sources = vec![];
                 let mut keys = vec![];
 
-                let mut sourced_quantity = ContractAmount::ZERO;
+                let mut sourced_quantity = ContractOfOutcomeAmount::ZERO;
                 let market_orders: Vec<_> = dbtx
                     .find_by_prefix(&db::OrdersByMarketPrefix2 { market, outcome })
                     .await
@@ -245,23 +245,23 @@ impl OddsMarketsClientExt for Client {
                         .get_order_from_db(order_id)
                         .await
                         .expect("should always produce order");
-                    if order.contract_balance == ContractAmount::ZERO {
+                    if order.contract_of_outcome_balance == ContractOfOutcomeAmount::ZERO {
                         continue;
                     }
 
                     let order_key = prediction_markets.order_id_to_key_pair(order_id);
                     let quantity_sourced_from_order =
-                        order.contract_balance.min(quantity - sourced_quantity);
+                        order.contract_of_outcome_balance.min(quantity - sourced_quantity);
 
-                    sources.push(ContractSource {
+                    sources.push(ContractOfOutcomeSource {
                         order: XOnlyPublicKey::from_keypair(&order_key).0,
-                        amount: quantity_sourced_from_order,
+                        quantity: quantity_sourced_from_order,
                     });
                     keys.push(order_key);
 
                     sourced_quantity = sourced_quantity + quantity_sourced_from_order;
 
-                    order.contract_balance = order.contract_balance - quantity_sourced_from_order;
+                    order.contract_of_outcome_balance = order.contract_of_outcome_balance - quantity_sourced_from_order;
                     dbtx.insert_entry(&db::OrderKey { id: order_id }, &order)
                         .await;
 
@@ -456,7 +456,7 @@ impl ClientModule for PredictionMarketsClientModule {
                 payout: _,
             } => {}
             PredictionMarketsInput::CancelOrder { order: _ } => {}
-            PredictionMarketsInput::ConsumeOrderFreeBalance {
+            PredictionMarketsInput::ConsumeOrderBitcoinBalance {
                 order: _,
                 amount: amount_to_free,
             } => amount = amount_to_free.to_owned(),
@@ -546,7 +546,7 @@ impl ClientModule for PredictionMarketsClientModule {
             "get-market" => {
                 if args.len() != 2 {
                     return Err(anyhow::format_err!(
-                        "`get-market` command expects 1 argument: <market_out_point>"
+                        "`get-market` command expects 1 argument: <market_txid>"
                     ));
                 }
 
@@ -611,7 +611,7 @@ impl ClientModule for PredictionMarketsClientModule {
                 let price =
                     Amount::from_str_in(&args[4].to_string_lossy(), Denomination::MilliSatoshi)?;
 
-                let quantity = ContractAmount(args[5].to_string_lossy().parse()?);
+                let quantity = ContractOfOutcomeAmount(args[5].to_string_lossy().parse()?);
 
                 Ok(serde_json::to_value(
                     client

@@ -36,11 +36,11 @@ pub enum PredictionMarketsInput {
         market: OutPoint,
         outcome: Outcome,
         price: Amount,
-        sources: Vec<ContractSource>,
+        sources: Vec<ContractOfOutcomeSource>,
     },
-    ConsumeOrderFreeBalance {
+    ConsumeOrderBitcoinBalance {
         order: XOnlyPublicKey,
-        amount: Amount
+        amount: Amount,
     },
     CancelOrder {
         order: XOnlyPublicKey,
@@ -65,7 +65,7 @@ pub enum PredictionMarketsOutput {
         market: OutPoint,
         outcome: Outcome,
         price: Amount,
-        quantity: ContractAmount,
+        quantity: ContractOfOutcomeAmount,
     },
 }
 
@@ -77,7 +77,6 @@ pub enum PredictionMarketsOutputOutcome {
 }
 
 /// Errors that might be returned by the server
-// TODO: Move to server lib?
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Error)]
 pub enum PredictionMarketsError {
     // general
@@ -188,7 +187,7 @@ pub struct Payout {
     pub outcome_payouts: Vec<Amount>,
 }
 
-/// Orders are identified by the [XOnlyPublicKey] that controls them. Each [XOnlyPublicKey]
+/// On the server side, Orders are identified by the [XOnlyPublicKey] that controls them. Each [XOnlyPublicKey]
 /// can only control a single order.
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct Order {
@@ -197,23 +196,36 @@ pub struct Order {
     pub outcome: Outcome,
     pub side: Side,
     pub price: Amount,
-    pub original_quantity: ContractAmount,
-    pub time_priority: TimePriority,
+    pub original_quantity: ContractOfOutcomeAmount,
+    pub time_ordering: TimeOrdering,
 
     // mutated
-    pub quantity_waiting_for_match: ContractAmount,
-    pub contract_balance: ContractAmount,
-    pub btc_balance: Amount,
+    pub quantity_waiting_for_match: ContractOfOutcomeAmount,
+    pub contract_of_outcome_balance: ContractOfOutcomeAmount,
+    pub bitcoin_balance: Amount,
 }
 
 /// Same as the ChildID used from the order root secret to derive order owner
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    Encodable,
+    Decodable,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+)]
 pub struct OrderIDClientSide(pub u64);
 
-
-
+/// The id of outcomes starts from 0 like an array. 
 pub type Outcome = u8;
 
+/// Side of order
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub enum Side {
     Buy,
@@ -236,7 +248,7 @@ impl TryFrom<&str> for Side {
         match value.to_lowercase().as_str() {
             "buy" => Ok(Self::Buy),
             "sell" => Ok(Self::Sell),
-            _ => Err(Error::msg("could not parse side"))
+            _ => Err(Error::msg("could not parse side")),
         }
     }
 }
@@ -255,43 +267,43 @@ impl TryFrom<&str> for Side {
     PartialOrd,
     Ord,
 )]
-pub struct ContractAmount(pub u64);
-impl ContractAmount {
-    pub const ZERO: ContractAmount = ContractAmount(0);
+pub struct ContractOfOutcomeAmount(pub u64);
+impl ContractOfOutcomeAmount {
+    pub const ZERO: ContractOfOutcomeAmount = ContractOfOutcomeAmount(0);
 }
 
-impl Add for ContractAmount {
+impl Add for ContractOfOutcomeAmount {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
         Self(
             self.0
                 .checked_add(rhs.0)
-                .expect("PredictionMarkets: ContractAmount: addition overflow"),
+                .expect("PredictionMarkets: ContractOfOutcomeAmount: addition overflow"),
         )
     }
 }
 
-impl Sub for ContractAmount {
+impl Sub for ContractOfOutcomeAmount {
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self::Output {
         Self(
             self.0
                 .checked_sub(rhs.0)
-                .expect("PredictionMarkets: ContractAmount: subtraction overflow"),
+                .expect("PredictionMarkets: ContractOfOutcomeAmount: subtraction overflow"),
         )
     }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
-pub struct TimePriority(pub u64);
+pub struct TimeOrdering(pub u64);
 
 /// new sells use this to specify where to source quantity
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
-pub struct ContractSource {
+pub struct ContractOfOutcomeSource {
     pub order: XOnlyPublicKey,
-    pub amount: ContractAmount,
+    pub quantity: ContractOfOutcomeAmount,
 }
 
 /// Used to represent negative prices.
@@ -304,6 +316,27 @@ pub struct SignedAmount {
 impl SignedAmount {
     pub fn is_negative(&self) -> bool {
         self.negative && self.amount != Amount::ZERO
+    }
+}
+
+impl From<Amount> for SignedAmount {
+    fn from(value: Amount) -> Self {
+        SignedAmount {
+            amount: value,
+            negative: false,
+        }
+    }
+}
+
+impl TryFrom<SignedAmount> for Amount {
+    type Error = anyhow::Error;
+
+    fn try_from(value: SignedAmount) -> Result<Self, Self::Error> {
+        if value.is_negative() {
+            Err(Error::msg("SignedAmount is negative. Amount cannot represent a negative."))
+        } else {
+            Ok(value.amount)
+        }
     }
 }
 
@@ -332,15 +365,6 @@ impl Ord for SignedAmount {
                 }
             }
             (false, false) => self.amount.msats.cmp(&other.amount.msats),
-        }
-    }
-}
-
-impl From<Amount> for SignedAmount {
-    fn from(value: Amount) -> Self {
-        SignedAmount {
-            amount: value,
-            negative: false,
         }
     }
 }
@@ -379,4 +403,3 @@ impl Sub for SignedAmount {
         self + rhs
     }
 }
-

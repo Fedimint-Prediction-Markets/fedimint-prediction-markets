@@ -3,7 +3,7 @@ use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::{impl_db_lookup, impl_db_record, Amount, OutPoint};
 
 #[allow(unused_imports)]
-use fedimint_prediction_markets_common::{Market, Order, Outcome, Payout, Side, TimePriority};
+use fedimint_prediction_markets_common::{Market, Order, Outcome, Payout, Side, TimeOrdering};
 
 use secp256k1::XOnlyPublicKey;
 use serde::Serialize;
@@ -34,8 +34,8 @@ pub enum DbKeyPrefix {
 
     /// Used to produce time priority for new orders
     ///
-    /// Market's [OutPoint] to [TimePriority]
-    NextOrderTimePriority = 0x20,
+    /// Market's [OutPoint] to [TimeOrdering]
+    NextOrderTimeOrdering = 0x20,
 
     /// Used for payouts
     ///
@@ -47,7 +47,7 @@ pub enum DbKeyPrefix {
     /// Amount is (contract_price - price of order) for buys
     /// Amount is (price of order) for sells
     ///
-    /// (Market's [OutPoint], [OutcomeSize], [Side], [Amount], [TimePriority]) to (Order's [XOnlyPublicKey])
+    /// (Market's [OutPoint], [OutcomeSize], [Side], [Amount], [TimeOrdering]) to (Order's [XOnlyPublicKey])
     OrderPriceTimePriority = 0x22,
 
     /// ----- 40-4f reserved for api lookup indexes -----
@@ -112,22 +112,22 @@ impl_db_lookup!(key = OrderKey, query_prefix = OrderPrefixAll,);
 
 /// NextOrderTimePriority
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
-pub struct NextOrderTimePriorityKey {
+pub struct NextOrderTimeOrderingKey {
     pub market: OutPoint,
 }
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct NextOrderTimePriorityPrefixAll;
+pub struct NextOrderTimeOrderingPrefixAll;
 
 impl_db_record!(
-    key = NextOrderTimePriorityKey,
-    value = TimePriority,
-    db_prefix = DbKeyPrefix::NextOrderTimePriority,
+    key = NextOrderTimeOrderingKey,
+    value = TimeOrdering,
+    db_prefix = DbKeyPrefix::NextOrderTimeOrdering,
 );
 
 impl_db_lookup!(
-    key = NextOrderTimePriorityKey,
-    query_prefix = NextOrderTimePriorityPrefixAll
+    key = NextOrderTimeOrderingKey,
+    query_prefix = NextOrderTimeOrderingPrefixAll
 );
 
 /// OrdersByMarket
@@ -164,13 +164,13 @@ pub struct OrderPriceTimePriorityKey {
     pub outcome: Outcome,
     pub side: Side,
     pub price_priority: Amount,
-    pub time_priority: TimePriority,
+    pub time_priority: TimeOrdering,
 }
 
 impl OrderPriceTimePriorityKey {
-    pub fn from_order(order: &Order, market_contract_price: Amount) -> Self {
+    pub fn from_market_and_order(market: &Market, order: &Order) -> Self {
         let price_priority = match order.side {
-            Side::Buy => market_contract_price - order.price,
+            Side::Buy => market.contract_price - order.price,
             Side::Sell => order.price,
         };
 
@@ -179,7 +179,7 @@ impl OrderPriceTimePriorityKey {
             outcome: order.outcome,
             side: order.side,
             price_priority,
-            time_priority: order.time_priority,
+            time_priority: order.time_ordering,
         }
     }
 }

@@ -3,7 +3,7 @@ use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::{plugin_types_trait_impl_config, Amount};
 use serde::{Deserialize, Serialize};
 
-use crate::{PredictionMarketsCommonGen, ContractAmount, Outcome};
+use crate::{PredictionMarketsCommonGen, ContractOfOutcomeAmount, Outcome};
 
 /// Parameters necessary to generate this module's configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,9 +21,9 @@ pub struct PredictionMarketsGenParamsLocal {}
 pub struct PredictionMarketsGenParamsConsensus {
     pub new_market_fee: Amount,
     pub new_order_fee: Amount,
-    pub max_contract_value: Amount,
-    pub max_order_quantity: ContractAmount,
-    pub max_market_outcomes: Outcome
+    pub max_contract_price: Amount,
+    pub max_market_outcomes: Outcome,
+    pub max_order_quantity: ContractOfOutcomeAmount,
 }
 
 impl Default for PredictionMarketsGenParams {
@@ -33,9 +33,9 @@ impl Default for PredictionMarketsGenParams {
             consensus: PredictionMarketsGenParamsConsensus {
                 new_market_fee: Amount::from_sats(100),
                 new_order_fee: Amount::from_sats(1),
-                max_contract_value: Amount::from_sats(100_000_000),
-                max_order_quantity: ContractAmount(1000000),
-                max_market_outcomes: 100
+                max_contract_price: Amount::from_sats(100_000_000),
+                max_market_outcomes: 100,
+                max_order_quantity: ContractOfOutcomeAmount(1000000),
             },
         }
     }
@@ -54,15 +54,15 @@ pub struct PredictionMarketsConfig {
 pub struct PredictionMarketsClientConfig {
     pub new_market_fee: Amount,
     pub new_order_fee: Amount,
-    pub max_contract_value: Amount,
-    pub max_order_quantity: ContractAmount,
-    pub max_market_outcomes: Outcome
+    pub max_contract_price: Amount,
+    pub max_market_outcomes: Outcome,
+    pub max_order_quantity: ContractOfOutcomeAmount,
 }
 
 /// Locally unencrypted config unique to each member
 #[derive(Clone, Debug, Serialize, Deserialize, Decodable, Encodable)]
 pub struct PredictionMarketsConfigLocal {
-    pub examples: String,
+    pub example: String,
 }
 
 /// Will be the same for every federation member
@@ -70,9 +70,9 @@ pub struct PredictionMarketsConfigLocal {
 pub struct PredictionMarketsConfigConsensus {
     pub new_market_fee: Amount,
     pub new_order_fee: Amount,
-    pub max_contract_value: Amount,
-    pub max_order_quantity: ContractAmount,
-    pub max_market_outcomes: Outcome
+    pub max_contract_price: Amount,
+    pub max_market_outcomes: Outcome,
+    pub max_order_quantity: ContractOfOutcomeAmount,
 }
 
 /// Will be encrypted and not shared such as private key material

@@ -8,7 +8,7 @@ use secp256k1::XOnlyPublicKey;
 
 #[apply(async_trait_maybe_send!)]
 pub trait PredictionMarketsFederationApi {
-    async fn get_market(&self, out_point: OutPoint) -> FederationResult<Market>;
+    async fn get_market(&self, out_point: OutPoint) -> FederationResult<Option<Market>>;
     async fn get_order(&self, order: XOnlyPublicKey) -> FederationResult<Option<Order>>;
     async fn get_outcome_control_markets(
         &self,
@@ -21,7 +21,7 @@ impl<T: ?Sized> PredictionMarketsFederationApi for T
 where
     T: IModuleFederationApi + MaybeSend + MaybeSync + 'static,
 {
-    async fn get_market(&self, out_point: OutPoint) -> FederationResult<Market> {
+    async fn get_market(&self, out_point: OutPoint) -> FederationResult<Option<Market>> {
         self.request_current_consensus("get_market".to_string(), ApiRequestErased::new(out_point))
             .await
     }
