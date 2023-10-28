@@ -1,7 +1,8 @@
 use fedimint_core::encoding::{Decodable, Encodable};
 
-use fedimint_core::{impl_db_lookup, impl_db_record, Amount, OutPoint};
+use fedimint_core::{impl_db_lookup, impl_db_record, Amount, OutPoint, PeerId};
 
+use fedimint_prediction_markets_common::UnixTimestamp;
 #[allow(unused_imports)]
 use fedimint_prediction_markets_common::{Market, Order, Outcome, Payout, Side, TimeOrdering};
 
@@ -57,6 +58,14 @@ pub enum DbKeyPrefix {
     ///
     /// ([XOnlyPublicKey], Market's [OutPoint]) to ()
     OutcomeControlMarkets = 0x40,
+
+    /// ----- 50-5f reserved for consensus items -----
+    
+    /// Used for creating an agreed upon timestamp for order
+    /// matching information (candlestick data)
+    /// 
+    /// [PeerId] to [UnixTimestamp] 
+    PeersProposedTimestamp = 0x51,
 }
 
 impl std::fmt::Display for DbKeyPrefix {
@@ -231,6 +240,26 @@ impl_db_lookup!(
     key = OutcomeControlMarketsKey,
     query_prefix = OutcomeControlMarketsPrefix1,
     query_prefix = OutcomeControlMarketsPrefixAll
+);
+
+// PeersProposedTimestamp
+#[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
+pub struct PeersProposedTimestampKey {
+    pub peer_id: PeerId,
+}
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct PeersProposedTimestampPrefixAll;
+
+impl_db_record!(
+    key = PeersProposedTimestampKey,
+    value = UnixTimestamp,
+    db_prefix = DbKeyPrefix::PeersProposedTimestamp,
+);
+
+impl_db_lookup!(
+    key = PeersProposedTimestampKey,
+    query_prefix = PeersProposedTimestampPrefixAll
 );
 
 // template

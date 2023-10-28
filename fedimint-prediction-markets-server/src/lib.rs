@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use std::string::ToString;
+use std::time::Duration;
 
 use anyhow::bail;
 use async_trait::async_trait;
@@ -27,7 +28,7 @@ pub use fedimint_prediction_markets_common::config::{
 };
 use fedimint_prediction_markets_common::{
     ContractOfOutcomeAmount, ContractOfOutcomeSource, Market, Order, Outcome, Side, SignedAmount,
-    TimeOrdering,
+    TimeOrdering, UnixTimestamp,
 };
 pub use fedimint_prediction_markets_common::{
     PredictionMarketsCommonGen, PredictionMarketsConsensusItem, PredictionMarketsError,
@@ -39,8 +40,6 @@ use futures::StreamExt;
 use secp256k1::XOnlyPublicKey;
 
 use strum::IntoEnumIterator;
-
-use tokio::sync::Notify;
 
 mod db;
 
@@ -105,10 +104,13 @@ impl ServerModuleInit for PredictionMarketsGen {
                     },
                     consensus: PredictionMarketsConfigConsensus {
                         new_market_fee: params.consensus.new_market_fee,
-                        new_order_fee: params.consensus.new_order_fee,
                         max_contract_price: params.consensus.max_contract_price,
-                        max_order_quantity: params.consensus.max_order_quantity,
                         max_market_outcomes: params.consensus.max_market_outcomes,
+
+                        new_order_fee: params.consensus.new_order_fee,
+                        max_order_quantity: params.consensus.max_order_quantity,
+
+                        timestamp_interval_seconds: params.consensus.timestamp_interval_seconds,
                     },
                 };
                 (peer, config.to_erased())
@@ -133,10 +135,13 @@ impl ServerModuleInit for PredictionMarketsGen {
             },
             consensus: PredictionMarketsConfigConsensus {
                 new_market_fee: params.consensus.new_market_fee,
-                new_order_fee: params.consensus.new_order_fee,
                 max_contract_price: params.consensus.max_contract_price,
-                max_order_quantity: params.consensus.max_order_quantity,
                 max_market_outcomes: params.consensus.max_market_outcomes,
+
+                new_order_fee: params.consensus.new_order_fee,
+                max_order_quantity: params.consensus.max_order_quantity,
+
+                timestamp_interval_seconds: params.consensus.timestamp_interval_seconds,
             },
         }
         .to_erased())
@@ -252,6 +257,16 @@ impl ServerModuleInit for PredictionMarketsGen {
                         "OutcomeControlMarkets"
                     );
                 }
+                DbKeyPrefix::PeersProposedTimestamp => {
+                    push_db_pair_items!(
+                        dbtx,
+                        db::PeersProposedTimestampPrefixAll,
+                        db::PeersProposedTimestampKey,
+                        UnixTimestamp,
+                        items,
+                        "PeersProposedTimestampKey"
+                    );
+                }
             }
         }
 
@@ -263,9 +278,6 @@ impl ServerModuleInit for PredictionMarketsGen {
 #[derive(Debug)]
 pub struct PredictionMarkets {
     pub cfg: PredictionMarketsConfig,
-
-    /// Notifies us to propose an epoch
-    pub propose_consensus: Notify,
 }
 
 /// Implementation of consensus for the server module
@@ -277,26 +289,63 @@ impl ServerModule for PredictionMarkets {
     type VerificationCache = PredictionMarketsCache;
 
     async fn await_consensus_proposal(&self, dbtx: &mut ModuleDatabaseTransaction<'_>) {
-        // Wait until we have a proposal
-        if !self.consensus_proposal(dbtx).await.forces_new_epoch() {
-            self.propose_consensus.notified().await;
-        }
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+
+        let next_consensus_timestamp = {
+            let mut current = self.get_consensus_timestamp(dbtx).await;
+            current.seconds += self.cfg.consensus.timestamp_interval_seconds;
+            current
+        };
+
+        tokio::time::sleep(next_consensus_timestamp.duration_till()).await;
     }
 
     async fn consensus_proposal(
         &self,
-        _dbtx: &mut ModuleDatabaseTransaction<'_>,
+        dbtx: &mut ModuleDatabaseTransaction<'_>,
     ) -> ConsensusProposal<PredictionMarketsConsensusItem> {
-        ConsensusProposal::new_auto_trigger(vec![])
+        let mut items = vec![];
+
+        let timestamp_to_propose =
+            UnixTimestamp::now().round_down(self.cfg.consensus.timestamp_interval_seconds);
+        let consensus_timestamp = self.get_consensus_timestamp(dbtx).await;
+
+        if timestamp_to_propose > consensus_timestamp {
+            items.push(PredictionMarketsConsensusItem::TimestampProposal(
+                timestamp_to_propose,
+            ));
+        }
+
+        ConsensusProposal::new_auto_trigger(items)
     }
 
     async fn process_consensus_item<'a, 'b>(
         &'a self,
-        _dbtx: &mut ModuleDatabaseTransaction<'b>,
-        _consensus_item: PredictionMarketsConsensusItem,
-        _peer_id: PeerId,
+        dbtx: &mut ModuleDatabaseTransaction<'b>,
+        consensus_item: PredictionMarketsConsensusItem,
+        peer_id: PeerId,
     ) -> anyhow::Result<()> {
-        bail!("currently no consensus items")
+        match consensus_item {
+            PredictionMarketsConsensusItem::TimestampProposal(new) => {
+                if !new.divisible(self.cfg.consensus.timestamp_interval_seconds) {
+                    bail!("new unix timestamp is not divisible by timestamp interval");
+                }
+
+                match dbtx
+                    .insert_entry(&db::PeersProposedTimestampKey { peer_id }, &new)
+                    .await
+                {
+                    Some(current) => {
+                        if new <= current {
+                            bail!("new unix timestamp is not after current unix timestamp")
+                        } else {
+                            Ok(())
+                        }
+                    }
+                    None => Ok(()),
+                }
+            }
+        }
     }
 
     fn build_verification_cache<'a>(
@@ -1118,6 +1167,29 @@ impl PredictionMarkets {
             .expect("should always remove order");
         }
     }
+
+    async fn get_consensus_timestamp(
+        &self,
+        dbtx: &mut ModuleDatabaseTransaction<'_>,
+    ) -> UnixTimestamp {
+        let mut peers_proposed_unix_timestamps: Vec<_> = dbtx
+            .find_by_prefix(&db::PeersProposedTimestampPrefixAll)
+            .await
+            .map(|(_, unix_timestamp)| unix_timestamp)
+            .collect()
+            .await;
+
+        peers_proposed_unix_timestamps.sort_unstable();
+
+        if peers_proposed_unix_timestamps.len() == 0 {
+            UnixTimestamp { seconds: 0 }
+        } else {
+            peers_proposed_unix_timestamps
+                .get(peers_proposed_unix_timestamps.len() / 2)
+                .expect("should always produce timestamp")
+                .to_owned()
+        }
+    }
 }
 
 /// An in-memory cache we could use for faster validation
@@ -1129,9 +1201,6 @@ impl fedimint_core::server::VerificationCache for PredictionMarketsCache {}
 impl PredictionMarkets {
     /// Create new module instance
     pub fn new(cfg: PredictionMarketsConfig) -> PredictionMarkets {
-        PredictionMarkets {
-            cfg,
-            propose_consensus: Notify::new(),
-        }
+        PredictionMarkets { cfg }
     }
 }

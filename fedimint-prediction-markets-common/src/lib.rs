@@ -2,6 +2,7 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::hash::Hash;
 use std::ops::{Add, Sub};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Error;
 use config::PredictionMarketsClientConfig;
@@ -26,7 +27,9 @@ pub const CONSENSUS_VERSION: ModuleConsensusVersion = ModuleConsensusVersion(0);
 
 /// Non-transaction items that will be submitted to consensus
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize, Encodable, Decodable)]
-pub enum PredictionMarketsConsensusItem {}
+pub enum PredictionMarketsConsensusItem {
+    TimestampProposal(UnixTimestamp),
+}
 
 /// Input for a fedimint transaction
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Deserialize, Serialize, Encodable, Decodable)]
@@ -222,7 +225,7 @@ pub struct Order {
 )]
 pub struct OrderIDClientSide(pub u64);
 
-/// The id of outcomes starts from 0 like an array. 
+/// The id of outcomes starts from 0 like an array.
 pub type Outcome = u8;
 
 /// Side of order
@@ -333,7 +336,9 @@ impl TryFrom<SignedAmount> for Amount {
 
     fn try_from(value: SignedAmount) -> Result<Self, Self::Error> {
         if value.is_negative() {
-            Err(Error::msg("SignedAmount is negative. Amount cannot represent a negative."))
+            Err(Error::msg(
+                "SignedAmount is negative. Amount cannot represent a negative.",
+            ))
         } else {
             Ok(value.amount)
         }
@@ -401,5 +406,54 @@ impl Sub for SignedAmount {
         rhs.negative = !rhs.negative;
 
         self + rhs
+    }
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    Encodable,
+    Decodable,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+)]
+pub struct UnixTimestamp {
+    pub seconds: u64,
+}
+
+impl UnixTimestamp {
+    pub fn now() -> Self {
+        UnixTimestamp {
+            seconds: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("failed to get system unix timestamp")
+                .as_secs(),
+        }
+    }
+
+    pub fn round_down(&self, seconds: u64) -> Self {
+        UnixTimestamp {
+            seconds: self.seconds - self.seconds % seconds,
+        }
+    }
+
+    pub fn divisible(&self, seconds: u64) -> bool {
+        self.seconds % seconds == 0
+    }
+
+    pub fn duration_till(&self) -> Duration {
+        Duration::from_secs(self.seconds)
+            .checked_sub(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("failed to get system unix timestamp"),
+            )
+            .unwrap_or(Duration::ZERO)
     }
 }
