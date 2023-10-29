@@ -97,7 +97,7 @@ impl ServerModuleInit for PredictionMarketsGen {
             .map(|&peer| {
                 let config = PredictionMarketsConfig {
                     local: PredictionMarketsConfigLocal {
-                        example: "test".to_owned(),
+                        peer_count: peers.len().try_into().expect("should never fail"),
                     },
                     private: PredictionMarketsConfigPrivate {
                         example: "test".to_owned(),
@@ -121,14 +121,18 @@ impl ServerModuleInit for PredictionMarketsGen {
     /// Generates configs for all peers in an untrusted manner
     async fn distributed_gen(
         &self,
-        _peers: &PeerHandle,
+        peers: &PeerHandle,
         params: &ConfigGenModuleParams,
     ) -> DkgResult<ServerModuleConfig> {
         let params = self.parse_params(params).unwrap();
 
         Ok(PredictionMarketsConfig {
             local: PredictionMarketsConfigLocal {
-                example: "test".to_owned(),
+                peer_count: peers
+                    .peer_ids()
+                    .len()
+                    .try_into()
+                    .expect("should never fail"),
             },
             private: PredictionMarketsConfigPrivate {
                 example: "test".to_owned(),
@@ -1181,14 +1185,17 @@ impl PredictionMarkets {
 
         peers_proposed_unix_timestamps.sort_unstable();
 
-        if peers_proposed_unix_timestamps.len() == 0 {
-            UnixTimestamp { seconds: 0 }
-        } else {
-            peers_proposed_unix_timestamps
-                .get(peers_proposed_unix_timestamps.len() / 2)
-                .expect("should always produce timestamp")
-                .to_owned()
-        }
+        let Some(i) = peers_proposed_unix_timestamps
+            .len()
+            .checked_sub((usize::from(self.cfg.local.peer_count) + 1) / 2)
+        else {
+            return UnixTimestamp::ZERO;
+        };
+
+        peers_proposed_unix_timestamps
+            .get(i)
+            .expect("should always be some")
+            .to_owned()
     }
 }
 

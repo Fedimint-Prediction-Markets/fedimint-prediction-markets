@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use fedimint_core::core::ModuleKind;
 use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::{plugin_types_trait_impl_config, Amount};
@@ -74,7 +72,7 @@ pub struct PredictionMarketsClientConfig {
 /// Locally unencrypted config unique to each member
 #[derive(Clone, Debug, Serialize, Deserialize, Decodable, Encodable)]
 pub struct PredictionMarketsConfigLocal {
-    pub example: String,
+    pub peer_count: u16,
 }
 
 /// Will be the same for every federation member

@@ -428,6 +428,8 @@ pub struct UnixTimestamp {
 }
 
 impl UnixTimestamp {
+    pub const ZERO: Self = Self { seconds: 0 };
+
     pub fn now() -> Self {
         UnixTimestamp {
             seconds: SystemTime::now()
