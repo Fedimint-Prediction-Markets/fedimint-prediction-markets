@@ -60,11 +60,11 @@ pub enum DbKeyPrefix {
     OutcomeControlMarkets = 0x40,
 
     /// ----- 50-5f reserved for consensus items -----
-    
+
     /// Used for creating an agreed upon timestamp for order
     /// matching information (candlestick data)
-    /// 
-    /// [PeerId] to [UnixTimestamp] 
+    ///
+    /// [PeerId] to [UnixTimestamp]
     PeersProposedTimestamp = 0x51,
 }
 
@@ -215,7 +215,7 @@ impl_db_lookup!(
     query_prefix = OrderPriceTimePriorityPrefixAll
 );
 
-// OutcomeControlMarkets
+/// OutcomeControlMarkets
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
 pub struct OutcomeControlMarketsKey {
     pub outcome_control: XOnlyPublicKey,
@@ -242,7 +242,7 @@ impl_db_lookup!(
     query_prefix = OutcomeControlMarketsPrefixAll
 );
 
-// PeersProposedTimestamp
+/// PeersProposedTimestamp
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
 pub struct PeersProposedTimestampKey {
     pub peer_id: PeerId,

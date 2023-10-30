@@ -425,6 +425,7 @@ impl ServerModule for PredictionMarkets {
                 // process order
                 self.process_new_order(
                     dbtx,
+                    &market,
                     owner.to_owned(),
                     market_out_point.to_owned(),
                     outcome.to_owned(),
@@ -674,6 +675,7 @@ impl ServerModule for PredictionMarkets {
                 // process order
                 self.process_new_order(
                     dbtx,
+                    &market,
                     owner.to_owned(),
                     market_out_point.to_owned(),
                     outcome.to_owned(),
@@ -840,6 +842,7 @@ impl PredictionMarkets {
     async fn process_new_order(
         &self,
         dbtx: &mut ModuleDatabaseTransaction<'_>,
+        market: &Market,
         order_owner: XOnlyPublicKey,
         market_out_point: OutPoint,
         outcome: Outcome,
@@ -860,11 +863,6 @@ impl PredictionMarkets {
             bitcoin_balance: Amount::ZERO,
         };
 
-        let market = dbtx
-            .get_value(&db::MarketKey(market_out_point.to_owned()))
-            .await
-            .expect("should always find market");
-
         while order.quantity_waiting_for_match > ContractOfOutcomeAmount::ZERO {
             let own = Self::get_outcome_side_price_quantity(
                 dbtx,
@@ -876,7 +874,7 @@ impl PredictionMarkets {
             let other = Self::get_other_outcome_sides_price_quantity(
                 dbtx,
                 &market_out_point,
-                &market,
+                market,
                 &outcome,
                 &side,
             )
