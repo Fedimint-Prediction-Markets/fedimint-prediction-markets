@@ -1,26 +1,41 @@
-use std::time::Duration;
-
 use fedimint_client::sm::{DynState, OperationId, State, StateTransition};
 use fedimint_client::transaction::TxSubmissionError;
 use fedimint_client::DynGlobalClientContext;
-use fedimint_core::api::GlobalFederationApi;
-use fedimint_core::core::{Decoder, IntoDynInstance, ModuleInstanceId};
+use fedimint_core::core::{IntoDynInstance, ModuleInstanceId};
 use fedimint_core::encoding::{Decodable, Encodable};
-use fedimint_core::{Amount, OutPoint, TransactionId};
-use fedimint_prediction_markets_common::PredictionMarketsOutputOutcome;
-use serde::{Deserialize, Serialize};
-use thiserror::Error;
+use fedimint_core::TransactionId;
+use fedimint_prediction_markets_common::OrderIdClientSide;
+// use serde::{Deserialize, Serialize};
+// use thiserror::Error;
 
-use crate::PredictionMarketsClientContext;
+use crate::{PredictionMarketsClientContext, PredictionMarketsClientModule};
 
-/// Tracks a transaction
+/// Tracks a transaction. Not being used currently for prediction markets
 #[derive(Debug, Clone, Eq, PartialEq, Decodable, Encodable)]
 pub enum PredictionMarketsStateMachine {
-    Input(Amount, TransactionId, OperationId),
-    Output(Amount, TransactionId, OperationId),
-    InputDone(OperationId),
-    OutputDone(Amount, OperationId),
-    Refund(OperationId),
+    NewMarket {
+        operation_id: OperationId,
+        tx_id: TransactionId,
+    },
+    NewMarketAccepted(OperationId),
+    NewMarketFailed(OperationId),
+
+    NewOrder {
+        operation_id: OperationId,
+        tx_id: TransactionId,
+        order: OrderIdClientSide,
+        sources: Vec<OrderIdClientSide>,
+    },
+    NewOrderAccepted(OperationId),
+    NewOrderFailed(OperationId),
+
+    CancelOrder {
+        operation_id: OperationId,
+        tx_id: TransactionId,
+        order: OrderIdClientSide,
+    },
+    CancelOrderAccepted(OperationId),
+    CancelOrderFailed(OperationId),
 }
 
 impl State for PredictionMarketsStateMachine {
@@ -29,51 +44,122 @@ impl State for PredictionMarketsStateMachine {
 
     fn transitions(
         &self,
-        context: &Self::ModuleContext,
+        _context: &Self::ModuleContext,
         global_context: &Self::GlobalContext,
     ) -> Vec<StateTransition<Self>> {
         match self.clone() {
-            PredictionMarketsStateMachine::Input(amount, txid, id) => vec![StateTransition::new(
-                await_tx_accepted(global_context.clone(), id, txid),
-                move |dbtx, res, _state: Self| match res {
-                    // accepted, we are done
-                    Ok(_) => Box::pin(async move { PredictionMarketsStateMachine::InputDone(id) }),
-                    // tx rejected, we refund ourselves
-                    Err(_) => Box::pin(async move {
-                        
-                        PredictionMarketsStateMachine::Refund(id)
-                    }),
-                },
-            )],
-            PredictionMarketsStateMachine::Output(amount, txid, id) => vec![StateTransition::new(
-                await_dummy_output_outcome(
-                    global_context.clone(),
-                    OutPoint { txid, out_idx: 0 },
-                    context.dummy_decoder.clone(),
-                ),
-                move |dbtx, res, _state: Self| match res {
-                    // output accepted, add funds
-                    Ok(_) => Box::pin(async move {
-                        
-                        PredictionMarketsStateMachine::OutputDone(amount, id)
-                    }),
-                    // output rejected, do not add funds
-                    Err(_) => Box::pin(async move { PredictionMarketsStateMachine::Refund(id) }),
-                },
-            )],
-            PredictionMarketsStateMachine::InputDone(_) => vec![],
-            PredictionMarketsStateMachine::OutputDone(_, _) => vec![],
-            PredictionMarketsStateMachine::Refund(_) => vec![],
+            Self::NewMarket {
+                operation_id,
+                tx_id,
+            } => {
+                vec![StateTransition::new(
+                    await_tx_accepted(global_context.clone(), operation_id, tx_id),
+                    move |_dbtx, res, _state: Self| match res {
+                        // tx accepted
+                        Ok(_) => Box::pin(async move {
+                            PredictionMarketsStateMachine::NewMarketAccepted(operation_id)
+                        }),
+                        // tx rejected
+                        Err(_) => Box::pin(async move {
+                            PredictionMarketsStateMachine::NewMarketFailed(operation_id)
+                        }),
+                    },
+                )]
+            }
+            Self::NewMarketAccepted(_) => vec![],
+            Self::NewMarketFailed(_) => vec![],
+
+            Self::NewOrder {
+                operation_id,
+                tx_id,
+                order,
+                sources,
+            } => {
+                vec![StateTransition::new(
+                    await_tx_accepted(global_context.clone(), operation_id, tx_id),
+                    move |dbtx, res, _state: Self| match res {
+                        // tx accepted
+                        Ok(_) => {
+                            let sources = sources.clone();
+                            Box::pin(async move {
+                                PredictionMarketsClientModule::new_order_accepted(
+                                    dbtx.module_tx(),
+                                    order,
+                                    sources,
+                                )
+                                .await;
+                                PredictionMarketsStateMachine::NewOrderAccepted(operation_id)
+                            })
+                        }
+                        // tx rejected
+                        Err(_) => Box::pin(async move {
+                            PredictionMarketsClientModule::new_order_failed(
+                                dbtx.module_tx(),
+                                order,
+                            )
+                            .await;
+                            PredictionMarketsStateMachine::NewOrderFailed(operation_id)
+                        }),
+                    },
+                )]
+            }
+            Self::NewOrderAccepted(_) => vec![],
+            Self::NewOrderFailed(_) => vec![],
+
+            Self::CancelOrder {
+                operation_id,
+                tx_id,
+                order,
+            } => {
+                vec![StateTransition::new(
+                    await_tx_accepted(global_context.clone(), operation_id, tx_id),
+                    move |dbtx, res, _state: Self| match res {
+                        // tx accepted
+                        Ok(_) => Box::pin(async move {
+                            PredictionMarketsClientModule::cancel_order_accepted(
+                                dbtx.module_tx(),
+                                order,
+                            )
+                            .await;
+                            PredictionMarketsStateMachine::CancelOrderAccepted(operation_id)
+                        }),
+                        // tx rejected
+                        Err(_) => Box::pin(async move {
+                            PredictionMarketsStateMachine::CancelOrderFailed(operation_id)
+                        }),
+                    },
+                )]
+            }
+            Self::CancelOrderAccepted(_) => vec![],
+            Self::CancelOrderFailed(_) => vec![],
         }
     }
 
     fn operation_id(&self) -> OperationId {
         match self {
-            PredictionMarketsStateMachine::Input(_, _, id) => *id,
-            PredictionMarketsStateMachine::Output(_, _, id) => *id,
-            PredictionMarketsStateMachine::InputDone(id) => *id,
-            PredictionMarketsStateMachine::OutputDone(_, id) => *id,
-            PredictionMarketsStateMachine::Refund(id) => *id,
+            PredictionMarketsStateMachine::NewMarket {
+                operation_id,
+                tx_id: _,
+            } => *operation_id,
+            PredictionMarketsStateMachine::NewMarketAccepted(operation_id) => *operation_id,
+            PredictionMarketsStateMachine::NewMarketFailed(operation_id) => *operation_id,
+
+            PredictionMarketsStateMachine::NewOrder {
+                operation_id,
+                tx_id: _,
+                order: _,
+                sources: _,
+            } => *operation_id,
+            PredictionMarketsStateMachine::NewOrderAccepted(operation_id) => *operation_id,
+            PredictionMarketsStateMachine::NewOrderFailed(operation_id) => *operation_id,
+
+            PredictionMarketsStateMachine::CancelOrder {
+                operation_id,
+                tx_id: _,
+                order: _,
+            } => *operation_id,
+            PredictionMarketsStateMachine::CancelOrderAccepted(operation_id) => *operation_id,
+            PredictionMarketsStateMachine::CancelOrderFailed(operation_id) => *operation_id,
         }
     }
 }
@@ -87,23 +173,6 @@ async fn await_tx_accepted(
     context.await_tx_accepted(id, txid).await
 }
 
-async fn await_dummy_output_outcome(
-    global_context: DynGlobalClientContext,
-    outpoint: OutPoint,
-    module_decoder: Decoder,
-) -> Result<(), DummyError> {
-    global_context
-        .api()
-        .await_output_outcome::<PredictionMarketsOutputOutcome>(
-            outpoint,
-            Duration::from_millis(i32::MAX as u64),
-            &module_decoder,
-        )
-        .await
-        .map_err(|_| DummyError::DummyInternalError)?;
-    Ok(())
-}
-
 // TODO: Boiler-plate
 impl IntoDynInstance for PredictionMarketsStateMachine {
     type DynType = DynState<DynGlobalClientContext>;
@@ -111,10 +180,4 @@ impl IntoDynInstance for PredictionMarketsStateMachine {
     fn into_dyn(self, instance_id: ModuleInstanceId) -> Self::DynType {
         DynState::from_typed(instance_id, self)
     }
-}
-
-#[derive(Error, Debug, Serialize, Deserialize, Encodable, Decodable, Clone, Eq, PartialEq)]
-pub enum DummyError {
-    #[error("Dummy module had an internal error")]
-    DummyInternalError,
 }

@@ -3,7 +3,7 @@ use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::{plugin_types_trait_impl_config, Amount};
 use serde::{Deserialize, Serialize};
 
-use crate::{PredictionMarketsCommonGen, ContractOfOutcomeAmount, Outcome};
+use crate::{ContractOfOutcomeAmount, Outcome, PredictionMarketsCommonGen};
 
 /// Parameters necessary to generate this module's configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,7 +29,7 @@ pub struct PredictionMarketsGenParamsConsensus {
     pub max_order_quantity: ContractOfOutcomeAmount,
 
     // data creation
-    pub timestamp_interval_seconds: u64
+    pub timestamp_interval_seconds: u64,
 }
 
 impl Default for PredictionMarketsGenParams {
@@ -44,7 +44,7 @@ impl Default for PredictionMarketsGenParams {
                 new_order_fee: Amount::from_sats(1),
                 max_order_quantity: ContractOfOutcomeAmount(1000000),
 
-                timestamp_interval_seconds: 15
+                timestamp_interval_seconds: 15,
             },
         }
     }
@@ -88,7 +88,7 @@ pub struct PredictionMarketsConfigConsensus {
     pub max_order_quantity: ContractOfOutcomeAmount,
 
     // data creation
-    pub timestamp_interval_seconds: u64
+    pub timestamp_interval_seconds: u64,
 }
 
 /// Will be encrypted and not shared such as private key material

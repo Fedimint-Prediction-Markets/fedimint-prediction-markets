@@ -1,25 +1,46 @@
 use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::{impl_db_lookup, impl_db_record, OutPoint};
-use fedimint_prediction_markets_common::{Order, Market, OrderIDClientSide, Outcome};
+use fedimint_prediction_markets_common::{Market, Order, OrderIdClientSide, Outcome};
 
 #[repr(u8)]
 #[derive(Clone, Debug)]
 pub enum DbKeyPrefix {
     /// ----- 00-1f reserved for struct storage -----
-    
-    /// Market's [OutPoint] to [Market]
-    Market = 0x01,
 
-    /// ChildId of order root secret to [Order]
-    Order = 0x02,
+    /// Cache for markets
+    ///
+    /// Market's [OutPoint] to [Market]
+    Market = 0x00,
+
+    /// Cache for orders
+    ///
+    /// [OrderIdClientSide] to [Order]
+    Order = 0x01,
 
     /// ----- 20-3f reserved for lookup indexes -----
-    
-    /// Markets that our outcome control key has some portion of control over to ()
+
+    /// Markets that our outcome control key has some portion of control over.
+    ///
+    /// Market's [OutPoint]  to ()
     OutcomeControlMarkets = 0x20,
 
-    /// (Market's [OutPoint], [OrderIDClientSide]) to ()
-    OrdersByMarketOutcome = 0x21
+    /// Index for orders by market outcome
+    ///
+    /// (Market's [OutPoint], [Outcome], [OrderIdClientSide]) to ()
+    OrdersByMarketOutcome = 0x21,
+
+    /// Index for orders with some kind of balance.
+    ///
+    /// (Market's [OutPoint], [Outcome], [OrderIdClientSide]) to ()
+    NonZeroOrdersByMarketOutcome = 0x22,
+
+    /// ----- 40-4f reserved for client operation -----
+
+    /// Orders are added to this set when they are known to be out of
+    /// date in local db
+    ///
+    /// ([OrderIdClientSide]) to ()
+    OrderNeedsUpdate = 0x40,
 }
 
 // Market
@@ -37,15 +58,18 @@ impl_db_record!(
     db_prefix = DbKeyPrefix::Market,
 );
 
-impl_db_lookup!(
-    key = MarketKey,
-    query_prefix = MarketPrefixAll
-);
+impl_db_lookup!(key = MarketKey, query_prefix = MarketPrefixAll);
 
 // Order
+#[derive(Debug, Encodable, Decodable)]
+pub enum OrderIdSlot {
+    Reserved,
+    Order(Order),
+}
+
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash)]
 pub struct OrderKey {
-    pub id: OrderIDClientSide,
+    pub id: OrderIdClientSide,
 }
 
 #[derive(Debug, Encodable, Decodable)]
@@ -53,12 +77,11 @@ pub struct OrderPrefixAll;
 
 impl_db_record!(
     key = OrderKey,
-    value = Order,
+    value = OrderIdSlot,
     db_prefix = DbKeyPrefix::Order,
 );
 
 impl_db_lookup!(key = OrderKey, query_prefix = OrderPrefixAll);
-
 
 // OutcomeControlMarkets
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash)]
@@ -85,7 +108,7 @@ impl_db_lookup!(
 pub struct OrdersByMarketOutcomeKey {
     pub market: OutPoint,
     pub outcome: Outcome,
-    pub order: OrderIDClientSide
+    pub order: OrderIdClientSide,
 }
 
 #[derive(Debug, Encodable, Decodable)]
@@ -109,6 +132,61 @@ impl_db_lookup!(
     key = OrdersByMarketOutcomeKey,
     query_prefix = OrdersByMarketPrefix1,
     query_prefix = OrdersByMarketPrefix2
+);
+
+// NonZeroOrdersByMarketOutcome
+#[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash)]
+pub struct NonZeroOrdersByMarketOutcomeKey {
+    pub market: OutPoint,
+    pub outcome: Outcome,
+    pub order: OrderIdClientSide,
+}
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct NonZeroOrdersByMarketOutcomePrefixAll;
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct NonZeroOrdersByMarketOutcomePrefix1 {
+    pub market: OutPoint,
+}
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct NonZeroOrdersByMarketOutcomePrefix2 {
+    pub market: OutPoint,
+    pub outcome: Outcome,
+}
+
+impl_db_record!(
+    key = NonZeroOrdersByMarketOutcomeKey,
+    value = (),
+    db_prefix = DbKeyPrefix::NonZeroOrdersByMarketOutcome,
+);
+
+impl_db_lookup!(
+    key = NonZeroOrdersByMarketOutcomeKey,
+    query_prefix = NonZeroOrdersByMarketOutcomePrefixAll,
+    query_prefix = NonZeroOrdersByMarketOutcomePrefix1,
+    query_prefix = NonZeroOrdersByMarketOutcomePrefix2
+);
+
+// OrderNeedsUpdate
+#[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash)]
+pub struct OrderNeedsUpdateKey {
+    pub order: OrderIdClientSide,
+}
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct OrderNeedsUpdatePrefixAll;
+
+impl_db_record!(
+    key = OrderNeedsUpdateKey,
+    value = (),
+    db_prefix = DbKeyPrefix::OrderNeedsUpdate,
+);
+
+impl_db_lookup!(
+    key = OrderNeedsUpdateKey,
+    query_prefix = OrderNeedsUpdatePrefixAll
 );
 
 // template

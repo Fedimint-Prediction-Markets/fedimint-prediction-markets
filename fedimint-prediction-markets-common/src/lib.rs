@@ -61,7 +61,7 @@ pub enum PredictionMarketsOutput {
         contract_price: Amount,
         outcomes: Outcome,
         outcome_control: XOnlyPublicKey,
-        description: MarketDescription,
+        description: MarketInformation,
     },
     NewBuyOrder {
         owner: XOnlyPublicKey,
@@ -174,15 +174,42 @@ pub struct Market {
     pub contract_price: Amount,
     pub outcomes: Outcome,
     pub outcome_control: XOnlyPublicKey,
-    pub description: MarketDescription,
+    pub description: MarketInformation,
 
     // mutated
     pub payout: Option<Payout>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
-pub struct MarketDescription {
+pub struct MarketInformation {
     pub title: String,
+    pub description: String,
+
+    pub outcome_titles: Vec<String>,
+    pub expected_payout_time: UnixTimestamp,
+}
+
+impl MarketInformation {
+    // sane default size limits
+    const MAX_TITLE_LENGTH: usize = 150;
+    const MAX_DESCRIPTION_LENGTH: usize = 500;
+    const MAX_OUTCOME_TITLE_LENGTH: usize = 64;
+
+    pub fn validate(&self, outcomes: Outcome) -> Result<(), ()> {
+        if self.title.len() > Self::MAX_TITLE_LENGTH
+            || self.description.len() > Self::MAX_DESCRIPTION_LENGTH
+            || self.outcome_titles.len() != usize::from(outcomes)
+        {
+            return Err(());
+        }
+        for outcome_title in &self.outcome_titles {
+            if outcome_title.len() > Self::MAX_OUTCOME_TITLE_LENGTH {
+                return Err(());
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
@@ -223,7 +250,7 @@ pub struct Order {
     PartialOrd,
     Ord,
 )]
-pub struct OrderIDClientSide(pub u64);
+pub struct OrderIdClientSide(pub u64);
 
 /// The id of outcomes starts from 0 like an array.
 pub type Outcome = u8;
