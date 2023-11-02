@@ -28,12 +28,12 @@ pub enum DbKeyPrefix {
     /// Index for orders by market outcome
     ///
     /// (Market's [OutPoint], [Outcome], [OrderIdClientSide]) to ()
-    OrdersByMarketOutcome = 0x22,
+    OrdersByMarketOutcome = 0x21,
 
     /// Index for orders with some kind of balance.
     ///
     /// (Market's [OutPoint], [Outcome], [OrderIdClientSide]) to ()
-    NonZeroOrdersByMarketOutcome = 0x23,
+    NonZeroOrdersByMarketOutcome = 0x22,
 
     /// ----- 40-4f reserved for client operation -----
 
