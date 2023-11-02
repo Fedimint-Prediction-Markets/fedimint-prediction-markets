@@ -1,6 +1,7 @@
 use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::{impl_db_lookup, impl_db_record, OutPoint};
-use fedimint_prediction_markets_common::{Market, Order, OrderIdClientSide, Outcome};
+#[allow(unused_imports)]
+use fedimint_prediction_markets_common::{Market, Order, OrderIdClientSide, Outcome, UnixTimestamp};
 
 #[repr(u8)]
 #[derive(Clone, Debug)]
@@ -21,18 +22,18 @@ pub enum DbKeyPrefix {
 
     /// Markets that our outcome control key has some portion of control over.
     ///
-    /// Market's [OutPoint]  to ()
+    /// (Market's creation time [UnixTimestamp], Market's [OutPoint]) to ()
     OutcomeControlMarkets = 0x20,
 
     /// Index for orders by market outcome
     ///
     /// (Market's [OutPoint], [Outcome], [OrderIdClientSide]) to ()
-    OrdersByMarketOutcome = 0x21,
+    OrdersByMarketOutcome = 0x22,
 
     /// Index for orders with some kind of balance.
     ///
     /// (Market's [OutPoint], [Outcome], [OrderIdClientSide]) to ()
-    NonZeroOrdersByMarketOutcome = 0x22,
+    NonZeroOrdersByMarketOutcome = 0x23,
 
     /// ----- 40-4f reserved for client operation -----
 
@@ -86,6 +87,7 @@ impl_db_lookup!(key = OrderKey, query_prefix = OrderPrefixAll);
 // OutcomeControlMarkets
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash)]
 pub struct OutcomeControlMarketsKey {
+    pub market_created: UnixTimestamp,
     pub market: OutPoint,
 }
 
@@ -112,12 +114,15 @@ pub struct OrdersByMarketOutcomeKey {
 }
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct OrdersByMarketPrefix1 {
+pub struct OrdersByMarketOutcomePrefixAll;
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct OrdersByMarketOutcomePrefix1 {
     pub market: OutPoint,
 }
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct OrdersByMarketPrefix2 {
+pub struct OrdersByMarketOutcomePrefix2 {
     pub market: OutPoint,
     pub outcome: Outcome,
 }
@@ -130,8 +135,9 @@ impl_db_record!(
 
 impl_db_lookup!(
     key = OrdersByMarketOutcomeKey,
-    query_prefix = OrdersByMarketPrefix1,
-    query_prefix = OrdersByMarketPrefix2
+    query_prefix = OrdersByMarketOutcomePrefixAll,
+    query_prefix = OrdersByMarketOutcomePrefix1,
+    query_prefix = OrdersByMarketOutcomePrefix2
 );
 
 // NonZeroOrdersByMarketOutcome

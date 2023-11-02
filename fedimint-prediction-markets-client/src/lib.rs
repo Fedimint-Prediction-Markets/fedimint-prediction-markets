@@ -21,8 +21,8 @@ use fedimint_core::module::{
     TransactionItemAmount,
 };
 use fedimint_prediction_markets_common::{
-    ContractOfOutcomeAmount, ContractOfOutcomeSource, Market, MarketInformation, Order,
-    OrderIdClientSide, Outcome, Payout, Side, UnixTimestamp,
+    ContractOfOutcomeAmount, Market, MarketInformation, Order, OrderIdClientSide, Outcome, Side,
+    UnixTimestamp, Weight, WeightRequired,
 };
 
 use fedimint_core::{apply, async_trait_maybe_send, Amount, OutPoint, TransactionId};
@@ -45,12 +45,17 @@ mod states;
 /// Exposed API calls for client apps
 #[apply(async_trait_maybe_send!)]
 pub trait OddsMarketsClientExt {
+    /// Get outcome control public key that client controls.
+    fn get_outcome_control_public_key(&self) -> XOnlyPublicKey;
+
     /// Create new market
     async fn new_market(
         &self,
         contract_price: Amount,
         outcomes: Outcome,
-        description: MarketInformation,
+        outcome_control_weights: BTreeMap<XOnlyPublicKey, Weight>,
+        weight_required: WeightRequired,
+        information: MarketInformation,
     ) -> anyhow::Result<OutPoint>;
 
     /// Get Market
@@ -59,6 +64,12 @@ pub trait OddsMarketsClientExt {
         market: OutPoint,
         from_local_cache: bool,
     ) -> anyhow::Result<Option<Market>>;
+
+    /// Get all market [OutPoint]s that our outcome control key has some sort of authority over
+    async fn get_outcome_control_markets(
+        &self,
+        sync_new_markets: bool,
+    ) -> anyhow::Result<Vec<OutPoint>>;
 
     /// Payout market
     async fn payout_market(
@@ -87,35 +98,52 @@ pub trait OddsMarketsClientExt {
     /// Cancel order
     async fn cancel_order(&self, id: OrderIdClientSide) -> anyhow::Result<()>;
 
-    /// Update all orders in db that could have possibly changed
-    /// Optionally provide a market to update only orders belonging to that market
-    async fn sync_orders(&self, market: Option<OutPoint>) -> anyhow::Result<()>;
+    /// Get all orders that could possibly be unsynced between federation and local order cache
+    /// Optionally provide a market (and outcome) to update only orders belonging to that market (and outcome)
+    async fn sync_orders(
+        &self,
+        market: Option<OutPoint>,
+        outcome: Option<Outcome>,
+        sync_possible_payouts: bool,
+    ) -> anyhow::Result<()>;
 
     /// Get all orders in the db.
-    async fn get_all_orders_from_db(&self) -> BTreeMap<OrderIdClientSide, Order>;
+    /// Optionally provide a market (and outcome) to get only orders belonging to that market (and outcome)
+    async fn get_orders_from_db(
+        &self,
+        market: Option<OutPoint>,
+        outcome: Option<Outcome>,
+    ) -> BTreeMap<OrderIdClientSide, Order>;
 }
 
 #[apply(async_trait_maybe_send!)]
 impl OddsMarketsClientExt for Client {
+    fn get_outcome_control_public_key(&self) -> XOnlyPublicKey {
+        let (prediction_markets, _) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+
+        let key = prediction_markets.get_outcome_control_key_pair();
+
+        XOnlyPublicKey::from_keypair(&key).0
+    }
+
     async fn new_market(
         &self,
         contract_price: Amount,
         outcomes: Outcome,
-        description: MarketInformation,
+        outcome_control_weights: BTreeMap<XOnlyPublicKey, Weight>,
+        weight_required: WeightRequired,
+        information: MarketInformation,
     ) -> anyhow::Result<OutPoint> {
-        let (prediction_markets, instance) =
-            self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+        let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
         let operation_id = OperationId::new_random();
-
-        let key = prediction_markets.get_market_outcome_control_key_pair();
-        let (outcome_control, _) = XOnlyPublicKey::from_keypair(&key);
 
         let output = ClientOutput {
             output: PredictionMarketsOutput::NewMarket {
                 contract_price,
                 outcomes,
-                outcome_control,
-                description,
+                outcome_control_weights,
+                weight_required,
+                information,
             },
             state_machines: Arc::new(move |tx_id, _| {
                 vec![PredictionMarketsStateMachine::NewMarket {
@@ -161,6 +189,20 @@ impl OddsMarketsClientExt for Client {
                 .await),
 
             false => {
+                // if in finished state in db, just return db version
+                {
+                    let market = dbtx
+                        .get_value(&db::MarketKey {
+                            market: market_out_point,
+                        })
+                        .await;
+                    if let Some(market) = market {
+                        if market.payout.is_some() {
+                            return Ok(Some(market));
+                        }
+                    }
+                }
+
                 let market_option = instance.api.get_market(market_out_point).await?;
 
                 if let Some(market) = market_option.as_ref() {
@@ -179,6 +221,63 @@ impl OddsMarketsClientExt for Client {
         }
     }
 
+    async fn get_outcome_control_markets(
+        &self,
+        sync_new_markets: bool,
+    ) -> anyhow::Result<Vec<OutPoint>> {
+        let (prediction_markets, instance) =
+            self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+
+        let mut dbtx = instance.db.begin_transaction().await;
+
+        if sync_new_markets {
+            let outcome_control =
+                XOnlyPublicKey::from_keypair(&prediction_markets.get_outcome_control_key_pair()).0;
+            let markets_created_after_and_including = {
+                let mut stream = dbtx
+                    .find_by_prefix_sorted_descending(&db::OutcomeControlMarketsPrefixAll)
+                    .await;
+
+                stream
+                    .next()
+                    .await
+                    .map(|(key, _)| key.market_created)
+                    .unwrap_or(UnixTimestamp::ZERO)
+            };
+            let get_outcome_control_markets_result = instance
+                .api
+                .get_outcome_control_markets(outcome_control, markets_created_after_and_including)
+                .await?;
+
+            for market_out_point in get_outcome_control_markets_result.markets {
+                let market = self
+                    .get_market(market_out_point, false)
+                    .await?
+                    .expect("should always produce market");
+
+                dbtx.insert_entry(
+                    &db::OutcomeControlMarketsKey {
+                        market_created: market.created_consensus_timestamp,
+                        market: market_out_point,
+                    },
+                    &(),
+                )
+                .await;
+            }
+        }
+
+        let markets = dbtx
+            .find_by_prefix(&db::OutcomeControlMarketsPrefixAll)
+            .await
+            .map(|(key, _)| key.market)
+            .collect::<Vec<_>>()
+            .await;
+
+        dbtx.commit_tx().await;
+
+        Ok(markets)
+    }
+
     async fn payout_market(
         &self,
         market_out_point: OutPoint,
@@ -188,12 +287,13 @@ impl OddsMarketsClientExt for Client {
             self.get_first_module::<PredictionMarketsClientModule>(&KIND);
         let op_id = OperationId::new_random();
 
-        let outcome_control_key = prediction_markets.get_market_outcome_control_key_pair();
+        let outcome_control_key = prediction_markets.get_outcome_control_key_pair();
 
         let input = ClientInput {
-            input: PredictionMarketsInput::PayoutMarket {
+            input: PredictionMarketsInput::PayoutProposal {
                 market: market_out_point,
-                payout: Payout { outcome_payouts },
+                outcome_control: XOnlyPublicKey::from_keypair(&outcome_control_key).0,
+                outcome_payouts,
             },
             state_machines: Arc::new(move |_, _| Vec::<PredictionMarketsStateMachine>::new()),
             keys: vec![outcome_control_key],
@@ -269,7 +369,7 @@ impl OddsMarketsClientExt for Client {
                 tx = tx.with_output(output.into_dyn(instance.id));
             }
             Side::Sell => {
-                let mut sources_for_input = vec![];
+                let mut sources_for_input = BTreeMap::new();
                 let mut sources_for_state_machine = vec![];
                 let mut sources_keys = vec![];
 
@@ -292,17 +392,16 @@ impl OddsMarketsClientExt for Client {
                         continue;
                     }
 
+                    let order_key = prediction_markets.order_id_to_key_pair(order_id);
                     let quantity_sourced_from_order = order
                         .contract_of_outcome_balance
                         .min(quantity - sourced_quantity);
-                    sources_for_input.push(ContractOfOutcomeSource {
-                        order: XOnlyPublicKey::from_keypair(&order_key).0,
-                        quantity: quantity_sourced_from_order,
-                    });
 
+                    sources_for_input.insert(
+                        XOnlyPublicKey::from_keypair(&order_key).0,
+                        quantity_sourced_from_order,
+                    );
                     sources_for_state_machine.push(order_id);
-
-                    let order_key = prediction_markets.order_id_to_key_pair(order_id);
                     sources_keys.push(order_key);
 
                     sourced_quantity = sourced_quantity + quantity_sourced_from_order;
@@ -436,7 +535,12 @@ impl OddsMarketsClientExt for Client {
         Ok(())
     }
 
-    async fn sync_orders(&self, market: Option<OutPoint>) -> anyhow::Result<()> {
+    async fn sync_orders(
+        &self,
+        market: Option<OutPoint>,
+        outcome: Option<Outcome>,
+        sync_possible_payouts: bool,
+    ) -> anyhow::Result<()> {
         let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
         let mut dbtx = instance.db.begin_transaction().await;
 
@@ -448,15 +552,28 @@ impl OddsMarketsClientExt for Client {
                     .collect()
                     .await
             }
-            Some(market) => {
-                dbtx.find_by_prefix(&db::NonZeroOrdersByMarketOutcomePrefix1 { market })
+            Some(market) => match outcome {
+                None => {
+                    dbtx.find_by_prefix(&db::NonZeroOrdersByMarketOutcomePrefix1 { market })
+                        .await
+                        .map(|(key, _)| key.order)
+                        .collect()
+                        .await
+                }
+                Some(outcome) => {
+                    dbtx.find_by_prefix(&db::NonZeroOrdersByMarketOutcomePrefix2 {
+                        market,
+                        outcome,
+                    })
                     .await
                     .map(|(key, _)| key.order)
                     .collect()
                     .await
-            }
+                }
+            },
         };
-        let mut non_zero_quantity_for_match_orders = vec![];
+
+        let mut possibly_changed_orders = vec![];
         for order_id in non_zero_orders {
             let order = self
                 .get_order(order_id, true)
@@ -464,13 +581,16 @@ impl OddsMarketsClientExt for Client {
                 .expect("should never error because from local cache")
                 .expect("should always produce order");
 
-            if order.quantity_waiting_for_match == ContractOfOutcomeAmount::ZERO {
+            if order.quantity_waiting_for_match == ContractOfOutcomeAmount::ZERO
+                && (!sync_possible_payouts
+                    || order.contract_of_outcome_balance == ContractOfOutcomeAmount::ZERO)
+            {
                 continue;
             }
 
-            non_zero_quantity_for_match_orders.push(order_id);
+            possibly_changed_orders.push(order_id);
         }
-        let get_order_futures = non_zero_quantity_for_match_orders
+        let get_order_futures = possibly_changed_orders
             .iter()
             .map(|id| async { self.get_order(id.to_owned(), false).await });
         let results = future::join_all(get_order_futures).await;
@@ -495,20 +615,48 @@ impl OddsMarketsClientExt for Client {
         Ok(())
     }
 
-    async fn get_all_orders_from_db(&self) -> BTreeMap<OrderIdClientSide, Order> {
+    async fn get_orders_from_db(
+        &self,
+        market: Option<OutPoint>,
+        outcome: Option<Outcome>,
+    ) -> BTreeMap<OrderIdClientSide, Order> {
         let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
         let mut dbtx = instance.db.begin_transaction().await;
 
-        let mut order_stream = dbtx.find_by_prefix(&db::OrderPrefixAll).await;
+        let orders_by_market_outcome_result: Vec<_> = match market {
+            None => {
+                dbtx.find_by_prefix(&db::OrdersByMarketOutcomePrefixAll)
+                    .await
+                    .collect()
+                    .await
+            }
+            Some(market) => match outcome {
+                None => {
+                    dbtx.find_by_prefix(&db::OrdersByMarketOutcomePrefix1 { market })
+                        .await
+                        .collect()
+                        .await
+                }
+                Some(outcome) => {
+                    dbtx.find_by_prefix(&db::OrdersByMarketOutcomePrefix2 { market, outcome })
+                        .await
+                        .collect()
+                        .await
+                }
+            },
+        };
+
         let mut orders = BTreeMap::new();
-        loop {
-            let Some((key, value)) = order_stream.next().await else {
-                break;
-            };
-            let OrderIdSlot::Order(order) = value else {
-                continue;
-            };
-            orders.insert(key.id, order);
+        for order_id in orders_by_market_outcome_result
+            .iter()
+            .map(|(key, _)| key.order)
+        {
+            let order = self
+                .get_order(order_id, true)
+                .await
+                .expect("should never error")
+                .expect("should always be some");
+            orders.insert(order_id, order);
         }
 
         orders
@@ -526,7 +674,7 @@ impl PredictionMarketsClientModule {
     const MARKET_OUTCOME_CONTROL_FROM_ROOT_SECRET: ChildId = ChildId(0);
     const ORDER_FROM_ROOT_SECRET: ChildId = ChildId(1);
 
-    fn get_market_outcome_control_key_pair(&self) -> KeyPair {
+    fn get_outcome_control_key_pair(&self) -> KeyPair {
         self.root_secret
             .child_key(Self::MARKET_OUTCOME_CONTROL_FROM_ROOT_SECRET)
             .to_secp_key(&Secp256k1::new())
@@ -640,9 +788,10 @@ impl ClientModule for PredictionMarketsClientModule {
         let mut fee = Amount::ZERO;
 
         match input {
-            PredictionMarketsInput::PayoutMarket {
+            PredictionMarketsInput::PayoutProposal {
                 market: _,
-                payout: _,
+                outcome_control: _,
+                outcome_payouts: _,
             } => {}
             PredictionMarketsInput::CancelOrder { order: _ } => {}
             PredictionMarketsInput::ConsumeOrderBitcoinBalance {
@@ -674,8 +823,9 @@ impl ClientModule for PredictionMarketsClientModule {
             PredictionMarketsOutput::NewMarket {
                 contract_price: _,
                 outcomes: _,
-                outcome_control: _,
-                description: _,
+                outcome_control_weights: _,
+                weight_required: _,
+                information: _,
             } => {
                 fee = self.cfg.new_market_fee;
             }
@@ -708,6 +858,10 @@ impl ClientModule for PredictionMarketsClientModule {
         let command = args[0].to_string_lossy();
 
         match command.as_ref() {
+            "get-outcome-control-public-key" => {
+                Ok(serde_json::to_value(client.get_outcome_control_public_key())?)
+            }
+
             "new-market" => {
                 if args.len() != 3 {
                     return Err(anyhow::format_err!(
@@ -719,10 +873,17 @@ impl ClientModule for PredictionMarketsClientModule {
                     Amount::from_str_in(&args[1].to_string_lossy(), Denomination::MilliSatoshi)?;
                 let outcomes: Outcome = args[2].to_string_lossy().parse()?;
 
+                let mut outcome_control_weights = BTreeMap::new();
+                outcome_control_weights.insert(client.get_outcome_control_public_key(), 1);
+
+                let weight_required = 2;
+
                 let market_out_point = client
                     .new_market(
                         contract_price,
                         outcomes,
+                        outcome_control_weights,
+                        weight_required,
                         MarketInformation {
                             title: "my market".to_owned(),
                             description: "this is my market".to_owned(),
@@ -755,6 +916,10 @@ impl ClientModule for PredictionMarketsClientModule {
                 let out_point = OutPoint { txid, out_idx: 0 };
 
                 Ok(serde_json::to_value(client.get_market(out_point, false).await?)?)
+            }
+
+            "get-outcome-control-markets" => {
+                Ok(serde_json::to_value(client.get_outcome_control_markets(true).await?)?)
             }
 
             "payout-market" => {
@@ -819,9 +984,23 @@ impl ClientModule for PredictionMarketsClientModule {
             }
 
             "list-orders" => {
-                let orders = client.get_all_orders_from_db().await;
+                if args.len() < 1 || args.len() > 3{
+                    return Err(anyhow::format_err!(
+                        "`list-orders` command only accepts 2 argument: (market_out_point) (outcome)"
+                    ));
+                }
 
-                Ok(serde_json::to_value(orders)?)
+                let mut market: Option<OutPoint> = None;
+                if let Some(arg_tx_id) = args.get(1) {
+                    market = Some(OutPoint{txid: TransactionId::from_str(&arg_tx_id.to_string_lossy())?, out_idx: 0});
+                };
+
+                let mut outcome: Option<Outcome> = None;
+                if let Some(arg_outcome) = args.get(2) {
+                    outcome = Some(Outcome::from_str(&arg_outcome.to_string_lossy())?);
+                }
+
+                Ok(serde_json::to_value(client.get_orders_from_db(market, outcome).await)?)
             }
 
             "get-order" => {
@@ -851,18 +1030,23 @@ impl ClientModule for PredictionMarketsClientModule {
             }
 
             "sync-orders" => {
-                if args.len() != 1 && args.len() != 2 {
+                if args.len() < 1 || args.len() > 3{
                     return Err(anyhow::format_err!(
-                        "`sync-order` command only accepts 1 argument: <market_out_point>"
+                        "`sync-order` command only accepts 2 argument: (market_out_point) (outcome)"
                     ));
                 }
 
                 let mut market: Option<OutPoint> = None;
-                if let Ok(tx_id) = TransactionId::from_str(&args[1].to_string_lossy()) {
-                    market = Some(OutPoint{txid: tx_id, out_idx: 0});
+                if let Some(arg_tx_id) = args.get(1) {
+                    market = Some(OutPoint{txid: TransactionId::from_str(&arg_tx_id.to_string_lossy())?, out_idx: 0});
                 };
 
-                Ok(serde_json::to_value(client.sync_orders(market).await?)?)
+                let mut outcome: Option<Outcome> = None;
+                if let Some(arg_outcome) = args.get(2) {
+                    outcome = Some(Outcome::from_str(&arg_outcome.to_string_lossy())?);
+                }
+
+                Ok(serde_json::to_value(client.sync_orders(market, outcome, true).await?)?)
             }
 
             command => Err(anyhow::format_err!(

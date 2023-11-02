@@ -20,6 +20,13 @@ pub enum PredictionMarketsStateMachine {
     NewMarketAccepted(OperationId),
     NewMarketFailed(OperationId),
 
+    PayoutMarket {
+        operation_id: OperationId,
+        tx_id: TransactionId,
+    },
+    PayoutMarketAccepted(OperationId),
+    PayoutMarketFailed(OperationId),
+
     NewOrder {
         operation_id: OperationId,
         tx_id: TransactionId,
@@ -68,6 +75,27 @@ impl State for PredictionMarketsStateMachine {
             }
             Self::NewMarketAccepted(_) => vec![],
             Self::NewMarketFailed(_) => vec![],
+
+            Self::PayoutMarket {
+                operation_id,
+                tx_id,
+            } => {
+                vec![StateTransition::new(
+                    await_tx_accepted(global_context.clone(), operation_id, tx_id),
+                    move |_dbtx, res, _state: Self| match res {
+                        // tx accepted
+                        Ok(_) => Box::pin(async move {
+                            PredictionMarketsStateMachine::PayoutMarketAccepted(operation_id)
+                        }),
+                        // tx rejected
+                        Err(_) => Box::pin(async move {
+                            PredictionMarketsStateMachine::PayoutMarketFailed(operation_id)
+                        }),
+                    },
+                )]
+            }
+            Self::PayoutMarketAccepted(_) => vec![],
+            Self::PayoutMarketFailed(_) => vec![],
 
             Self::NewOrder {
                 operation_id,
@@ -137,29 +165,36 @@ impl State for PredictionMarketsStateMachine {
 
     fn operation_id(&self) -> OperationId {
         match self {
-            PredictionMarketsStateMachine::NewMarket {
+            Self::NewMarket {
                 operation_id,
                 tx_id: _,
             } => *operation_id,
-            PredictionMarketsStateMachine::NewMarketAccepted(operation_id) => *operation_id,
-            PredictionMarketsStateMachine::NewMarketFailed(operation_id) => *operation_id,
+            Self::NewMarketAccepted(operation_id) => *operation_id,
+            Self::NewMarketFailed(operation_id) => *operation_id,
 
-            PredictionMarketsStateMachine::NewOrder {
+            Self::PayoutMarket {
+                operation_id,
+                tx_id: _,
+            } => *operation_id,
+            Self::PayoutMarketAccepted(operation_id) => *operation_id,
+            Self::PayoutMarketFailed(operation_id) => *operation_id,
+
+            Self::NewOrder {
                 operation_id,
                 tx_id: _,
                 order: _,
                 sources: _,
             } => *operation_id,
-            PredictionMarketsStateMachine::NewOrderAccepted(operation_id) => *operation_id,
-            PredictionMarketsStateMachine::NewOrderFailed(operation_id) => *operation_id,
+            Self::NewOrderAccepted(operation_id) => *operation_id,
+            Self::NewOrderFailed(operation_id) => *operation_id,
 
-            PredictionMarketsStateMachine::CancelOrder {
+            Self::CancelOrder {
                 operation_id,
                 tx_id: _,
                 order: _,
             } => *operation_id,
-            PredictionMarketsStateMachine::CancelOrderAccepted(operation_id) => *operation_id,
-            PredictionMarketsStateMachine::CancelOrderFailed(operation_id) => *operation_id,
+            Self::CancelOrderAccepted(operation_id) => *operation_id,
+            Self::CancelOrderFailed(operation_id) => *operation_id,
         }
     }
 }

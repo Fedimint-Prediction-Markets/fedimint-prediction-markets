@@ -48,21 +48,28 @@ pub enum DbKeyPrefix {
     /// Amount is (contract_price - price of order) for buys
     /// Amount is (price of order) for sells
     ///
-    /// (Market's [OutPoint], [OutcomeSize], [Side], [Amount], [TimeOrdering]) to (Order's [XOnlyPublicKey])
+    /// (Market's [OutPoint], [Outcome], [Side], [Amount], [TimeOrdering]) to (Order's [XOnlyPublicKey])
     OrderPriceTimePriority = 0x22,
+
+    /// These keys are used to implement threshold payouts.
+    ///
+    /// (Market's [OutPoint], [XOnlyPublicKey]) to [Vec<Amount>]
+    MarketOutcomeControlVote = 0x23,
+    /// (Market's [OutPoint], [Vec<Amount>], [XOnlyPublicKey]) to ()
+    MarketOutcomePayoutsVotes = 0x24,
 
     /// ----- 40-4f reserved for api lookup indexes -----
 
     /// Indexes outcome control keys to the markets they belong to
     /// Used by client for data recovery in case of data loss
     ///
-    /// ([XOnlyPublicKey], Market's [OutPoint]) to ()
+    /// ([XOnlyPublicKey], [UnixTimestamp], Market's [OutPoint]) to ()
     OutcomeControlMarkets = 0x40,
 
     /// ----- 50-5f reserved for consensus items -----
 
-    /// Used for creating an agreed upon timestamp for order
-    /// matching information (candlestick data)
+    /// Stores timestamps proposed by peers.
+    /// Used to create consensus timestamps.
     ///
     /// [PeerId] to [UnixTimestamp]
     PeersProposedTimestamp = 0x51,
@@ -219,8 +226,12 @@ impl_db_lookup!(
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
 pub struct OutcomeControlMarketsKey {
     pub outcome_control: XOnlyPublicKey,
+    pub market_created: UnixTimestamp,
     pub market: OutPoint,
 }
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct OutcomeControlMarketsPrefixAll;
 
 #[derive(Debug, Encodable, Decodable)]
 pub struct OutcomeControlMarketsPrefix1 {
@@ -228,7 +239,10 @@ pub struct OutcomeControlMarketsPrefix1 {
 }
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct OutcomeControlMarketsPrefixAll;
+pub struct OutcomeControlMarketsPrefix2 {
+    pub outcome_control: XOnlyPublicKey,
+    pub market_created: UnixTimestamp,
+}
 
 impl_db_record!(
     key = OutcomeControlMarketsKey,
@@ -238,8 +252,9 @@ impl_db_record!(
 
 impl_db_lookup!(
     key = OutcomeControlMarketsKey,
+    query_prefix = OutcomeControlMarketsPrefixAll,
     query_prefix = OutcomeControlMarketsPrefix1,
-    query_prefix = OutcomeControlMarketsPrefixAll
+    query_prefix = OutcomeControlMarketsPrefix2
 );
 
 /// PeersProposedTimestamp
@@ -260,6 +275,56 @@ impl_db_record!(
 impl_db_lookup!(
     key = PeersProposedTimestampKey,
     query_prefix = PeersProposedTimestampPrefixAll
+);
+
+// MarketOutcomeControlVote
+#[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
+pub struct MarketOutcomeControlVoteKey {
+    pub market: OutPoint,
+    pub outcome_control: XOnlyPublicKey,
+}
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct MarketOutcomeControlVotePrefixAll;
+
+impl_db_record!(
+    key = MarketOutcomeControlVoteKey,
+    value = Vec<Amount>,
+    db_prefix = DbKeyPrefix::MarketOutcomeControlVote,
+);
+
+impl_db_lookup!(
+    key = MarketOutcomeControlVoteKey,
+    query_prefix = MarketOutcomeControlVotePrefixAll
+);
+
+// MarketOutcomePayoutsVotes
+#[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
+pub struct MarketOutcomePayoutsVotesKey {
+    pub market: OutPoint,
+    pub outcome_payouts: Vec<Amount>,
+    pub outcome_control: XOnlyPublicKey,
+}
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct MarketOutcomePayoutsVotesPrefixAll;
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct MarketOutcomePayoutsVotesPrefix2 {
+    pub market: OutPoint,
+    pub outcome_payouts: Vec<Amount>,
+}
+
+impl_db_record!(
+    key = MarketOutcomePayoutsVotesKey,
+    value = (),
+    db_prefix = DbKeyPrefix::MarketOutcomePayoutsVotes,
+);
+
+impl_db_lookup!(
+    key = MarketOutcomePayoutsVotesKey,
+    query_prefix = MarketOutcomePayoutsVotesPrefixAll,
+    query_prefix = MarketOutcomePayoutsVotesPrefix2
 );
 
 // template

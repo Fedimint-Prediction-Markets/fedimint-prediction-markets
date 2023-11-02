@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use std::string::ToString;
 use std::time::Duration;
@@ -27,8 +27,8 @@ pub use fedimint_prediction_markets_common::config::{
     PredictionMarketsConfigLocal, PredictionMarketsConfigPrivate, PredictionMarketsGenParams,
 };
 use fedimint_prediction_markets_common::{
-    ContractOfOutcomeAmount, ContractOfOutcomeSource, Market, Order, Outcome, Side, SignedAmount,
-    TimeOrdering, UnixTimestamp,
+    ContractOfOutcomeAmount, GetOutcomeControlMarketsParams, Market, Order, Outcome, Payout, Side,
+    SignedAmount, TimeOrdering, UnixTimestamp, WeightRequired, GetOutcomeControlMarketsResult,
 };
 pub use fedimint_prediction_markets_common::{
     PredictionMarketsCommonGen, PredictionMarketsConsensusItem, PredictionMarketsError,
@@ -106,6 +106,7 @@ impl ServerModuleInit for PredictionMarketsGen {
                         new_market_fee: params.consensus.new_market_fee,
                         max_contract_price: params.consensus.max_contract_price,
                         max_market_outcomes: params.consensus.max_market_outcomes,
+                        max_outcome_control_keys: params.consensus.max_outcome_control_keys,
 
                         new_order_fee: params.consensus.new_order_fee,
                         max_order_quantity: params.consensus.max_order_quantity,
@@ -141,6 +142,7 @@ impl ServerModuleInit for PredictionMarketsGen {
                 new_market_fee: params.consensus.new_market_fee,
                 max_contract_price: params.consensus.max_contract_price,
                 max_market_outcomes: params.consensus.max_market_outcomes,
+                max_outcome_control_keys: params.consensus.max_outcome_control_keys,
 
                 new_order_fee: params.consensus.new_order_fee,
                 max_order_quantity: params.consensus.max_order_quantity,
@@ -159,10 +161,12 @@ impl ServerModuleInit for PredictionMarketsGen {
         let config = PredictionMarketsConfigConsensus::from_erased(config)?;
         Ok(PredictionMarketsClientConfig {
             new_market_fee: config.new_market_fee,
-            new_order_fee: config.new_order_fee,
             max_contract_price: config.max_contract_price,
-            max_order_quantity: config.max_order_quantity,
             max_market_outcomes: config.max_market_outcomes,
+            max_outcome_control_keys: config.max_outcome_control_keys,
+
+            new_order_fee: config.new_order_fee,
+            max_order_quantity: config.max_order_quantity,
         })
     }
 
@@ -251,6 +255,26 @@ impl ServerModuleInit for PredictionMarketsGen {
                         "OrderPriceTimePriority"
                     );
                 }
+                DbKeyPrefix::MarketOutcomeControlVote => {
+                    push_db_pair_items!(
+                        dbtx,
+                        db::MarketOutcomeControlVotePrefixAll,
+                        db::MarketOutcomeControlVoteKey,
+                        Vec<Amount>,
+                        items,
+                        "MarketOutcomeControlVote"
+                    );
+                }
+                DbKeyPrefix::MarketOutcomePayoutsVotes => {
+                    push_db_pair_items!(
+                        dbtx,
+                        db::MarketOutcomePayoutsVotesPrefixAll,
+                        db::MarketOutcomePayoutsVotesKey,
+                        (),
+                        items,
+                        "MarketOutcomePayoutsVotes"
+                    );
+                }
                 DbKeyPrefix::OutcomeControlMarkets => {
                     push_db_pair_items!(
                         dbtx,
@@ -293,7 +317,7 @@ impl ServerModule for PredictionMarkets {
     type VerificationCache = PredictionMarketsCache;
 
     async fn await_consensus_proposal(&self, dbtx: &mut ModuleDatabaseTransaction<'_>) {
-        tokio::time::sleep(Duration::from_millis(1000)).await;
+        tokio::time::sleep(Duration::from_millis(350)).await;
 
         let next_consensus_timestamp = {
             let mut current = self.get_consensus_timestamp(dbtx).await;
@@ -412,7 +436,13 @@ impl ServerModule for PredictionMarkets {
                 };
 
                 // verify order params
-                if !self.validate_order_params(&market, outcome, price, &quantity) {
+                if let Err(_) = Order::validate_order_params(
+                    &market,
+                    &self.cfg.consensus.max_order_quantity,
+                    outcome,
+                    price,
+                    &quantity,
+                ) {
                     return Err(PredictionMarketsError::OrderValidationFailed)
                         .into_module_error_other();
                 }
@@ -483,9 +513,10 @@ impl ServerModule for PredictionMarkets {
                 // cancel order
                 Self::cancel_order(dbtx, order_owner.to_owned(), &mut order).await;
             }
-            PredictionMarketsInput::PayoutMarket {
+            PredictionMarketsInput::PayoutProposal {
                 market: market_out_point,
-                payout,
+                outcome_control,
+                outcome_payouts,
             } => {
                 // get market
                 let Some(mut market) = dbtx
@@ -502,12 +533,14 @@ impl ServerModule for PredictionMarkets {
                         .into_module_error_other();
                 }
 
-                // validate payout
-                let total_payout: Amount =
-                    payout.outcome_payouts.iter().map(|v| v.to_owned()).sum();
-                if total_payout != market.contract_price
-                    || payout.outcome_payouts.len() != usize::from(market.outcomes)
-                {
+                // Check that outcome control exist on market
+                if let None = market.outcome_controls_weights.get(outcome_control) {
+                    return Err(PredictionMarketsError::PayoutValidationFailed)
+                        .into_module_error_other();
+                }
+
+                // validate payout params
+                if let Err(_) = Payout::validate_payout_params(&market, outcome_payouts) {
                     return Err(PredictionMarketsError::PayoutValidationFailed)
                         .into_module_error_other();
                 }
@@ -515,42 +548,111 @@ impl ServerModule for PredictionMarkets {
                 // set input meta
                 amount = Amount::ZERO;
                 fee = Amount::ZERO;
-                pub_keys = vec![market.outcome_control];
+                pub_keys = vec![outcome_control.to_owned()];
 
-                // process payout
-                let market_orders: Vec<_> = dbtx
-                    .find_by_prefix(&db::OrdersByMarketPrefix1 {
+                let consensus_timestamp = self.get_consensus_timestamp(dbtx).await;
+
+                // clear out old payout proposal if exists
+                if let Some(outcome_payouts) = dbtx
+                    .get_value(&db::MarketOutcomeControlVoteKey {
                         market: market_out_point.to_owned(),
+                        outcome_control: outcome_control.to_owned(),
                     })
                     .await
-                    .map(|(key, _)| key.order)
-                    .collect()
-                    .await;
-
-                for order_owner in market_orders {
-                    let mut order = dbtx
-                        .get_value(&db::OrderKey(order_owner))
-                        .await
-                        .expect("should always find order");
-
-                    Self::cancel_order(dbtx, order_owner, &mut order).await;
-
-                    let payout_per_contract_of_outcome = payout
-                        .outcome_payouts
-                        .get(usize::from(order.outcome))
-                        .expect("should be some");
-                    order.bitcoin_balance = order.bitcoin_balance
-                        + (payout_per_contract_of_outcome.to_owned()
-                            * order.contract_of_outcome_balance.0);
-                    order.contract_of_outcome_balance = ContractOfOutcomeAmount::ZERO;
-
-                    dbtx.insert_entry(&db::OrderKey(order_owner), &order).await;
+                {
+                    dbtx.remove_entry(&db::MarketOutcomePayoutsVotesKey {
+                        market: market_out_point.to_owned(),
+                        outcome_payouts,
+                        outcome_control: outcome_control.to_owned(),
+                    })
+                    .await
+                    .expect("should always remove value");
                 }
 
-                // save payout to market
-                market.payout = Some(payout.to_owned());
-                dbtx.insert_new_entry(&db::MarketKey(market_out_point.to_owned()), &market)
-                    .await;
+                // add payout proposal to db
+                dbtx.insert_entry(
+                    &db::MarketOutcomeControlVoteKey {
+                        market: market_out_point.to_owned(),
+                        outcome_control: outcome_control.to_owned(),
+                    },
+                    outcome_payouts,
+                )
+                .await;
+                dbtx.insert_entry(
+                    &db::MarketOutcomePayoutsVotesKey {
+                        market: market_out_point.to_owned(),
+                        outcome_payouts: outcome_payouts.to_owned(),
+                        outcome_control: outcome_control.to_owned(),
+                    },
+                    &(),
+                )
+                .await;
+
+                let payout_triggered = {
+                    let votes: Vec<_> = dbtx
+                        .find_by_prefix(&db::MarketOutcomePayoutsVotesPrefix2 {
+                            market: market_out_point.to_owned(),
+                            outcome_payouts: outcome_payouts.to_owned(),
+                        })
+                        .await
+                        .map(|(key, _)| key.outcome_control)
+                        .collect()
+                        .await;
+
+                    let mut total_weight_of_votes: WeightRequired = 0;
+                    for outcome_control in votes {
+                        let weight = market
+                            .outcome_controls_weights
+                            .get(&outcome_control)
+                            .expect("should always find outcome_control");
+                        total_weight_of_votes += WeightRequired::from(weight.to_owned())
+                    }
+
+                    if total_weight_of_votes >= market.weight_required {
+                        true
+                    } else {
+                        false
+                    }
+                };
+
+                if payout_triggered {
+                    // process payout
+                    let market_orders: Vec<_> = dbtx
+                        .find_by_prefix(&db::OrdersByMarketPrefix1 {
+                            market: market_out_point.to_owned(),
+                        })
+                        .await
+                        .map(|(key, _)| key.order)
+                        .collect()
+                        .await;
+
+                    for order_owner in market_orders {
+                        let mut order = dbtx
+                            .get_value(&db::OrderKey(order_owner))
+                            .await
+                            .expect("should always find order");
+
+                        Self::cancel_order(dbtx, order_owner, &mut order).await;
+
+                        let payout_per_contract_of_outcome = outcome_payouts
+                            .get(usize::from(order.outcome))
+                            .expect("should be some");
+                        order.bitcoin_balance = order.bitcoin_balance
+                            + (payout_per_contract_of_outcome.to_owned()
+                                * order.contract_of_outcome_balance.0);
+                        order.contract_of_outcome_balance = ContractOfOutcomeAmount::ZERO;
+
+                        dbtx.insert_entry(&db::OrderKey(order_owner), &order).await;
+                    }
+
+                    // save payout to market
+                    market.payout = Some(Payout {
+                        outcome_payouts: outcome_payouts.to_owned(),
+                        occurred_consensus_timestamp: consensus_timestamp,
+                    });
+                    dbtx.insert_new_entry(&db::MarketKey(market_out_point.to_owned()), &market)
+                        .await;
+                }
             }
         }
 
@@ -574,15 +676,20 @@ impl ServerModule for PredictionMarkets {
             PredictionMarketsOutput::NewMarket {
                 contract_price,
                 outcomes,
-                outcome_control,
-                description,
+                outcome_control_weights,
+                weight_required,
+                information,
             } => {
                 // verify market params
-                if contract_price == &Amount::ZERO
-                    || contract_price > &self.cfg.consensus.max_contract_price
-                    || outcomes < &2
-                    || outcomes > &self.cfg.consensus.max_market_outcomes
-                {
+                if let Err(_) = Market::validate_market_params(
+                    &self.cfg.consensus.max_contract_price,
+                    &self.cfg.consensus.max_market_outcomes,
+                    &self.cfg.consensus.max_outcome_control_keys,
+                    contract_price,
+                    outcomes,
+                    outcome_control_weights,
+                    information,
+                ) {
                     return Err(PredictionMarketsError::MarketValidationFailed)
                         .into_module_error_other();
                 }
@@ -598,14 +705,18 @@ impl ServerModule for PredictionMarkets {
                 )
                 .await;
 
+                let consensus_timestamp = self.get_consensus_timestamp(dbtx).await;
+
                 // save market
                 dbtx.insert_new_entry(
                     &db::MarketKey(out_point),
                     &Market {
                         contract_price: contract_price.to_owned(),
                         outcomes: outcomes.to_owned(),
-                        outcome_control: outcome_control.to_owned(),
-                        description: description.to_owned(),
+                        outcome_controls_weights: outcome_control_weights.to_owned(),
+                        weight_required: weight_required.to_owned(),
+                        information: information.to_owned(),
+                        created_consensus_timestamp: consensus_timestamp,
                         payout: None,
                     },
                 )
@@ -619,14 +730,17 @@ impl ServerModule for PredictionMarkets {
                 .await;
 
                 // OutcomeControlMarkets index insert
-                dbtx.insert_new_entry(
-                    &db::OutcomeControlMarketsKey {
-                        outcome_control: outcome_control.to_owned(),
-                        market: out_point,
-                    },
-                    &(),
-                )
-                .await;
+                for (outcome_control, _) in outcome_control_weights.iter() {
+                    dbtx.insert_new_entry(
+                        &db::OutcomeControlMarketsKey {
+                            outcome_control: outcome_control.to_owned(),
+                            market_created: consensus_timestamp,
+                            market: out_point,
+                        },
+                        &(),
+                    )
+                    .await;
+                }
             }
             PredictionMarketsOutput::NewBuyOrder {
                 owner,
@@ -655,8 +769,14 @@ impl ServerModule for PredictionMarkets {
                     return Err(PredictionMarketsError::MarketFinished).into_module_error_other();
                 }
 
-                // validate order params
-                if !self.validate_order_params(&market, outcome, price, quantity) {
+                // verify order params
+                if let Err(_) = Order::validate_order_params(
+                    &market,
+                    &self.cfg.consensus.max_order_quantity,
+                    outcome,
+                    price,
+                    quantity,
+                ) {
                     return Err(PredictionMarketsError::OrderValidationFailed)
                         .into_module_error_other();
                 }
@@ -716,8 +836,8 @@ impl ServerModule for PredictionMarkets {
             },
             api_endpoint! {
                 "get_outcome_control_markets",
-                async |module: &PredictionMarkets, context, outcome_control: XOnlyPublicKey| -> Vec<OutPoint> {
-                    module.api_get_outcome_control_markets(&mut context.dbtx(), outcome_control).await
+                async |module: &PredictionMarkets, context, params: GetOutcomeControlMarketsParams| -> GetOutcomeControlMarketsResult {
+                    module.api_get_outcome_control_markets(&mut context.dbtx(), params.outcome_control, params.markets_created_after_and_including).await
                 }
             },
         ]
@@ -746,15 +866,26 @@ impl PredictionMarkets {
         &self,
         dbtx: &mut ModuleDatabaseTransaction<'_>,
         outcome_control: XOnlyPublicKey,
-    ) -> Result<Vec<OutPoint>, ApiError> {
-        let result: Vec<OutPoint> = dbtx
-            .find_by_prefix(&db::OutcomeControlMarketsPrefix1 { outcome_control })
-            .await
-            .map(|(key, _)| key.market)
-            .collect()
-            .await;
+        after_and_including: UnixTimestamp,
+    ) -> Result<GetOutcomeControlMarketsResult, ApiError> {
+        let mut markets = vec![];
 
-        Ok(result)
+        let mut stream = dbtx
+            .find_by_prefix_sorted_descending(&db::OutcomeControlMarketsPrefix1 { outcome_control })
+            .await;
+        loop {
+            let Some((key, _)) = stream.next().await else {
+                break;
+            };
+
+            if key.market_created < after_and_including {
+                break;
+            }
+
+            markets.push(key.market);
+        }
+
+        Ok(GetOutcomeControlMarketsResult { markets })
     }
 }
 
@@ -781,24 +912,14 @@ impl PredictionMarkets {
 
     async fn process_contract_of_outcome_sources(
         dbtx: &mut ModuleDatabaseTransaction<'_>,
-        sources: &Vec<ContractOfOutcomeSource>,
+        sources: &BTreeMap<XOnlyPublicKey, ContractOfOutcomeAmount>,
         market: &OutPoint,
         outcome: &Outcome,
     ) -> Result<(ContractOfOutcomeAmount, Vec<XOnlyPublicKey>), ()> {
         let mut total_amount = ContractOfOutcomeAmount::ZERO;
         let mut source_order_public_keys = Vec::new();
 
-        let mut duplicate_source_check = HashMap::new();
-
-        for ContractOfOutcomeSource {
-            order: order_owner,
-            quantity,
-        } in sources
-        {
-            if let Some(_) = duplicate_source_check.insert(order_owner, ()) {
-                return Err(());
-            }
-
+        for (order_owner, quantity) in sources {
             let Some(mut order) = dbtx.get_value(&db::OrderKey(order_owner.to_owned())).await
             else {
                 return Err(());
@@ -822,21 +943,6 @@ impl PredictionMarkets {
         }
 
         Ok((total_amount, source_order_public_keys))
-    }
-
-    /// returns true on pass of verification
-    fn validate_order_params(
-        &self,
-        market: &Market,
-        outcome: &Outcome,
-        price: &Amount,
-        quantity: &ContractOfOutcomeAmount,
-    ) -> bool {
-        !(outcome >= &market.outcomes
-            || price == &Amount::ZERO
-            || price >= &market.contract_price
-            || quantity == &ContractOfOutcomeAmount::ZERO
-            || quantity > &self.cfg.consensus.max_order_quantity)
     }
 
     async fn process_new_order(

@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 use std::fmt;
 use std::hash::Hash;
 use std::ops::{Add, Sub};
@@ -39,7 +40,7 @@ pub enum PredictionMarketsInput {
         market: OutPoint,
         outcome: Outcome,
         price: Amount,
-        sources: Vec<ContractOfOutcomeSource>,
+        sources: BTreeMap<XOnlyPublicKey, ContractOfOutcomeAmount>,
     },
     ConsumeOrderBitcoinBalance {
         order: XOnlyPublicKey,
@@ -48,9 +49,10 @@ pub enum PredictionMarketsInput {
     CancelOrder {
         order: XOnlyPublicKey,
     },
-    PayoutMarket {
+    PayoutProposal {
         market: OutPoint,
-        payout: Payout,
+        outcome_control: XOnlyPublicKey,
+        outcome_payouts: Vec<Amount>,
     },
 }
 
@@ -60,8 +62,9 @@ pub enum PredictionMarketsOutput {
     NewMarket {
         contract_price: Amount,
         outcomes: Outcome,
-        outcome_control: XOnlyPublicKey,
-        description: MarketInformation,
+        outcome_control_weights: BTreeMap<XOnlyPublicKey, Weight>,
+        weight_required: WeightRequired,
+        information: MarketInformation,
     },
     NewBuyOrder {
         owner: XOnlyPublicKey,
@@ -173,11 +176,48 @@ pub struct Market {
     // static
     pub contract_price: Amount,
     pub outcomes: Outcome,
-    pub outcome_control: XOnlyPublicKey,
-    pub description: MarketInformation,
+    pub outcome_controls_weights: BTreeMap<XOnlyPublicKey, Weight>,
+    pub weight_required: WeightRequired,
+    pub information: MarketInformation,
+
+    pub created_consensus_timestamp: UnixTimestamp,
 
     // mutated
     pub payout: Option<Payout>,
+}
+
+impl Market {
+    pub fn validate_market_params(
+        consensus_max_contract_price: &Amount,
+        consensus_max_market_outcomes: &Outcome,
+        consensus_max_outcome_control_keys: &u16,
+        contract_price: &Amount,
+        outcomes: &Outcome,
+        outcome_control_weights: &BTreeMap<XOnlyPublicKey, Weight>,
+        information: &MarketInformation,
+    ) -> Result<(), ()> {
+        // verify market params
+        if contract_price == &Amount::ZERO
+            || contract_price > consensus_max_contract_price
+            || outcomes < &2
+            || outcomes > consensus_max_market_outcomes
+            || outcome_control_weights.len() > usize::from(*consensus_max_outcome_control_keys)
+        {
+            return Err(());
+        }
+
+        for (_, weight) in outcome_control_weights.iter() {
+            if weight == &0 {
+                return Err(());
+            }
+        }
+
+        if let Err(_) = information.validate(outcomes) {
+            return Err(());
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
@@ -195,10 +235,10 @@ impl MarketInformation {
     const MAX_DESCRIPTION_LENGTH: usize = 500;
     const MAX_OUTCOME_TITLE_LENGTH: usize = 64;
 
-    pub fn validate(&self, outcomes: Outcome) -> Result<(), ()> {
+    pub fn validate(&self, outcomes: &Outcome) -> Result<(), ()> {
         if self.title.len() > Self::MAX_TITLE_LENGTH
             || self.description.len() > Self::MAX_DESCRIPTION_LENGTH
-            || self.outcome_titles.len() != usize::from(outcomes)
+            || self.outcome_titles.len() != usize::from(outcomes.to_owned())
         {
             return Err(());
         }
@@ -215,6 +255,31 @@ impl MarketInformation {
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct Payout {
     pub outcome_payouts: Vec<Amount>,
+    pub occurred_consensus_timestamp: UnixTimestamp,
+}
+
+impl Payout {
+    pub fn validate_payout_params(
+        market: &Market,
+        outcome_payouts: &Vec<Amount>,
+    ) -> Result<(), ()> {
+        let mut total_payout = Amount::ZERO;
+        for outcome_payout in outcome_payouts {
+            if outcome_payout > &market.contract_price {
+                return Err(());
+            }
+
+            total_payout += outcome_payout.to_owned();
+        }
+
+        if total_payout != market.contract_price
+            || outcome_payouts.len() != usize::from(market.outcomes)
+        {
+            return Err(());
+        }
+
+        Ok(())
+    }
 }
 
 /// On the server side, Orders are identified by the [XOnlyPublicKey] that controls them. Each [XOnlyPublicKey]
@@ -233,6 +298,28 @@ pub struct Order {
     pub quantity_waiting_for_match: ContractOfOutcomeAmount,
     pub contract_of_outcome_balance: ContractOfOutcomeAmount,
     pub bitcoin_balance: Amount,
+}
+
+impl Order {
+    /// returns true on pass of verification
+    pub fn validate_order_params(
+        market: &Market,
+        consensus_max_order_quantity: &ContractOfOutcomeAmount,
+        outcome: &Outcome,
+        price: &Amount,
+        quantity: &ContractOfOutcomeAmount,
+    ) -> Result<(), ()> {
+        if outcome >= &market.outcomes
+            || price == &Amount::ZERO
+            || price >= &market.contract_price
+            || quantity == &ContractOfOutcomeAmount::ZERO
+            || quantity > consensus_max_order_quantity
+        {
+            Err(())
+        } else {
+            Ok(())
+        }
+    }
 }
 
 /// Same as the ChildID used from the order root secret to derive order owner
@@ -328,13 +415,6 @@ impl Sub for ContractOfOutcomeAmount {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct TimeOrdering(pub u64);
-
-/// new sells use this to specify where to source quantity
-#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
-pub struct ContractOfOutcomeSource {
-    pub order: XOnlyPublicKey,
-    pub quantity: ContractOfOutcomeAmount,
-}
 
 /// Used to represent negative prices.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
@@ -486,3 +566,17 @@ impl UnixTimestamp {
             .unwrap_or(Duration::ZERO)
     }
 }
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+pub struct GetOutcomeControlMarketsParams {
+    pub outcome_control: XOnlyPublicKey,
+    pub markets_created_after_and_including: UnixTimestamp,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+pub struct GetOutcomeControlMarketsResult {
+    pub markets: Vec<OutPoint>,
+}
+
+pub type Weight = u8;
+pub type WeightRequired = u32;

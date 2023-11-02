@@ -19,16 +19,17 @@ pub struct PredictionMarketsGenParamsLocal {}
 /// Consensus parameters for config generation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictionMarketsGenParamsConsensus {
-    // market
+    // markets
     pub new_market_fee: Amount,
     pub max_contract_price: Amount,
     pub max_market_outcomes: Outcome,
+    pub max_outcome_control_keys: u16,
 
     // orders
     pub new_order_fee: Amount,
     pub max_order_quantity: ContractOfOutcomeAmount,
 
-    // data creation
+    // time stamp creation
     pub timestamp_interval_seconds: u64,
 }
 
@@ -40,6 +41,7 @@ impl Default for PredictionMarketsGenParams {
                 new_market_fee: Amount::from_sats(100),
                 max_contract_price: Amount::from_sats(100_000_000),
                 max_market_outcomes: 100,
+                max_outcome_control_keys: 100,
 
                 new_order_fee: Amount::from_sats(1),
                 max_order_quantity: ContractOfOutcomeAmount(1000000),
@@ -64,6 +66,7 @@ pub struct PredictionMarketsClientConfig {
     pub new_market_fee: Amount,
     pub max_contract_price: Amount,
     pub max_market_outcomes: Outcome,
+    pub max_outcome_control_keys: u16,
 
     pub new_order_fee: Amount,
     pub max_order_quantity: ContractOfOutcomeAmount,
@@ -82,6 +85,7 @@ pub struct PredictionMarketsConfigConsensus {
     pub new_market_fee: Amount,
     pub max_contract_price: Amount,
     pub max_market_outcomes: Outcome,
+    pub max_outcome_control_keys: u16,
 
     // orders
     pub new_order_fee: Amount,
