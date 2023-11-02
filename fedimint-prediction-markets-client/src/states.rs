@@ -43,6 +43,14 @@ pub enum PredictionMarketsStateMachine {
     },
     CancelOrderAccepted(OperationId),
     CancelOrderFailed(OperationId),
+
+    ConsumeOrderBitcoinBalance {
+        operation_id: OperationId,
+        tx_id: TransactionId,
+        order: OrderIdClientSide,
+    },
+    ConsumeOrderBitcoinBalanceAccepted(OperationId),
+    ConsumeOrderBitcoinBalanceFailed(OperationId),
 }
 
 impl State for PredictionMarketsStateMachine {
@@ -160,6 +168,35 @@ impl State for PredictionMarketsStateMachine {
             }
             Self::CancelOrderAccepted(_) => vec![],
             Self::CancelOrderFailed(_) => vec![],
+
+            Self::ConsumeOrderBitcoinBalance {
+                operation_id,
+                tx_id,
+                order,
+            } => {
+                vec![StateTransition::new(
+                    await_tx_accepted(global_context.clone(), operation_id, tx_id),
+                    move |dbtx, res, _state: Self| match res {
+                        // tx accepted
+                        Ok(_) => {
+                            Box::pin(async move {
+                                PredictionMarketsClientModule::consume_order_bitcoin_balance_accepted(dbtx.module_tx(), order).await;
+                                PredictionMarketsStateMachine::ConsumeOrderBitcoinBalanceAccepted(
+                                    operation_id,
+                                )
+                            })
+                        }
+                        // tx rejected
+                        Err(_) => Box::pin(async move {
+                            PredictionMarketsStateMachine::ConsumeOrderBitcoinBalanceFailed(
+                                operation_id,
+                            )
+                        }),
+                    },
+                )]
+            }
+            Self::ConsumeOrderBitcoinBalanceAccepted(_) => vec![],
+            Self::ConsumeOrderBitcoinBalanceFailed(_) => vec![],
         }
     }
 
@@ -195,6 +232,14 @@ impl State for PredictionMarketsStateMachine {
             } => *operation_id,
             Self::CancelOrderAccepted(operation_id) => *operation_id,
             Self::CancelOrderFailed(operation_id) => *operation_id,
+
+            Self::ConsumeOrderBitcoinBalance {
+                operation_id,
+                tx_id: _,
+                order: _,
+            } => *operation_id,
+            Self::ConsumeOrderBitcoinBalanceAccepted(operation_id) => *operation_id,
+            Self::ConsumeOrderBitcoinBalanceFailed(operation_id) => *operation_id,
         }
     }
 }

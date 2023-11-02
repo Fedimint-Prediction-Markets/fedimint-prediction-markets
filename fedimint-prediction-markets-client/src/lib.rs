@@ -72,7 +72,7 @@ pub trait OddsMarketsClientExt {
     ) -> anyhow::Result<Vec<OutPoint>>;
 
     /// Payout market
-    async fn payout_market(
+    async fn propose_outcome_payout(
         &self,
         market: OutPoint,
         outcome_payouts: Vec<Amount>,
@@ -97,6 +97,9 @@ pub trait OddsMarketsClientExt {
 
     /// Cancel order
     async fn cancel_order(&self, id: OrderIdClientSide) -> anyhow::Result<()>;
+
+    /// Spend all bitcoin balance on orders to primary module
+    async fn send_order_bitcoin_balance_to_primary_module(&self) -> anyhow::Result<()>;
 
     /// Get all orders that could possibly be unsynced between federation and local order cache
     /// Optionally provide a market (and outcome) to update only orders belonging to that market (and outcome)
@@ -278,7 +281,7 @@ impl OddsMarketsClientExt for Client {
         Ok(markets)
     }
 
-    async fn payout_market(
+    async fn propose_outcome_payout(
         &self,
         market_out_point: OutPoint,
         outcome_payouts: Vec<Amount>,
@@ -535,6 +538,70 @@ impl OddsMarketsClientExt for Client {
         Ok(())
     }
 
+    async fn send_order_bitcoin_balance_to_primary_module(&self) -> anyhow::Result<()> {
+        let (prediction_markets, instance) =
+            self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+        let operation_id = OperationId::new_random();
+
+        let mut dbtx = instance.db.begin_transaction().await;
+
+        let non_zero_orders = dbtx
+            .find_by_prefix(&db::NonZeroOrdersByMarketOutcomePrefixAll)
+            .await
+            .map(|(key, _)| key.order)
+            .collect::<Vec<_>>()
+            .await;
+
+        let mut orders_with_non_zero_bitcoin_balance = BTreeMap::new();
+        for order_id in non_zero_orders {
+            let order = self
+                .get_order(order_id, true)
+                .await?
+                .expect("should always produce order");
+
+            if order.bitcoin_balance != Amount::ZERO {
+                orders_with_non_zero_bitcoin_balance.insert(order_id, order);
+            }
+        }
+
+        let mut tx = TransactionBuilder::new();
+        for (order_id, order) in orders_with_non_zero_bitcoin_balance {
+            let order_key = prediction_markets.order_id_to_key_pair(order_id);
+
+            let input = ClientInput {
+                input: PredictionMarketsInput::ConsumeOrderBitcoinBalance {
+                    order: XOnlyPublicKey::from_keypair(&order_key).0,
+                    amount: order.bitcoin_balance,
+                },
+                state_machines: Arc::new(move |tx_id, _| {
+                    vec![PredictionMarketsStateMachine::ConsumeOrderBitcoinBalance {
+                        operation_id,
+                        tx_id,
+                        order: order_id,
+                    }]
+                }),
+                keys: vec![order_key],
+            };
+
+            tx = tx.with_input(input.into_dyn(instance.id));
+        }
+
+        let outpoint = |txid, _| OutPoint { txid, out_idx: 0 };
+        let txid = self
+            .finalize_and_submit_transaction(
+                operation_id,
+                PredictionMarketsCommonGen::KIND.as_str(),
+                outpoint,
+                tx,
+            )
+            .await?;
+
+        let tx_subscription = self.transaction_updates(operation_id).await;
+        tx_subscription.await_tx_accepted(txid).await?;
+
+        Ok(())
+    }
+
     async fn sync_orders(
         &self,
         market: Option<OutPoint>,
@@ -760,6 +827,14 @@ impl PredictionMarketsClientModule {
         dbtx.insert_entry(&db::OrderNeedsUpdateKey { order }, &())
             .await;
     }
+
+    async fn consume_order_bitcoin_balance_accepted(
+        mut dbtx: ModuleDatabaseTransaction<'_>,
+        order: OrderIdClientSide,
+    ) {
+        dbtx.insert_entry(&db::OrderNeedsUpdateKey { order }, &())
+            .await;
+    }
 }
 
 /// Data needed by the state machine
@@ -876,7 +951,7 @@ impl ClientModule for PredictionMarketsClientModule {
                 let mut outcome_control_weights = BTreeMap::new();
                 outcome_control_weights.insert(client.get_outcome_control_public_key(), 1);
 
-                let weight_required = 2;
+                let weight_required = 1;
 
                 let market_out_point = client
                     .new_market(
@@ -949,7 +1024,7 @@ impl ClientModule for PredictionMarketsClientModule {
 
                 Ok(serde_json::to_value(
                     client
-                        .payout_market(market_out_point, outcome_payouts)
+                        .propose_outcome_payout(market_out_point, outcome_payouts)
                         .await?,
                 )?)
             }
@@ -1027,6 +1102,10 @@ impl ClientModule for PredictionMarketsClientModule {
                 let id = OrderIdClientSide(args[1].to_string_lossy().parse()?);
 
                 Ok(serde_json::to_value(client.cancel_order(id).await?)?)
+            }
+
+            "withdraw-available-bitcoin" => {
+                Ok(serde_json::to_value(client.send_order_bitcoin_balance_to_primary_module().await?)?)
             }
 
             "sync-orders" => {
