@@ -1,7 +1,9 @@
 use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::{impl_db_lookup, impl_db_record, OutPoint};
 #[allow(unused_imports)]
-use fedimint_prediction_markets_common::{Market, Order, OrderIdClientSide, Outcome, UnixTimestamp};
+use fedimint_prediction_markets_common::{
+    Market, Order, OrderIdClientSide, Outcome, UnixTimestamp,
+};
 
 #[repr(u8)]
 #[derive(Clone, Debug)]

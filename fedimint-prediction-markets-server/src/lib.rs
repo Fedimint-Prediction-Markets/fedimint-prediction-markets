@@ -27,8 +27,9 @@ pub use fedimint_prediction_markets_common::config::{
     PredictionMarketsConfigLocal, PredictionMarketsConfigPrivate, PredictionMarketsGenParams,
 };
 use fedimint_prediction_markets_common::{
-    ContractOfOutcomeAmount, GetOutcomeControlMarketsParams, Market, Order, Outcome, Payout, Side,
-    SignedAmount, TimeOrdering, UnixTimestamp, WeightRequired, GetOutcomeControlMarketsResult,
+    ContractOfOutcomeAmount, GetOutcomeControlMarketsParams, GetOutcomeControlMarketsResult,
+    Market, Order, Outcome, Payout, Side, SignedAmount, TimeOrdering, UnixTimestamp,
+    WeightRequired,
 };
 pub use fedimint_prediction_markets_common::{
     PredictionMarketsCommonGen, PredictionMarketsConsensusItem, PredictionMarketsError,
@@ -104,11 +105,16 @@ impl ServerModuleInit for PredictionMarketsGen {
                     },
                     consensus: PredictionMarketsConfigConsensus {
                         new_market_fee: params.consensus.new_market_fee,
+                        new_order_fee: params.consensus.new_order_fee,
+                        consumer_order_bitcoin_balance_fee: params
+                            .consensus
+                            .consumer_order_bitcoin_balance_fee,
+                        payout_proposal_fee: params.consensus.payout_proposal_fee,
+
                         max_contract_price: params.consensus.max_contract_price,
                         max_market_outcomes: params.consensus.max_market_outcomes,
                         max_outcome_control_keys: params.consensus.max_outcome_control_keys,
 
-                        new_order_fee: params.consensus.new_order_fee,
                         max_order_quantity: params.consensus.max_order_quantity,
 
                         timestamp_interval_seconds: params.consensus.timestamp_interval_seconds,
@@ -140,11 +146,16 @@ impl ServerModuleInit for PredictionMarketsGen {
             },
             consensus: PredictionMarketsConfigConsensus {
                 new_market_fee: params.consensus.new_market_fee,
+                new_order_fee: params.consensus.new_order_fee,
+                consumer_order_bitcoin_balance_fee: params
+                    .consensus
+                    .consumer_order_bitcoin_balance_fee,
+                payout_proposal_fee: params.consensus.payout_proposal_fee,
+
                 max_contract_price: params.consensus.max_contract_price,
                 max_market_outcomes: params.consensus.max_market_outcomes,
                 max_outcome_control_keys: params.consensus.max_outcome_control_keys,
 
-                new_order_fee: params.consensus.new_order_fee,
                 max_order_quantity: params.consensus.max_order_quantity,
 
                 timestamp_interval_seconds: params.consensus.timestamp_interval_seconds,
@@ -161,12 +172,17 @@ impl ServerModuleInit for PredictionMarketsGen {
         let config = PredictionMarketsConfigConsensus::from_erased(config)?;
         Ok(PredictionMarketsClientConfig {
             new_market_fee: config.new_market_fee,
+            new_order_fee: config.new_order_fee,
+            consumer_order_bitcoin_balance_fee: config.consumer_order_bitcoin_balance_fee,
+            payout_proposal_fee: config.payout_proposal_fee,
+
             max_contract_price: config.max_contract_price,
             max_market_outcomes: config.max_market_outcomes,
             max_outcome_control_keys: config.max_outcome_control_keys,
 
-            new_order_fee: config.new_order_fee,
             max_order_quantity: config.max_order_quantity,
+
+            timestamp_interval_seconds: config.timestamp_interval_seconds,
         })
     }
 
@@ -483,7 +499,7 @@ impl ServerModule for PredictionMarkets {
 
                 // set input meta
                 amount = amount_to_consume.to_owned();
-                fee = Amount::ZERO;
+                fee = self.cfg.consensus.consumer_order_bitcoin_balance_fee;
                 pub_keys = vec![order_owner.to_owned()];
 
                 // update order's bitcoin balance
@@ -547,7 +563,7 @@ impl ServerModule for PredictionMarkets {
 
                 // set input meta
                 amount = Amount::ZERO;
-                fee = Amount::ZERO;
+                fee = self.cfg.consensus.payout_proposal_fee;
                 pub_keys = vec![outcome_control.to_owned()];
 
                 let consensus_timestamp = self.get_consensus_timestamp(dbtx).await;

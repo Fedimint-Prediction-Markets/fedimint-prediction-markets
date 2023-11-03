@@ -20,12 +20,12 @@ pub enum PredictionMarketsStateMachine {
     NewMarketAccepted(OperationId),
     NewMarketFailed(OperationId),
 
-    PayoutMarket {
+    ProposePayout {
         operation_id: OperationId,
         tx_id: TransactionId,
     },
-    PayoutMarketAccepted(OperationId),
-    PayoutMarketFailed(OperationId),
+    ProposePayoutAccepted(OperationId),
+    ProposePayoutFailed(OperationId),
 
     NewOrder {
         operation_id: OperationId,
@@ -84,7 +84,7 @@ impl State for PredictionMarketsStateMachine {
             Self::NewMarketAccepted(_) => vec![],
             Self::NewMarketFailed(_) => vec![],
 
-            Self::PayoutMarket {
+            Self::ProposePayout {
                 operation_id,
                 tx_id,
             } => {
@@ -93,17 +93,17 @@ impl State for PredictionMarketsStateMachine {
                     move |_dbtx, res, _state: Self| match res {
                         // tx accepted
                         Ok(_) => Box::pin(async move {
-                            PredictionMarketsStateMachine::PayoutMarketAccepted(operation_id)
+                            PredictionMarketsStateMachine::ProposePayoutAccepted(operation_id)
                         }),
                         // tx rejected
                         Err(_) => Box::pin(async move {
-                            PredictionMarketsStateMachine::PayoutMarketFailed(operation_id)
+                            PredictionMarketsStateMachine::ProposePayoutFailed(operation_id)
                         }),
                     },
                 )]
             }
-            Self::PayoutMarketAccepted(_) => vec![],
-            Self::PayoutMarketFailed(_) => vec![],
+            Self::ProposePayoutAccepted(_) => vec![],
+            Self::ProposePayoutFailed(_) => vec![],
 
             Self::NewOrder {
                 operation_id,
@@ -178,14 +178,16 @@ impl State for PredictionMarketsStateMachine {
                     await_tx_accepted(global_context.clone(), operation_id, tx_id),
                     move |dbtx, res, _state: Self| match res {
                         // tx accepted
-                        Ok(_) => {
-                            Box::pin(async move {
-                                PredictionMarketsClientModule::consume_order_bitcoin_balance_accepted(dbtx.module_tx(), order).await;
-                                PredictionMarketsStateMachine::ConsumeOrderBitcoinBalanceAccepted(
-                                    operation_id,
-                                )
-                            })
-                        }
+                        Ok(_) => Box::pin(async move {
+                            PredictionMarketsClientModule::consume_order_bitcoin_balance_accepted(
+                                dbtx.module_tx(),
+                                order,
+                            )
+                            .await;
+                            PredictionMarketsStateMachine::ConsumeOrderBitcoinBalanceAccepted(
+                                operation_id,
+                            )
+                        }),
                         // tx rejected
                         Err(_) => Box::pin(async move {
                             PredictionMarketsStateMachine::ConsumeOrderBitcoinBalanceFailed(
@@ -209,12 +211,12 @@ impl State for PredictionMarketsStateMachine {
             Self::NewMarketAccepted(operation_id) => *operation_id,
             Self::NewMarketFailed(operation_id) => *operation_id,
 
-            Self::PayoutMarket {
+            Self::ProposePayout {
                 operation_id,
                 tx_id: _,
             } => *operation_id,
-            Self::PayoutMarketAccepted(operation_id) => *operation_id,
-            Self::PayoutMarketFailed(operation_id) => *operation_id,
+            Self::ProposePayoutAccepted(operation_id) => *operation_id,
+            Self::ProposePayoutFailed(operation_id) => *operation_id,
 
             Self::NewOrder {
                 operation_id,

@@ -65,7 +65,7 @@ pub trait OddsMarketsClientExt {
         from_local_cache: bool,
     ) -> anyhow::Result<Option<Market>>;
 
-    /// Get all market [OutPoint]s that our outcome control key has some sort of authority over
+    /// Get all market [OutPoint]s that our outcome control key has some sort of authority over.
     async fn get_outcome_control_markets(
         &self,
         sync_new_markets: bool,
@@ -288,7 +288,7 @@ impl OddsMarketsClientExt for Client {
     ) -> anyhow::Result<()> {
         let (prediction_markets, instance) =
             self.get_first_module::<PredictionMarketsClientModule>(&KIND);
-        let op_id = OperationId::new_random();
+        let operation_id = OperationId::new_random();
 
         let outcome_control_key = prediction_markets.get_outcome_control_key_pair();
 
@@ -298,7 +298,12 @@ impl OddsMarketsClientExt for Client {
                 outcome_control: XOnlyPublicKey::from_keypair(&outcome_control_key).0,
                 outcome_payouts,
             },
-            state_machines: Arc::new(move |_, _| Vec::<PredictionMarketsStateMachine>::new()),
+            state_machines: Arc::new(move |tx_id, _| {
+                vec![PredictionMarketsStateMachine::ProposePayout {
+                    operation_id,
+                    tx_id,
+                }]
+            }),
             keys: vec![outcome_control_key],
         };
 
@@ -306,14 +311,14 @@ impl OddsMarketsClientExt for Client {
         let out_point = |txid, _| OutPoint { txid, out_idx: 0 };
         let txid = self
             .finalize_and_submit_transaction(
-                op_id,
+                operation_id,
                 PredictionMarketsCommonGen::KIND.as_str(),
                 out_point,
                 tx,
             )
             .await?;
 
-        let tx_subscription = self.transaction_updates(op_id).await;
+        let tx_subscription = self.transaction_updates(operation_id).await;
         tx_subscription.await_tx_accepted(txid).await?;
 
         Ok(())
@@ -859,20 +864,29 @@ impl ClientModule for PredictionMarketsClientModule {
     }
 
     fn input_amount(&self, input: &<Self::Common as ModuleCommon>::Input) -> TransactionItemAmount {
-        let mut amount = Amount::ZERO;
-        let mut fee = Amount::ZERO;
+        let amount;
+        let fee;
 
         match input {
             PredictionMarketsInput::PayoutProposal {
                 market: _,
                 outcome_control: _,
                 outcome_payouts: _,
-            } => {}
-            PredictionMarketsInput::CancelOrder { order: _ } => {}
+            } => {
+                amount = Amount::ZERO;
+                fee = self.cfg.payout_proposal_fee;
+            }
+            PredictionMarketsInput::CancelOrder { order: _ } => {
+                amount = Amount::ZERO;
+                fee = Amount::ZERO;
+            }
             PredictionMarketsInput::ConsumeOrderBitcoinBalance {
                 order: _,
                 amount: amount_to_free,
-            } => amount = amount_to_free.to_owned(),
+            } => {
+                amount = amount_to_free.to_owned();
+                fee = self.cfg.consumer_order_bitcoin_balance_fee;
+            }
             PredictionMarketsInput::NewSellOrder {
                 owner: _,
                 market: _,
@@ -880,6 +894,7 @@ impl ClientModule for PredictionMarketsClientModule {
                 price: _,
                 sources: _,
             } => {
+                amount = Amount::ZERO;
                 fee = self.cfg.new_order_fee;
             }
         }
@@ -891,7 +906,7 @@ impl ClientModule for PredictionMarketsClientModule {
         &self,
         output: &<Self::Common as ModuleCommon>::Output,
     ) -> TransactionItemAmount {
-        let mut amount = Amount::ZERO;
+        let amount;
         let fee;
 
         match output {
@@ -902,6 +917,7 @@ impl ClientModule for PredictionMarketsClientModule {
                 weight_required: _,
                 information: _,
             } => {
+                amount = Amount::ZERO;
                 fee = self.cfg.new_market_fee;
             }
             PredictionMarketsOutput::NewBuyOrder {
