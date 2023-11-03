@@ -1,9 +1,10 @@
 use fedimint_core::encoding::{Decodable, Encodable};
-use fedimint_core::{impl_db_lookup, impl_db_record, OutPoint};
+use fedimint_core::{impl_db_lookup, impl_db_record, OutPoint, Amount};
 #[allow(unused_imports)]
 use fedimint_prediction_markets_common::{
     Market, Order, OrderIdClientSide, Outcome, UnixTimestamp,
 };
+use secp256k1::XOnlyPublicKey;
 
 #[repr(u8)]
 #[derive(Clone, Debug)]
@@ -19,6 +20,11 @@ pub enum DbKeyPrefix {
     ///
     /// [OrderIdClientSide] to [Order]
     Order = 0x01,
+
+    /// Cache for market outcome control proposal
+    /// 
+    /// (Market's [OutPoint], [XOnlyPublicKey]) to [Vec<Amount>]
+    MarketOutcomeControlProposal = 0x02, 
 
     /// ----- 20-3f reserved for lookup indexes -----
 
@@ -85,6 +91,33 @@ impl_db_record!(
 );
 
 impl_db_lookup!(key = OrderKey, query_prefix = OrderPrefixAll);
+
+// MarketOutcomeControlProposal
+#[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash)]
+pub struct MarketOutcomeControlProposalKey {
+    pub market: OutPoint,
+    pub outcome_control: XOnlyPublicKey,
+}
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct MarketOutcomeControlProposalPrefixAll;
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct MarketOutcomeControlProposalPrefix1 {
+    pub market: OutPoint,
+}
+
+impl_db_record!(
+    key = MarketOutcomeControlProposalKey,
+    value = Vec<Amount>,
+    db_prefix = DbKeyPrefix::MarketOutcomeControlProposal,
+);
+
+impl_db_lookup!(
+    key = MarketOutcomeControlProposalKey,
+    query_prefix = MarketOutcomeControlProposalPrefixAll,
+    query_prefix = MarketOutcomeControlProposalPrefix1
+);
 
 // OutcomeControlMarkets
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash)]

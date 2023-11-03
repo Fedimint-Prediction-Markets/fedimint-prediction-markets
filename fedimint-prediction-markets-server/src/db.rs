@@ -54,9 +54,9 @@ pub enum DbKeyPrefix {
     /// These keys are used to implement threshold payouts.
     ///
     /// (Market's [OutPoint], [XOnlyPublicKey]) to [Vec<Amount>]
-    MarketOutcomeControlVote = 0x23,
+    MarketOutcomeControlProposal = 0x23,
     /// (Market's [OutPoint], [Vec<Amount>], [XOnlyPublicKey]) to ()
-    MarketOutcomePayoutsVotes = 0x24,
+    MarketOutcomePayoutsProposals = 0x24,
 
     /// ----- 40-4f reserved for api lookup indexes -----
 
@@ -277,54 +277,60 @@ impl_db_lookup!(
     query_prefix = PeersProposedTimestampPrefixAll
 );
 
-// MarketOutcomeControlVote
+// MarketOutcomeControlProposal
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
-pub struct MarketOutcomeControlVoteKey {
+pub struct MarketOutcomeControlProposalKey {
     pub market: OutPoint,
     pub outcome_control: XOnlyPublicKey,
 }
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct MarketOutcomeControlVotePrefixAll;
+pub struct MarketOutcomeControlProposalPrefixAll;
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct MarketOutcomeControlProposalPrefix1 {
+    pub market: OutPoint
+}
 
 impl_db_record!(
-    key = MarketOutcomeControlVoteKey,
+    key = MarketOutcomeControlProposalKey,
     value = Vec<Amount>,
-    db_prefix = DbKeyPrefix::MarketOutcomeControlVote,
+    db_prefix = DbKeyPrefix::MarketOutcomeControlProposal,
 );
 
 impl_db_lookup!(
-    key = MarketOutcomeControlVoteKey,
-    query_prefix = MarketOutcomeControlVotePrefixAll
+    key = MarketOutcomeControlProposalKey,
+    query_prefix = MarketOutcomeControlProposalPrefixAll,
+    query_prefix = MarketOutcomeControlProposalPrefix1
 );
 
-// MarketOutcomePayoutsVotes
+// MarketOutcomePayoutsProposals
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
-pub struct MarketOutcomePayoutsVotesKey {
+pub struct MarketOutcomePayoutsProposalsKey {
     pub market: OutPoint,
     pub outcome_payouts: Vec<Amount>,
     pub outcome_control: XOnlyPublicKey,
 }
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct MarketOutcomePayoutsVotesPrefixAll;
+pub struct MarketOutcomePayoutsProposalsPrefixAll;
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct MarketOutcomePayoutsVotesPrefix2 {
+pub struct MarketOutcomePayoutsProposalsPrefix2 {
     pub market: OutPoint,
     pub outcome_payouts: Vec<Amount>,
 }
 
 impl_db_record!(
-    key = MarketOutcomePayoutsVotesKey,
+    key = MarketOutcomePayoutsProposalsKey,
     value = (),
-    db_prefix = DbKeyPrefix::MarketOutcomePayoutsVotes,
+    db_prefix = DbKeyPrefix::MarketOutcomePayoutsProposals,
 );
 
 impl_db_lookup!(
-    key = MarketOutcomePayoutsVotesKey,
-    query_prefix = MarketOutcomePayoutsVotesPrefixAll,
-    query_prefix = MarketOutcomePayoutsVotesPrefix2
+    key = MarketOutcomePayoutsProposalsKey,
+    query_prefix = MarketOutcomePayoutsProposalsPrefixAll,
+    query_prefix = MarketOutcomePayoutsProposalsPrefix2
 );
 
 // template

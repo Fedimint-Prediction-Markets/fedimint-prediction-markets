@@ -271,20 +271,20 @@ impl ServerModuleInit for PredictionMarketsGen {
                         "OrderPriceTimePriority"
                     );
                 }
-                DbKeyPrefix::MarketOutcomeControlVote => {
+                DbKeyPrefix::MarketOutcomeControlProposal => {
                     push_db_pair_items!(
                         dbtx,
-                        db::MarketOutcomeControlVotePrefixAll,
+                        db::MarketOutcomeControlProposalPrefixAll,
                         db::MarketOutcomeControlVoteKey,
                         Vec<Amount>,
                         items,
                         "MarketOutcomeControlVote"
                     );
                 }
-                DbKeyPrefix::MarketOutcomePayoutsVotes => {
+                DbKeyPrefix::MarketOutcomePayoutsProposals => {
                     push_db_pair_items!(
                         dbtx,
-                        db::MarketOutcomePayoutsVotesPrefixAll,
+                        db::MarketOutcomePayoutsProposalsPrefixAll,
                         db::MarketOutcomePayoutsVotesKey,
                         (),
                         items,
@@ -570,13 +570,13 @@ impl ServerModule for PredictionMarkets {
 
                 // clear out old payout proposal if exists
                 if let Some(outcome_payouts) = dbtx
-                    .get_value(&db::MarketOutcomeControlVoteKey {
+                    .get_value(&db::MarketOutcomeControlProposalKey {
                         market: market_out_point.to_owned(),
                         outcome_control: outcome_control.to_owned(),
                     })
                     .await
                 {
-                    dbtx.remove_entry(&db::MarketOutcomePayoutsVotesKey {
+                    dbtx.remove_entry(&db::MarketOutcomePayoutsProposalsKey {
                         market: market_out_point.to_owned(),
                         outcome_payouts,
                         outcome_control: outcome_control.to_owned(),
@@ -587,7 +587,7 @@ impl ServerModule for PredictionMarkets {
 
                 // add payout proposal to db
                 dbtx.insert_entry(
-                    &db::MarketOutcomeControlVoteKey {
+                    &db::MarketOutcomeControlProposalKey {
                         market: market_out_point.to_owned(),
                         outcome_control: outcome_control.to_owned(),
                     },
@@ -595,7 +595,7 @@ impl ServerModule for PredictionMarkets {
                 )
                 .await;
                 dbtx.insert_entry(
-                    &db::MarketOutcomePayoutsVotesKey {
+                    &db::MarketOutcomePayoutsProposalsKey {
                         market: market_out_point.to_owned(),
                         outcome_payouts: outcome_payouts.to_owned(),
                         outcome_control: outcome_control.to_owned(),
@@ -605,8 +605,8 @@ impl ServerModule for PredictionMarkets {
                 .await;
 
                 let payout_triggered = {
-                    let votes: Vec<_> = dbtx
-                        .find_by_prefix(&db::MarketOutcomePayoutsVotesPrefix2 {
+                    let outcome_controls_with_proposal: Vec<_> = dbtx
+                        .find_by_prefix(&db::MarketOutcomePayoutsProposalsPrefix2 {
                             market: market_out_point.to_owned(),
                             outcome_payouts: outcome_payouts.to_owned(),
                         })
@@ -616,7 +616,7 @@ impl ServerModule for PredictionMarkets {
                         .await;
 
                     let mut total_weight_of_votes: WeightRequired = 0;
-                    for outcome_control in votes {
+                    for outcome_control in outcome_controls_with_proposal {
                         let weight = market
                             .outcome_controls_weights
                             .get(&outcome_control)
@@ -856,6 +856,12 @@ impl ServerModule for PredictionMarkets {
                     module.api_get_outcome_control_markets(&mut context.dbtx(), params.outcome_control, params.markets_created_after_and_including).await
                 }
             },
+            api_endpoint! {
+                "get_market_outcome_control_proposals",
+                async |module: &PredictionMarkets, context, market: OutPoint| -> BTreeMap<XOnlyPublicKey,Vec<Amount>> {
+                    module.api_get_market_outcome_control_proposals(&mut context.dbtx(), market).await
+                }
+            },
         ]
     }
 }
@@ -902,6 +908,19 @@ impl PredictionMarkets {
         }
 
         Ok(GetOutcomeControlMarketsResult { markets })
+    }
+
+    async fn api_get_market_outcome_control_proposals(
+        &self,
+        dbtx: &mut ModuleDatabaseTransaction<'_>,
+        market: OutPoint,
+    ) -> Result<BTreeMap<XOnlyPublicKey, Vec<Amount>>, ApiError> {
+        Ok(dbtx
+            .find_by_prefix(&db::MarketOutcomeControlProposalPrefix1 { market })
+            .await
+            .map(|(key, value)| (key.outcome_control, value))
+            .collect()
+            .await)
     }
 }
 
