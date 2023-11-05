@@ -832,12 +832,14 @@ impl ServerModule for PredictionMarkets {
     }
 
     async fn audit(&self, dbtx: &mut ModuleDatabaseTransaction<'_>, audit: &mut Audit) {
+        // bitcoin owed for open contracts across markets
         audit
             .add_items(dbtx, KIND.as_str(), &db::MarketPrefixAll, |_, market| {
                 -((market.contract_price * market.open_contracts.0).msats as i64)
             })
             .await;
 
+        // bitcoin owed for collateral held for buy orders and in field bitcoin_balance on orders
         audit
             .add_items(dbtx, KIND.as_str(), &db::OrderPrefixAll, |_, order| {
                 let mut milli_sat = 0i64;
@@ -845,7 +847,7 @@ impl ServerModule for PredictionMarkets {
                     milli_sat -= (order.price * order.quantity_waiting_for_match.0).msats as i64
                 }
                 milli_sat -= order.bitcoin_balance.msats as i64;
-                
+
                 milli_sat
             })
             .await;
