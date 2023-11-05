@@ -4,7 +4,9 @@ use fedimint_core::{impl_db_lookup, impl_db_record, Amount, OutPoint, PeerId};
 
 use fedimint_prediction_markets_common::UnixTimestamp;
 #[allow(unused_imports)]
-use fedimint_prediction_markets_common::{Market, Order, Outcome, Payout, Side, TimeOrdering};
+use fedimint_prediction_markets_common::{
+    ContractAmount, Market, Order, Outcome, Payout, Side, TimeOrdering,
+};
 
 use secp256k1::XOnlyPublicKey;
 use serde::Serialize;
@@ -289,7 +291,7 @@ pub struct MarketOutcomeControlProposalPrefixAll;
 
 #[derive(Debug, Encodable, Decodable)]
 pub struct MarketOutcomeControlProposalPrefix1 {
-    pub market: OutPoint
+    pub market: OutPoint,
 }
 
 impl_db_record!(

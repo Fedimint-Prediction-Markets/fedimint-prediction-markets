@@ -984,7 +984,7 @@ impl ClientModule for PredictionMarketsClientModule {
                 outcome_payouts: _,
             } => {
                 amount = Amount::ZERO;
-                fee = self.cfg.payout_proposal_fee;
+                fee = self.cfg.general_consensus.payout_proposal_fee;
             }
             PredictionMarketsInput::CancelOrder { order: _ } => {
                 amount = Amount::ZERO;
@@ -995,7 +995,7 @@ impl ClientModule for PredictionMarketsClientModule {
                 amount: amount_to_free,
             } => {
                 amount = amount_to_free.to_owned();
-                fee = self.cfg.consumer_order_bitcoin_balance_fee;
+                fee = self.cfg.general_consensus.consumer_order_bitcoin_balance_fee;
             }
             PredictionMarketsInput::NewSellOrder {
                 owner: _,
@@ -1005,7 +1005,7 @@ impl ClientModule for PredictionMarketsClientModule {
                 sources: _,
             } => {
                 amount = Amount::ZERO;
-                fee = self.cfg.new_order_fee;
+                fee = self.cfg.general_consensus.new_order_fee;
             }
         }
 
@@ -1028,7 +1028,7 @@ impl ClientModule for PredictionMarketsClientModule {
                 information: _,
             } => {
                 amount = Amount::ZERO;
-                fee = self.cfg.new_market_fee;
+                fee = self.cfg.general_consensus.new_market_fee;
             }
             PredictionMarketsOutput::NewBuyOrder {
                 owner: _,
@@ -1038,7 +1038,7 @@ impl ClientModule for PredictionMarketsClientModule {
                 quantity,
             } => {
                 amount = price.to_owned() * quantity.0;
-                fee = self.cfg.new_order_fee;
+                fee = self.cfg.general_consensus.new_order_fee;
             }
         }
 

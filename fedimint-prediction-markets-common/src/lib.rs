@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::hash::Hash;
-use std::ops::{Add, Sub};
+use std::ops::{Add, Mul, Sub};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Error;
@@ -183,6 +183,7 @@ pub struct Market {
     pub created_consensus_timestamp: UnixTimestamp,
 
     // mutated
+    pub open_contracts: ContractAmount,
     pub payout: Option<Payout>,
 }
 
@@ -286,18 +287,31 @@ impl Payout {
 /// can only control a single order.
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct Order {
-    // static
+    /// ----- static -----
     pub market: OutPoint,
     pub outcome: Outcome,
     pub side: Side,
     pub price: Amount,
     pub original_quantity: ContractOfOutcomeAmount,
+    // increments on each new order. used for price-time priority
     pub time_ordering: TimeOrdering,
+    pub created_consensus_timestamp: UnixTimestamp,
 
-    // mutated
+    // ----- mutated -----
+
+    // active market quantity
     pub quantity_waiting_for_match: ContractOfOutcomeAmount,
+
+    // during a payout, the contract prices is payed out to orders accoring to this balance.
     pub contract_of_outcome_balance: ContractOfOutcomeAmount,
+
+    // spendable by ConsumeOrderBitcoinBalance input
     pub bitcoin_balance: Amount,
+
+    // cost incurred by order matches
+    // buys (for posistive prices) add to cost
+    // sells subtract from cost
+    pub bitcoin_cost: SignedAmount,
 }
 
 impl Order {
@@ -384,6 +398,49 @@ impl TryFrom<&str> for Side {
     PartialOrd,
     Ord,
 )]
+pub struct ContractAmount(pub u64);
+impl ContractAmount {
+    pub const ZERO: Self = ContractAmount(0);
+}
+
+impl Add for ContractAmount {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self(
+            self.0
+                .checked_add(rhs.0)
+                .expect("PredictionMarkets: ContractAmount: addition overflow"),
+        )
+    }
+}
+
+impl Sub for ContractAmount {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self(
+            self.0
+                .checked_sub(rhs.0)
+                .expect("PredictionMarkets: ContractAmount: subtraction overflow"),
+        )
+    }
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    Encodable,
+    Decodable,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+)]
 pub struct ContractOfOutcomeAmount(pub u64);
 impl ContractOfOutcomeAmount {
     pub const ZERO: ContractOfOutcomeAmount = ContractOfOutcomeAmount(0);
@@ -424,6 +481,11 @@ pub struct SignedAmount {
 }
 
 impl SignedAmount {
+    pub const ZERO: Self = Self {
+        amount: Amount::ZERO,
+        negative: false,
+    };
+
     pub fn is_negative(&self) -> bool {
         self.negative && self.amount != Amount::ZERO
     }
@@ -516,6 +578,17 @@ impl Sub for SignedAmount {
     }
 }
 
+impl Mul<u64> for SignedAmount {
+    type Output = SignedAmount;
+
+    fn mul(self, rhs: u64) -> Self::Output {
+        Self {
+            amount: self.amount * rhs,
+            negative: self.negative,
+        }
+    }
+}
+
 #[derive(
     Debug,
     Clone,
@@ -580,3 +653,4 @@ pub struct GetOutcomeControlMarketsResult {
 
 pub type Weight = u8;
 pub type WeightRequired = u32;
+

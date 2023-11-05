@@ -27,9 +27,9 @@ pub use fedimint_prediction_markets_common::config::{
     PredictionMarketsConfigLocal, PredictionMarketsConfigPrivate, PredictionMarketsGenParams,
 };
 use fedimint_prediction_markets_common::{
-    ContractOfOutcomeAmount, GetOutcomeControlMarketsParams, GetOutcomeControlMarketsResult,
-    Market, Order, Outcome, Payout, Side, SignedAmount, TimeOrdering, UnixTimestamp,
-    WeightRequired,
+    ContractAmount, ContractOfOutcomeAmount, GetOutcomeControlMarketsParams,
+    GetOutcomeControlMarketsResult, Market, Order, Outcome, Payout, Side, SignedAmount,
+    TimeOrdering, UnixTimestamp, WeightRequired,
 };
 pub use fedimint_prediction_markets_common::{
     PredictionMarketsCommonGen, PredictionMarketsConsensusItem, PredictionMarketsError,
@@ -104,20 +104,7 @@ impl ServerModuleInit for PredictionMarketsGen {
                         example: "test".to_owned(),
                     },
                     consensus: PredictionMarketsConfigConsensus {
-                        new_market_fee: params.consensus.new_market_fee,
-                        new_order_fee: params.consensus.new_order_fee,
-                        consumer_order_bitcoin_balance_fee: params
-                            .consensus
-                            .consumer_order_bitcoin_balance_fee,
-                        payout_proposal_fee: params.consensus.payout_proposal_fee,
-
-                        max_contract_price: params.consensus.max_contract_price,
-                        max_market_outcomes: params.consensus.max_market_outcomes,
-                        max_outcome_control_keys: params.consensus.max_outcome_control_keys,
-
-                        max_order_quantity: params.consensus.max_order_quantity,
-
-                        timestamp_interval_seconds: params.consensus.timestamp_interval_seconds,
+                        general_consensus: params.consensus.general_consensus.to_owned(),
                     },
                 };
                 (peer, config.to_erased())
@@ -145,20 +132,7 @@ impl ServerModuleInit for PredictionMarketsGen {
                 example: "test".to_owned(),
             },
             consensus: PredictionMarketsConfigConsensus {
-                new_market_fee: params.consensus.new_market_fee,
-                new_order_fee: params.consensus.new_order_fee,
-                consumer_order_bitcoin_balance_fee: params
-                    .consensus
-                    .consumer_order_bitcoin_balance_fee,
-                payout_proposal_fee: params.consensus.payout_proposal_fee,
-
-                max_contract_price: params.consensus.max_contract_price,
-                max_market_outcomes: params.consensus.max_market_outcomes,
-                max_outcome_control_keys: params.consensus.max_outcome_control_keys,
-
-                max_order_quantity: params.consensus.max_order_quantity,
-
-                timestamp_interval_seconds: params.consensus.timestamp_interval_seconds,
+                general_consensus: params.consensus.general_consensus,
             },
         }
         .to_erased())
@@ -171,18 +145,7 @@ impl ServerModuleInit for PredictionMarketsGen {
     ) -> anyhow::Result<PredictionMarketsClientConfig> {
         let config = PredictionMarketsConfigConsensus::from_erased(config)?;
         Ok(PredictionMarketsClientConfig {
-            new_market_fee: config.new_market_fee,
-            new_order_fee: config.new_order_fee,
-            consumer_order_bitcoin_balance_fee: config.consumer_order_bitcoin_balance_fee,
-            payout_proposal_fee: config.payout_proposal_fee,
-
-            max_contract_price: config.max_contract_price,
-            max_market_outcomes: config.max_market_outcomes,
-            max_outcome_control_keys: config.max_outcome_control_keys,
-
-            max_order_quantity: config.max_order_quantity,
-
-            timestamp_interval_seconds: config.timestamp_interval_seconds,
+            general_consensus: config.general_consensus,
         })
     }
 
@@ -337,7 +300,11 @@ impl ServerModule for PredictionMarkets {
 
         let next_consensus_timestamp = {
             let mut current = self.get_consensus_timestamp(dbtx).await;
-            current.seconds += self.cfg.consensus.timestamp_interval_seconds;
+            current.seconds += self
+                .cfg
+                .consensus
+                .general_consensus
+                .timestamp_interval_seconds;
             current
         };
 
@@ -350,8 +317,12 @@ impl ServerModule for PredictionMarkets {
     ) -> ConsensusProposal<PredictionMarketsConsensusItem> {
         let mut items = vec![];
 
-        let timestamp_to_propose =
-            UnixTimestamp::now().round_down(self.cfg.consensus.timestamp_interval_seconds);
+        let timestamp_to_propose = UnixTimestamp::now().round_down(
+            self.cfg
+                .consensus
+                .general_consensus
+                .timestamp_interval_seconds,
+        );
         let consensus_timestamp = self.get_consensus_timestamp(dbtx).await;
 
         if timestamp_to_propose > consensus_timestamp {
@@ -371,7 +342,12 @@ impl ServerModule for PredictionMarkets {
     ) -> anyhow::Result<()> {
         match consensus_item {
             PredictionMarketsConsensusItem::TimestampProposal(new) => {
-                if !new.divisible(self.cfg.consensus.timestamp_interval_seconds) {
+                if !new.divisible(
+                    self.cfg
+                        .consensus
+                        .general_consensus
+                        .timestamp_interval_seconds,
+                ) {
                     bail!("new unix timestamp is not divisible by timestamp interval");
                 }
 
@@ -454,7 +430,7 @@ impl ServerModule for PredictionMarkets {
                 // verify order params
                 if let Err(_) = Order::validate_order_params(
                     &market,
-                    &self.cfg.consensus.max_order_quantity,
+                    &self.cfg.consensus.general_consensus.max_order_quantity,
                     outcome,
                     price,
                     &quantity,
@@ -465,13 +441,13 @@ impl ServerModule for PredictionMarkets {
 
                 // set input meta
                 amount = Amount::ZERO;
-                fee = self.cfg.consensus.new_order_fee;
+                fee = self.cfg.consensus.general_consensus.new_order_fee;
                 pub_keys = source_order_public_keys;
 
                 // process order
                 self.process_new_order(
                     dbtx,
-                    &market,
+                    market,
                     owner.to_owned(),
                     market_out_point.to_owned(),
                     outcome.to_owned(),
@@ -499,7 +475,11 @@ impl ServerModule for PredictionMarkets {
 
                 // set input meta
                 amount = amount_to_consume.to_owned();
-                fee = self.cfg.consensus.consumer_order_bitcoin_balance_fee;
+                fee = self
+                    .cfg
+                    .consensus
+                    .general_consensus
+                    .consumer_order_bitcoin_balance_fee;
                 pub_keys = vec![order_owner.to_owned()];
 
                 // update order's bitcoin balance
@@ -563,7 +543,7 @@ impl ServerModule for PredictionMarkets {
 
                 // set input meta
                 amount = Amount::ZERO;
-                fee = self.cfg.consensus.payout_proposal_fee;
+                fee = self.cfg.consensus.general_consensus.payout_proposal_fee;
                 pub_keys = vec![outcome_control.to_owned()];
 
                 let consensus_timestamp = self.get_consensus_timestamp(dbtx).await;
@@ -642,6 +622,7 @@ impl ServerModule for PredictionMarkets {
                         .collect()
                         .await;
 
+                    let mut total_payout = Amount::ZERO;
                     for order_owner in market_orders {
                         let mut order = dbtx
                             .get_value(&db::OrderKey(order_owner))
@@ -653,15 +634,25 @@ impl ServerModule for PredictionMarkets {
                         let payout_per_contract_of_outcome = outcome_payouts
                             .get(usize::from(order.outcome))
                             .expect("should be some");
-                        order.bitcoin_balance = order.bitcoin_balance
-                            + (payout_per_contract_of_outcome.to_owned()
-                                * order.contract_of_outcome_balance.0);
+                        let order_payout = payout_per_contract_of_outcome.to_owned()
+                            * order.contract_of_outcome_balance.0;
+
                         order.contract_of_outcome_balance = ContractOfOutcomeAmount::ZERO;
+                        order.bitcoin_balance = order.bitcoin_balance + order_payout;
+                        order.bitcoin_cost = order.bitcoin_cost - SignedAmount::from(order_payout);
 
                         dbtx.insert_entry(&db::OrderKey(order_owner), &order).await;
+
+                        total_payout = total_payout + order_payout;
                     }
 
+                    assert_eq!(
+                        market.contract_price * market.open_contracts.0,
+                        total_payout
+                    );
+
                     // save payout to market
+                    market.open_contracts = ContractAmount::ZERO;
                     market.payout = Some(Payout {
                         outcome_payouts: outcome_payouts.to_owned(),
                         occurred_consensus_timestamp: consensus_timestamp,
@@ -698,9 +689,13 @@ impl ServerModule for PredictionMarkets {
             } => {
                 // verify market params
                 if let Err(_) = Market::validate_market_params(
-                    &self.cfg.consensus.max_contract_price,
-                    &self.cfg.consensus.max_market_outcomes,
-                    &self.cfg.consensus.max_outcome_control_keys,
+                    &self.cfg.consensus.general_consensus.max_contract_price,
+                    &self.cfg.consensus.general_consensus.max_market_outcomes,
+                    &self
+                        .cfg
+                        .consensus
+                        .general_consensus
+                        .max_outcome_control_keys,
                     contract_price,
                     outcomes,
                     outcome_control_weights,
@@ -712,7 +707,7 @@ impl ServerModule for PredictionMarkets {
 
                 // set output meta
                 amount = Amount::ZERO;
-                fee = self.cfg.consensus.new_market_fee;
+                fee = self.cfg.consensus.general_consensus.new_market_fee;
 
                 // save outcome
                 dbtx.insert_new_entry(
@@ -733,6 +728,8 @@ impl ServerModule for PredictionMarkets {
                         weight_required: weight_required.to_owned(),
                         information: information.to_owned(),
                         created_consensus_timestamp: consensus_timestamp,
+
+                        open_contracts: ContractAmount::ZERO,
                         payout: None,
                     },
                 )
@@ -788,7 +785,7 @@ impl ServerModule for PredictionMarkets {
                 // verify order params
                 if let Err(_) = Order::validate_order_params(
                     &market,
-                    &self.cfg.consensus.max_order_quantity,
+                    &self.cfg.consensus.general_consensus.max_order_quantity,
                     outcome,
                     price,
                     quantity,
@@ -799,7 +796,7 @@ impl ServerModule for PredictionMarkets {
 
                 // set output meta
                 amount = price.to_owned() * quantity.0;
-                fee = self.cfg.consensus.new_order_fee;
+                fee = self.cfg.consensus.general_consensus.new_order_fee;
 
                 // save outcome
                 dbtx.insert_new_entry(
@@ -811,7 +808,7 @@ impl ServerModule for PredictionMarkets {
                 // process order
                 self.process_new_order(
                     dbtx,
-                    &market,
+                    market,
                     owner.to_owned(),
                     market_out_point.to_owned(),
                     outcome.to_owned(),
@@ -834,7 +831,25 @@ impl ServerModule for PredictionMarkets {
         dbtx.get_value(&db::OutcomeKey(out_point)).await
     }
 
-    async fn audit(&self, _dbtx: &mut ModuleDatabaseTransaction<'_>, _audit: &mut Audit) {}
+    async fn audit(&self, dbtx: &mut ModuleDatabaseTransaction<'_>, audit: &mut Audit) {
+        audit
+            .add_items(dbtx, KIND.as_str(), &db::MarketPrefixAll, |_, market| {
+                -((market.contract_price * market.open_contracts.0).msats as i64)
+            })
+            .await;
+
+        audit
+            .add_items(dbtx, KIND.as_str(), &db::OrderPrefixAll, |_, order| {
+                let mut milli_sat = 0i64;
+                if let Side::Buy = order.side {
+                    milli_sat -= (order.price * order.quantity_waiting_for_match.0).msats as i64
+                }
+                milli_sat -= order.bitcoin_balance.msats as i64;
+                
+                milli_sat
+            })
+            .await;
+    }
 
     fn api_endpoints(&self) -> Vec<ApiEndpoint<Self>> {
         vec![
@@ -983,7 +998,7 @@ impl PredictionMarkets {
     async fn process_new_order(
         &self,
         dbtx: &mut ModuleDatabaseTransaction<'_>,
-        market: &Market,
+        mut market: Market,
         order_owner: XOnlyPublicKey,
         market_out_point: OutPoint,
         outcome: Outcome,
@@ -991,6 +1006,8 @@ impl PredictionMarkets {
         price: Amount,
         quantity: ContractOfOutcomeAmount,
     ) {
+        let consenus_timestamp = self.get_consensus_timestamp(dbtx).await;
+
         let mut order = Order {
             market: market_out_point,
             outcome,
@@ -999,9 +1016,13 @@ impl PredictionMarkets {
             original_quantity: quantity,
             time_ordering: PredictionMarkets::get_next_order_time_ordering(dbtx, market_out_point)
                 .await,
+            created_consensus_timestamp: consenus_timestamp,
+
             quantity_waiting_for_match: quantity,
             contract_of_outcome_balance: ContractOfOutcomeAmount::ZERO,
             bitcoin_balance: Amount::ZERO,
+
+            bitcoin_cost: SignedAmount::ZERO,
         };
 
         while order.quantity_waiting_for_match > ContractOfOutcomeAmount::ZERO {
@@ -1015,7 +1036,7 @@ impl PredictionMarkets {
             let other = Self::get_other_outcome_sides_price_quantity(
                 dbtx,
                 &market_out_point,
-                market,
+                &market,
                 &outcome,
                 &side,
             )
@@ -1071,10 +1092,16 @@ impl PredictionMarkets {
 
                         order.bitcoin_balance = order.bitcoin_balance
                             + ((order.price - own_price) * satisfied_quantity.0);
+
+                        order.bitcoin_cost = order.bitcoin_cost
+                            + SignedAmount::from(own_price * satisfied_quantity.0);
                     }
                     Side::Sell => {
                         order.bitcoin_balance =
-                            order.bitcoin_balance + (own_price * satisfied_quantity.0)
+                            order.bitcoin_balance + (own_price * satisfied_quantity.0);
+
+                        order.bitcoin_cost = order.bitcoin_cost
+                            - SignedAmount::from(own_price * satisfied_quantity.0);
                     }
                 }
 
@@ -1109,11 +1136,23 @@ impl PredictionMarkets {
                             + (Amount::try_from(SignedAmount::from(order.price) - other_price)
                                 .expect("should always convert")
                                 * satisfied_quantity.0);
+
+                        order.bitcoin_cost =
+                            order.bitcoin_cost + (other_price * satisfied_quantity.0);
+
+                        market.open_contracts =
+                            market.open_contracts + ContractAmount(satisfied_quantity.0);
                     }
                     Side::Sell => {
                         order.bitcoin_balance = order.bitcoin_balance
                             + (Amount::try_from(other_price).expect("should always convert")
-                                * satisfied_quantity.0)
+                                * satisfied_quantity.0);
+
+                        order.bitcoin_cost =
+                            order.bitcoin_cost - (other_price * satisfied_quantity.0);
+
+                        market.open_contracts =
+                            market.open_contracts - ContractAmount(satisfied_quantity.0);
                     }
                 }
 
@@ -1141,6 +1180,10 @@ impl PredictionMarkets {
             )
             .await
         }
+
+        // save possible changes to market
+        dbtx.insert_entry(&db::MarketKey(market_out_point), &market)
+            .await;
     }
 
     async fn get_outcome_side_price_quantity(
@@ -1258,11 +1301,17 @@ impl PredictionMarkets {
             match side {
                 Side::Buy => {
                     order.contract_of_outcome_balance =
-                        order.contract_of_outcome_balance + satisfied_quantity
+                        order.contract_of_outcome_balance + satisfied_quantity;
+
+                    order.bitcoin_cost =
+                        order.bitcoin_cost + SignedAmount::from(order.price * satisfied_quantity.0);
                 }
                 Side::Sell => {
                     order.bitcoin_balance =
-                        order.bitcoin_balance + (order.price * satisfied_quantity.0)
+                        order.bitcoin_balance + (order.price * satisfied_quantity.0);
+
+                    order.bitcoin_cost =
+                        order.bitcoin_cost - SignedAmount::from(order.price * satisfied_quantity.0);
                 }
             }
 
