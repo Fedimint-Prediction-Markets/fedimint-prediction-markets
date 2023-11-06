@@ -1009,6 +1009,7 @@ impl PredictionMarkets {
         quantity: ContractOfOutcomeAmount,
     ) {
         let consenus_timestamp = self.get_consensus_timestamp(dbtx).await;
+        let beginning_market_open_contracts = market.open_contracts;
 
         let mut order = Order {
             market: market_out_point,
@@ -1183,9 +1184,11 @@ impl PredictionMarkets {
             .await
         }
 
-        // save possible changes to market
-        dbtx.insert_entry(&db::MarketKey(market_out_point), &market)
-            .await;
+        // save market if changed
+        if market.open_contracts != beginning_market_open_contracts {
+            dbtx.insert_entry(&db::MarketKey(market_out_point), &market)
+                .await;
+        }
     }
 
     async fn get_outcome_side_price_quantity(
