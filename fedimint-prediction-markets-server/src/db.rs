@@ -2,10 +2,10 @@ use fedimint_core::encoding::{Decodable, Encodable};
 
 use fedimint_core::{impl_db_lookup, impl_db_record, Amount, OutPoint, PeerId};
 
-use fedimint_prediction_markets_common::UnixTimestamp;
 #[allow(unused_imports)]
 use fedimint_prediction_markets_common::{
-    ContractAmount, Market, Order, Outcome, Payout, Side, TimeOrdering,
+    Candlestick, ContractAmount, Market, Order, Outcome, Payout, Seconds, Side, TimeOrdering,
+    UnixTimestamp,
 };
 
 use secp256k1::XOnlyPublicKey;
@@ -59,6 +59,9 @@ pub enum DbKeyPrefix {
     MarketOutcomeControlProposal = 0x23,
     /// (Market's [OutPoint], [Vec<Amount>], [XOnlyPublicKey]) to ()
     MarketOutcomePayoutsProposals = 0x24,
+
+    /// (Market's [OutPoint], [Outcome], candlestick interval [Seconds], Candle's [UnixTimestamp]) to [CandleStick]
+    MarketOutcomeCandlesticks = 0x25,
 
     /// ----- 40-4f reserved for api lookup indexes -----
 
@@ -333,6 +336,37 @@ impl_db_lookup!(
     key = MarketOutcomePayoutsProposalsKey,
     query_prefix = MarketOutcomePayoutsProposalsPrefixAll,
     query_prefix = MarketOutcomePayoutsProposalsPrefix2
+);
+
+// MarketOutcomeCandlesticks
+#[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
+pub struct MarketOutcomeCandlesticksKey {
+    pub market: OutPoint,
+    pub outcome: Outcome,
+    pub candlestick_interval: Seconds,
+    pub candlestick_timestamp: UnixTimestamp,
+}
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct MarketOutcomeCandlesticksPrefixAll;
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct MarketOutcomeCandlesticksPrefix3 {
+    pub market: OutPoint,
+    pub outcome: Outcome,
+    pub candlestick_interval: Seconds,
+}
+
+impl_db_record!(
+    key = MarketOutcomeCandlesticksKey,
+    value = Candlestick,
+    db_prefix = DbKeyPrefix::MarketOutcomeCandlesticks,
+);
+
+impl_db_lookup!(
+    key = MarketOutcomeCandlesticksKey,
+    query_prefix = MarketOutcomeCandlesticksPrefixAll,
+    query_prefix = MarketOutcomeCandlesticksPrefix3,
 );
 
 // template

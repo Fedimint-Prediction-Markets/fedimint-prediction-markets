@@ -21,8 +21,9 @@ use fedimint_core::module::{
     TransactionItemAmount,
 };
 use fedimint_prediction_markets_common::{
-    ContractOfOutcomeAmount, Market, MarketInformation, Order, OrderIdClientSide, Outcome, Side,
-    UnixTimestamp, Weight, WeightRequired,
+    Candlestick, ContractOfOutcomeAmount, GetMarketOutcomeCandlesticksParams,
+    GetMarketOutcomeCandlesticksResult, GetOutcomeControlMarketsParams, Market, MarketInformation,
+    Order, OrderIdClientSide, Outcome, Seconds, Side, UnixTimestamp, Weight, WeightRequired,
 };
 
 use fedimint_core::{apply, async_trait_maybe_send, Amount, OutPoint, TransactionId};
@@ -66,7 +67,7 @@ pub trait OddsMarketsClientExt {
     ) -> anyhow::Result<Option<Market>>;
 
     /// Get all market [OutPoint]s that our outcome control key has some sort of authority over.
-    /// 
+    ///
     /// Returns (market creation time) to (market outpoint)
     async fn get_outcome_control_markets(
         &self,
@@ -136,6 +137,15 @@ pub trait OddsMarketsClientExt {
 
     /// Used to recover orders in case of recovery from seed
     async fn recover_orders(&self) -> anyhow::Result<()>;
+
+    /// Candlesticks
+    async fn get_candlesticks(
+        &self,
+        market: OutPoint,
+        outcome: Outcome,
+        candlestick_interval: Seconds,
+        candlestick_count: u32,
+    ) -> anyhow::Result<BTreeMap<UnixTimestamp, Candlestick>>;
 }
 
 #[apply(async_trait_maybe_send!)]
@@ -255,7 +265,7 @@ impl OddsMarketsClientExt for Client {
     async fn get_outcome_control_markets(
         &self,
         sync_new_markets: bool,
-        markets_created_after_and_including: UnixTimestamp
+        markets_created_after_and_including: UnixTimestamp,
     ) -> anyhow::Result<BTreeMap<UnixTimestamp, OutPoint>> {
         let (prediction_markets, instance) =
             self.get_first_module::<PredictionMarketsClientModule>(&KIND);
@@ -278,7 +288,10 @@ impl OddsMarketsClientExt for Client {
             };
             let get_outcome_control_markets_result = instance
                 .api
-                .get_outcome_control_markets(outcome_control, markets_created_after_and_including)
+                .get_outcome_control_markets(GetOutcomeControlMarketsParams {
+                    outcome_control,
+                    markets_created_after_and_including,
+                })
                 .await?;
 
             for market_out_point in get_outcome_control_markets_result.markets {
@@ -304,7 +317,7 @@ impl OddsMarketsClientExt for Client {
         let mut outcome_control_markets = BTreeMap::new();
         loop {
             let Some((key, _)) = market_stream_newest_first.next().await else {
-                break; 
+                break;
             };
             if key.market_created < markets_created_after_and_including {
                 break;
@@ -312,7 +325,7 @@ impl OddsMarketsClientExt for Client {
 
             outcome_control_markets.insert(key.market_created, key.market);
         }
-            
+
         drop(market_stream_newest_first);
         dbtx.commit_tx().await;
 
@@ -843,6 +856,30 @@ impl OddsMarketsClientExt for Client {
 
         Ok(())
     }
+
+    async fn get_candlesticks(
+        &self,
+        market: OutPoint,
+        outcome: Outcome,
+        candlestick_interval: Seconds,
+        candlestick_count: u32,
+    ) -> anyhow::Result<BTreeMap<UnixTimestamp, Candlestick>> {
+        let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+
+        let GetMarketOutcomeCandlesticksResult { candlesticks } = instance
+            .api
+            .get_market_outcome_candlesticks(GetMarketOutcomeCandlesticksParams {
+                market,
+                outcome,
+                candlestick_interval,
+                candlestick_count,
+            })
+            .await?;
+
+        let candlesticks = candlesticks.into_iter().collect::<BTreeMap<_, _>>();
+
+        Ok(candlesticks)
+    }
 }
 
 #[derive(Debug)]
@@ -984,7 +1021,7 @@ impl ClientModule for PredictionMarketsClientModule {
                 outcome_payouts: _,
             } => {
                 amount = Amount::ZERO;
-                fee = self.cfg.general_consensus.payout_proposal_fee;
+                fee = self.cfg.gc.payout_proposal_fee;
             }
             PredictionMarketsInput::CancelOrder { order: _ } => {
                 amount = Amount::ZERO;
@@ -995,7 +1032,10 @@ impl ClientModule for PredictionMarketsClientModule {
                 amount: amount_to_free,
             } => {
                 amount = amount_to_free.to_owned();
-                fee = self.cfg.general_consensus.consumer_order_bitcoin_balance_fee;
+                fee = self
+                    .cfg
+                    .gc
+                    .consumer_order_bitcoin_balance_fee;
             }
             PredictionMarketsInput::NewSellOrder {
                 owner: _,
@@ -1005,7 +1045,7 @@ impl ClientModule for PredictionMarketsClientModule {
                 sources: _,
             } => {
                 amount = Amount::ZERO;
-                fee = self.cfg.general_consensus.new_order_fee;
+                fee = self.cfg.gc.new_order_fee;
             }
         }
 
@@ -1028,7 +1068,7 @@ impl ClientModule for PredictionMarketsClientModule {
                 information: _,
             } => {
                 amount = Amount::ZERO;
-                fee = self.cfg.general_consensus.new_market_fee;
+                fee = self.cfg.gc.new_market_fee;
             }
             PredictionMarketsOutput::NewBuyOrder {
                 owner: _,
@@ -1038,7 +1078,7 @@ impl ClientModule for PredictionMarketsClientModule {
                 quantity,
             } => {
                 amount = price.to_owned() * quantity.0;
-                fee = self.cfg.general_consensus.new_order_fee;
+                fee = self.cfg.gc.new_order_fee;
             }
         }
 
@@ -1100,7 +1140,7 @@ impl ClientModule for PredictionMarketsClientModule {
                         },
                     ).await?;
 
-                   Ok(serde_json::to_value(market_out_point)?)
+                Ok(serde_json::to_value(market_out_point.txid)?)
             }
 
             "get-market" => {
@@ -1278,6 +1318,27 @@ impl ClientModule for PredictionMarketsClientModule {
 
             "recover-orders" => {
                 Ok(serde_json::to_value(client.recover_orders().await?)?)
+            }
+
+            "get-candlesticks" => {
+                let Ok(txid) = TransactionId::from_str(&args[1].to_string_lossy()) else {
+                    bail!("Error getting transaction id");
+                };
+
+                let out_point = OutPoint { txid, out_idx: 0 };
+
+                let outcome: Outcome = args[2].to_string_lossy().parse()?;
+
+                let candlestick_interval: Seconds = args[3].to_string_lossy().parse()?;
+
+                let candlesticks = client.
+                    get_candlesticks(out_point, outcome, candlestick_interval, 500)
+                    .await?
+                    .into_iter()
+                    .map(|(key,value)| (key.seconds.to_string(), value))
+                    .collect::<BTreeMap<String, Candlestick>>();
+
+                Ok(serde_json::to_value(candlesticks)?)
             }
 
             command => Err(anyhow::format_err!(

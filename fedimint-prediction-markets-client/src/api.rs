@@ -6,7 +6,8 @@ use fedimint_core::module::ApiRequestErased;
 use fedimint_core::task::{MaybeSend, MaybeSync};
 use fedimint_core::{apply, async_trait_maybe_send, Amount, OutPoint};
 use fedimint_prediction_markets_common::{
-    GetOutcomeControlMarketsParams, GetOutcomeControlMarketsResult, Market, Order, UnixTimestamp,
+    GetMarketOutcomeCandlesticksParams, GetMarketOutcomeCandlesticksResult,
+    GetOutcomeControlMarketsParams, GetOutcomeControlMarketsResult, Market, Order
 };
 use secp256k1::XOnlyPublicKey;
 
@@ -16,13 +17,16 @@ pub trait PredictionMarketsFederationApi {
     async fn get_order(&self, order: XOnlyPublicKey) -> FederationResult<Option<Order>>;
     async fn get_outcome_control_markets(
         &self,
-        outcome_control: XOnlyPublicKey,
-        markets_created_after_and_including: UnixTimestamp,
+        params: GetOutcomeControlMarketsParams,
     ) -> FederationResult<GetOutcomeControlMarketsResult>;
     async fn get_market_outcome_control_proposals(
         &self,
         market: OutPoint,
     ) -> FederationResult<BTreeMap<XOnlyPublicKey, Vec<Amount>>>;
+    async fn get_market_outcome_candlesticks(
+        &self,
+        params: GetMarketOutcomeCandlesticksParams,
+    ) -> FederationResult<GetMarketOutcomeCandlesticksResult>;
 }
 
 #[apply(async_trait_maybe_send!)]
@@ -42,15 +46,11 @@ where
 
     async fn get_outcome_control_markets(
         &self,
-        outcome_control: XOnlyPublicKey,
-        markets_created_after_and_including: UnixTimestamp,
+        params: GetOutcomeControlMarketsParams,
     ) -> FederationResult<GetOutcomeControlMarketsResult> {
         self.request_current_consensus(
             "get_outcome_control_markets".to_string(),
-            ApiRequestErased::new(GetOutcomeControlMarketsParams {
-                outcome_control,
-                markets_created_after_and_including,
-            }),
+            ApiRequestErased::new(params),
         )
         .await
     }
@@ -62,6 +62,17 @@ where
         self.request_current_consensus(
             "get_market_outcome_control_proposals".to_string(),
             ApiRequestErased::new(market),
+        )
+        .await
+    }
+
+    async fn get_market_outcome_candlesticks(
+        &self,
+        params: GetMarketOutcomeCandlesticksParams,
+    ) -> FederationResult<GetMarketOutcomeCandlesticksResult> {
+        self.request_current_consensus(
+            "get_market_outcome_candlesticks".to_string(),
+            ApiRequestErased::new(params),
         )
         .await
     }

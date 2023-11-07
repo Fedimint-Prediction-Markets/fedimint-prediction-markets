@@ -3,7 +3,7 @@ use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::{plugin_types_trait_impl_config, Amount};
 use serde::{Deserialize, Serialize};
 
-use crate::{ContractOfOutcomeAmount, Outcome, PredictionMarketsCommonGen};
+use crate::{ContractOfOutcomeAmount, Outcome, PredictionMarketsCommonGen, Seconds};
 
 /// Parameters necessary to generate this module's configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,7 +19,7 @@ pub struct PredictionMarketsGenParamsLocal {}
 /// Consensus parameters for config generation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictionMarketsGenParamsConsensus {
-    pub general_consensus: GeneralConsensus,
+    pub gc: GeneralConsensus,
 }
 
 impl Default for PredictionMarketsGenParams {
@@ -27,7 +27,7 @@ impl Default for PredictionMarketsGenParams {
         Self {
             local: PredictionMarketsGenParamsLocal {},
             consensus: PredictionMarketsGenParamsConsensus {
-                general_consensus: GeneralConsensus {
+                gc: GeneralConsensus {
                     // fees
                     new_market_fee: Amount::from_sats(100),
                     new_order_fee: Amount::from_sats(1),
@@ -43,10 +43,10 @@ impl Default for PredictionMarketsGenParams {
                     max_order_quantity: ContractOfOutcomeAmount(1000000),
 
                     // timestamp creation
-                    timestamp_interval_seconds: 15,
+                    timestamp_interval: 15,
 
                     // match data
-                    candlestick_intervals_seconds: vec![
+                    candlestick_intervals: vec![
                         15,
                         60,
                         60 * 5,
@@ -55,6 +55,7 @@ impl Default for PredictionMarketsGenParams {
                         60 * 60 * 4,
                         60 * 60 * 24,
                     ],
+                    api_max_number_of_candlesticks_per_get_request: 500,
                 },
             },
         }
@@ -72,7 +73,7 @@ pub struct PredictionMarketsConfig {
 /// Contains all the configuration for the client
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Encodable, Decodable, Hash)]
 pub struct PredictionMarketsClientConfig {
-    pub general_consensus: GeneralConsensus,
+    pub gc: GeneralConsensus,
 }
 
 /// Locally unencrypted config unique to each member
@@ -84,7 +85,7 @@ pub struct PredictionMarketsConfigLocal {
 /// Will be the same for every federation member
 #[derive(Clone, Debug, Serialize, Deserialize, Decodable, Encodable)]
 pub struct PredictionMarketsConfigConsensus {
-    pub general_consensus: GeneralConsensus,
+    pub gc: GeneralConsensus,
 }
 
 /// Will be encrypted and not shared such as private key material
@@ -123,8 +124,9 @@ pub struct GeneralConsensus {
     pub max_order_quantity: ContractOfOutcomeAmount,
 
     // timestamp creation
-    pub timestamp_interval_seconds: u64,
+    pub timestamp_interval: Seconds,
 
     // match data
-    pub candlestick_intervals_seconds: Vec<u64>,
+    pub candlestick_intervals: Vec<Seconds>,
+    pub api_max_number_of_candlesticks_per_get_request: u32
 }

@@ -589,6 +589,8 @@ impl Mul<u64> for SignedAmount {
     }
 }
 
+pub type Seconds = u64;
+
 #[derive(
     Debug,
     Clone,
@@ -604,7 +606,7 @@ impl Mul<u64> for SignedAmount {
     Ord,
 )]
 pub struct UnixTimestamp {
-    pub seconds: u64,
+    pub seconds: Seconds,
 }
 
 impl UnixTimestamp {
@@ -619,13 +621,13 @@ impl UnixTimestamp {
         }
     }
 
-    pub fn round_down(&self, seconds: u64) -> Self {
+    pub fn round_down(&self, seconds: Seconds) -> Self {
         UnixTimestamp {
             seconds: self.seconds - self.seconds % seconds,
         }
     }
 
-    pub fn divisible(&self, seconds: u64) -> bool {
+    pub fn divisible(&self, seconds: Seconds) -> bool {
         self.seconds % seconds == 0
     }
 
@@ -651,6 +653,29 @@ pub struct GetOutcomeControlMarketsResult {
     pub markets: Vec<OutPoint>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+pub struct GetMarketOutcomeCandlesticksParams {
+    pub market: OutPoint,
+    pub outcome: Outcome,
+    pub candlestick_interval: Seconds,
+    pub candlestick_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+pub struct GetMarketOutcomeCandlesticksResult {
+    pub candlesticks: Vec<(UnixTimestamp, Candlestick)>,
+}
+
 pub type Weight = u8;
 pub type WeightRequired = u32;
 
+#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+pub struct Candlestick {
+    pub open: Amount,
+    pub close: Amount,
+    pub high: Amount,
+    pub low: Amount,
+
+    // swaps produce 2 volume, creation/deletion produce 1 volume
+    pub volume: ContractOfOutcomeAmount,
+}

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use std::string::ToString;
 use std::time::Duration;
@@ -27,8 +27,9 @@ pub use fedimint_prediction_markets_common::config::{
     PredictionMarketsConfigLocal, PredictionMarketsConfigPrivate, PredictionMarketsGenParams,
 };
 use fedimint_prediction_markets_common::{
-    ContractAmount, ContractOfOutcomeAmount, GetOutcomeControlMarketsParams,
-    GetOutcomeControlMarketsResult, Market, Order, Outcome, Payout, Side, SignedAmount,
+    Candlestick, ContractAmount, ContractOfOutcomeAmount, GetMarketOutcomeCandlesticksParams,
+    GetMarketOutcomeCandlesticksResult, GetOutcomeControlMarketsParams,
+    GetOutcomeControlMarketsResult, Market, Order, Outcome, Payout, Seconds, Side, SignedAmount,
     TimeOrdering, UnixTimestamp, WeightRequired,
 };
 pub use fedimint_prediction_markets_common::{
@@ -104,7 +105,7 @@ impl ServerModuleInit for PredictionMarketsGen {
                         example: "test".to_owned(),
                     },
                     consensus: PredictionMarketsConfigConsensus {
-                        general_consensus: params.consensus.general_consensus.to_owned(),
+                        gc: params.consensus.gc.to_owned(),
                     },
                 };
                 (peer, config.to_erased())
@@ -132,7 +133,7 @@ impl ServerModuleInit for PredictionMarketsGen {
                 example: "test".to_owned(),
             },
             consensus: PredictionMarketsConfigConsensus {
-                general_consensus: params.consensus.general_consensus,
+                gc: params.consensus.gc,
             },
         }
         .to_erased())
@@ -145,7 +146,7 @@ impl ServerModuleInit for PredictionMarketsGen {
     ) -> anyhow::Result<PredictionMarketsClientConfig> {
         let config = PredictionMarketsConfigConsensus::from_erased(config)?;
         Ok(PredictionMarketsClientConfig {
-            general_consensus: config.general_consensus,
+            gc: config.gc,
         })
     }
 
@@ -251,7 +252,17 @@ impl ServerModuleInit for PredictionMarketsGen {
                         db::MarketOutcomePayoutsVotesKey,
                         (),
                         items,
-                        "MarketOutcomePayoutsVotes"
+                        "MarketOutcomePayoutsProposals"
+                    );
+                }
+                DbKeyPrefix::MarketOutcomeCandlesticks => {
+                    push_db_pair_items!(
+                        dbtx,
+                        db::MarketOutcomeCandlesticksPrefixAll,
+                        db::MarketOutcomeCandlesticksKey,
+                        Candlestick,
+                        items,
+                        "MarketOutcomeCandleSticks"
                     );
                 }
                 DbKeyPrefix::OutcomeControlMarkets => {
@@ -300,11 +311,7 @@ impl ServerModule for PredictionMarkets {
 
         let next_consensus_timestamp = {
             let mut current = self.get_consensus_timestamp(dbtx).await;
-            current.seconds += self
-                .cfg
-                .consensus
-                .general_consensus
-                .timestamp_interval_seconds;
+            current.seconds += self.cfg.consensus.gc.timestamp_interval;
             current
         };
 
@@ -317,12 +324,8 @@ impl ServerModule for PredictionMarkets {
     ) -> ConsensusProposal<PredictionMarketsConsensusItem> {
         let mut items = vec![];
 
-        let timestamp_to_propose = UnixTimestamp::now().round_down(
-            self.cfg
-                .consensus
-                .general_consensus
-                .timestamp_interval_seconds,
-        );
+        let timestamp_to_propose =
+            UnixTimestamp::now().round_down(self.cfg.consensus.gc.timestamp_interval);
         let consensus_timestamp = self.get_consensus_timestamp(dbtx).await;
 
         if timestamp_to_propose > consensus_timestamp {
@@ -342,12 +345,7 @@ impl ServerModule for PredictionMarkets {
     ) -> anyhow::Result<()> {
         match consensus_item {
             PredictionMarketsConsensusItem::TimestampProposal(new) => {
-                if !new.divisible(
-                    self.cfg
-                        .consensus
-                        .general_consensus
-                        .timestamp_interval_seconds,
-                ) {
+                if !new.divisible(self.cfg.consensus.gc.timestamp_interval) {
                     bail!("new unix timestamp is not divisible by timestamp interval");
                 }
 
@@ -430,7 +428,7 @@ impl ServerModule for PredictionMarkets {
                 // verify order params
                 if let Err(_) = Order::validate_order_params(
                     &market,
-                    &self.cfg.consensus.general_consensus.max_order_quantity,
+                    &self.cfg.consensus.gc.max_order_quantity,
                     outcome,
                     price,
                     &quantity,
@@ -441,7 +439,7 @@ impl ServerModule for PredictionMarkets {
 
                 // set input meta
                 amount = Amount::ZERO;
-                fee = self.cfg.consensus.general_consensus.new_order_fee;
+                fee = self.cfg.consensus.gc.new_order_fee;
                 pub_keys = source_order_public_keys;
 
                 // process order
@@ -475,11 +473,7 @@ impl ServerModule for PredictionMarkets {
 
                 // set input meta
                 amount = amount_to_consume.to_owned();
-                fee = self
-                    .cfg
-                    .consensus
-                    .general_consensus
-                    .consumer_order_bitcoin_balance_fee;
+                fee = self.cfg.consensus.gc.consumer_order_bitcoin_balance_fee;
                 pub_keys = vec![order_owner.to_owned()];
 
                 // update order's bitcoin balance
@@ -543,7 +537,7 @@ impl ServerModule for PredictionMarkets {
 
                 // set input meta
                 amount = Amount::ZERO;
-                fee = self.cfg.consensus.general_consensus.payout_proposal_fee;
+                fee = self.cfg.consensus.gc.payout_proposal_fee;
                 pub_keys = vec![outcome_control.to_owned()];
 
                 let consensus_timestamp = self.get_consensus_timestamp(dbtx).await;
@@ -689,13 +683,9 @@ impl ServerModule for PredictionMarkets {
             } => {
                 // verify market params
                 if let Err(_) = Market::validate_market_params(
-                    &self.cfg.consensus.general_consensus.max_contract_price,
-                    &self.cfg.consensus.general_consensus.max_market_outcomes,
-                    &self
-                        .cfg
-                        .consensus
-                        .general_consensus
-                        .max_outcome_control_keys,
+                    &self.cfg.consensus.gc.max_contract_price,
+                    &self.cfg.consensus.gc.max_market_outcomes,
+                    &self.cfg.consensus.gc.max_outcome_control_keys,
                     contract_price,
                     outcomes,
                     outcome_control_weights,
@@ -707,7 +697,7 @@ impl ServerModule for PredictionMarkets {
 
                 // set output meta
                 amount = Amount::ZERO;
-                fee = self.cfg.consensus.general_consensus.new_market_fee;
+                fee = self.cfg.consensus.gc.new_market_fee;
 
                 // save outcome
                 dbtx.insert_new_entry(
@@ -785,7 +775,7 @@ impl ServerModule for PredictionMarkets {
                 // verify order params
                 if let Err(_) = Order::validate_order_params(
                     &market,
-                    &self.cfg.consensus.general_consensus.max_order_quantity,
+                    &self.cfg.consensus.gc.max_order_quantity,
                     outcome,
                     price,
                     quantity,
@@ -796,7 +786,7 @@ impl ServerModule for PredictionMarkets {
 
                 // set output meta
                 amount = price.to_owned() * quantity.0;
-                fee = self.cfg.consensus.general_consensus.new_order_fee;
+                fee = self.cfg.consensus.gc.new_order_fee;
 
                 // save outcome
                 dbtx.insert_new_entry(
@@ -870,13 +860,19 @@ impl ServerModule for PredictionMarkets {
             api_endpoint! {
                 "get_outcome_control_markets",
                 async |module: &PredictionMarkets, context, params: GetOutcomeControlMarketsParams| -> GetOutcomeControlMarketsResult {
-                    module.api_get_outcome_control_markets(&mut context.dbtx(), params.outcome_control, params.markets_created_after_and_including).await
+                    module.api_get_outcome_control_markets(&mut context.dbtx(), params).await
                 }
             },
             api_endpoint! {
                 "get_market_outcome_control_proposals",
                 async |module: &PredictionMarkets, context, market: OutPoint| -> BTreeMap<XOnlyPublicKey,Vec<Amount>> {
                     module.api_get_market_outcome_control_proposals(&mut context.dbtx(), market).await
+                }
+            },
+            api_endpoint! {
+                "get_market_outcome_candlesticks",
+                async |module: &PredictionMarkets, context, params: GetMarketOutcomeCandlesticksParams| -> GetMarketOutcomeCandlesticksResult {
+                    module.api_get_market_outcome_candlesticks(&mut context.dbtx(), params).await
                 }
             },
         ]
@@ -904,20 +900,21 @@ impl PredictionMarkets {
     async fn api_get_outcome_control_markets(
         &self,
         dbtx: &mut ModuleDatabaseTransaction<'_>,
-        outcome_control: XOnlyPublicKey,
-        after_and_including: UnixTimestamp,
+        params: GetOutcomeControlMarketsParams,
     ) -> Result<GetOutcomeControlMarketsResult, ApiError> {
         let mut markets = vec![];
 
         let mut stream = dbtx
-            .find_by_prefix_sorted_descending(&db::OutcomeControlMarketsPrefix1 { outcome_control })
+            .find_by_prefix_sorted_descending(&db::OutcomeControlMarketsPrefix1 {
+                outcome_control: params.outcome_control,
+            })
             .await;
         loop {
             let Some((key, _)) = stream.next().await else {
                 break;
             };
 
-            if key.market_created < after_and_including {
+            if key.market_created < params.markets_created_after_and_including {
                 break;
             }
 
@@ -938,6 +935,32 @@ impl PredictionMarkets {
             .map(|(key, value)| (key.outcome_control, value))
             .collect()
             .await)
+    }
+
+    async fn api_get_market_outcome_candlesticks(
+        &self,
+        dbtx: &mut ModuleDatabaseTransaction<'_>,
+        params: GetMarketOutcomeCandlesticksParams,
+    ) -> Result<GetMarketOutcomeCandlesticksResult, ApiError> {
+        let candlesticks = dbtx
+            .find_by_prefix_sorted_descending(&db::MarketOutcomeCandlesticksPrefix3 {
+                market: params.market,
+                outcome: params.outcome,
+                candlestick_interval: params.candlestick_interval,
+            })
+            .await
+            .take(
+                self.cfg
+                    .consensus
+                    .gc
+                    .api_max_number_of_candlesticks_per_get_request
+                    .min(params.candlestick_count) as usize,
+            )
+            .map(|(key, value)| (key.candlestick_timestamp, value))
+            .collect::<Vec<(UnixTimestamp, Candlestick)>>()
+            .await;
+
+        Ok(GetMarketOutcomeCandlesticksResult { candlesticks })
     }
 }
 
@@ -1008,8 +1031,16 @@ impl PredictionMarkets {
         price: Amount,
         quantity: ContractOfOutcomeAmount,
     ) {
-        let consenus_timestamp = self.get_consensus_timestamp(dbtx).await;
+        let consensus_timestamp = self.get_consensus_timestamp(dbtx).await;
         let beginning_market_open_contracts = market.open_contracts;
+
+        let mut order_cache = OrderCache::new();
+        let mut price_quantity_cache = PriceQuantityCache::new();
+        let mut candlestick_data_creator = CandlestickDataCreator::new(
+            &self.cfg.consensus.gc.candlestick_intervals,
+            consensus_timestamp,
+            market_out_point,
+        );
 
         let mut order = Order {
             market: market_out_point,
@@ -1019,7 +1050,7 @@ impl PredictionMarkets {
             original_quantity: quantity,
             time_ordering: PredictionMarkets::get_next_order_time_ordering(dbtx, market_out_point)
                 .await,
-            created_consensus_timestamp: consenus_timestamp,
+            created_consensus_timestamp: consensus_timestamp,
 
             quantity_waiting_for_match: quantity,
             contract_of_outcome_balance: ContractOfOutcomeAmount::ZERO,
@@ -1029,15 +1060,19 @@ impl PredictionMarkets {
         };
 
         while order.quantity_waiting_for_match > ContractOfOutcomeAmount::ZERO {
-            let own = Self::get_outcome_side_price_quantity(
+            let own = Self::get_outcome_side_best_price_quantity(
                 dbtx,
+                &mut order_cache,
+                &mut price_quantity_cache,
                 &market_out_point,
                 &outcome,
                 &side.opposite(),
             )
             .await;
-            let other = Self::get_other_outcome_sides_price_quantity(
+            let other = Self::get_other_outcome_sides_best_price_quantity(
                 dbtx,
+                &mut order_cache,
+                &mut price_quantity_cache,
                 &market_out_point,
                 &market,
                 &outcome,
@@ -1070,13 +1105,15 @@ impl PredictionMarkets {
                 }
             }
 
-            // process own outcome match
+            // process own outcome match (contract swap)
             if matches_own {
                 let (own_price, own_quantity) = own.expect("should always be some");
                 let satisfied_quantity = order.quantity_waiting_for_match.min(own_quantity);
 
                 Self::process_market_quantity(
                     dbtx,
+                    &mut order_cache,
+                    &mut candlestick_data_creator,
                     &market_out_point,
                     &market,
                     &outcome,
@@ -1084,6 +1121,11 @@ impl PredictionMarkets {
                     satisfied_quantity,
                 )
                 .await;
+                price_quantity_cache.sub_outcome_side_quantity(
+                    outcome,
+                    side.opposite(),
+                    satisfied_quantity,
+                );
 
                 order.quantity_waiting_for_match =
                     order.quantity_waiting_for_match - satisfied_quantity;
@@ -1108,7 +1150,11 @@ impl PredictionMarkets {
                     }
                 }
 
-            // process other outcome match
+                candlestick_data_creator
+                    .add(dbtx, outcome, own_price, satisfied_quantity)
+                    .await;
+
+            // process other outcome match (contract creation/destruction)
             } else if matches_other {
                 let (other_price, other_quantity) = other.expect("should always be some");
                 let satisfied_quantity = order.quantity_waiting_for_match.min(other_quantity);
@@ -1117,6 +1163,8 @@ impl PredictionMarkets {
                     if i != outcome {
                         Self::process_market_quantity(
                             dbtx,
+                            &mut order_cache,
+                            &mut candlestick_data_creator,
                             &market_out_point,
                             &market,
                             &i,
@@ -1124,6 +1172,7 @@ impl PredictionMarkets {
                             satisfied_quantity,
                         )
                         .await;
+                        price_quantity_cache.sub_outcome_side_quantity(i, side, satisfied_quantity);
                     }
                 }
 
@@ -1159,6 +1208,15 @@ impl PredictionMarkets {
                     }
                 }
 
+                candlestick_data_creator
+                    .add(
+                        dbtx,
+                        outcome,
+                        other_price.try_into().unwrap_or(Amount::ZERO),
+                        satisfied_quantity,
+                    )
+                    .await;
+
             // nothing satisfies
             } else {
                 break;
@@ -1189,14 +1247,29 @@ impl PredictionMarkets {
             dbtx.insert_entry(&db::MarketKey(market_out_point), &market)
                 .await;
         }
+
+        // save order cache
+        order_cache.save(dbtx).await;
+
+        // save candlestick
+        candlestick_data_creator.save(dbtx).await;
     }
 
-    async fn get_outcome_side_price_quantity(
+    async fn get_outcome_side_best_price_quantity(
         dbtx: &mut ModuleDatabaseTransaction<'_>,
+        order_cache: &mut OrderCache,
+        price_quantity_cache: &mut PriceQuantityCache,
         market: &OutPoint,
         outcome: &Outcome,
         side: &Side,
     ) -> Option<(Amount, ContractOfOutcomeAmount)> {
+        if let Some(price_quantity) = price_quantity_cache
+            .m
+            .get(&(outcome.to_owned(), side.to_owned()))
+        {
+            return Some(price_quantity.to_owned());
+        }
+
         let mut order_price_time_priority_stream = dbtx
             .find_by_prefix(&db::OrderPriceTimePriorityPrefix3 {
                 market: market.clone(),
@@ -1234,20 +1307,24 @@ impl PredictionMarkets {
         let mut price = Amount::ZERO;
         let mut quantity = ContractOfOutcomeAmount::ZERO;
         for order_owner in top_price_priority_orders {
-            let order = dbtx
-                .get_value(&db::OrderKey(order_owner))
-                .await
-                .expect("should always produce order");
+            let order = order_cache.get(dbtx, &order_owner).await;
 
             price = order.price;
             quantity = quantity + order.quantity_waiting_for_match;
         }
 
-        Some((price, quantity))
+        price_quantity_cache
+            .m
+            .insert((*outcome, *side), (price, quantity));
+
+        // Weird issue here where not having to_owned() shows error in ide but still compiles as expected.
+        Some((price, quantity).to_owned())
     }
 
-    async fn get_other_outcome_sides_price_quantity(
+    async fn get_other_outcome_sides_best_price_quantity(
         dbtx: &mut ModuleDatabaseTransaction<'_>,
+        order_cache: &mut OrderCache,
+        price_quantity_cache: &mut PriceQuantityCache,
         market_out_point: &OutPoint,
         market: &Market,
         outcome: &Outcome,
@@ -1258,7 +1335,15 @@ impl PredictionMarkets {
 
         for i in 0..market.outcomes {
             if &i != outcome {
-                match Self::get_outcome_side_price_quantity(dbtx, market_out_point, &i, &side).await
+                match Self::get_outcome_side_best_price_quantity(
+                    dbtx,
+                    order_cache,
+                    price_quantity_cache,
+                    market_out_point,
+                    &i,
+                    &side,
+                )
+                .await
                 {
                     Some((outcome_side_price, outcome_side_quantity)) => {
                         price = price - outcome_side_price.into();
@@ -1274,34 +1359,35 @@ impl PredictionMarkets {
 
     async fn process_market_quantity(
         dbtx: &mut ModuleDatabaseTransaction<'_>,
+        order_cache: &mut OrderCache,
+        candlestick_data_creator: &mut CandlestickDataCreator,
         market_out_point: &OutPoint,
         market: &Market,
         outcome: &Outcome,
         side: &Side,
-        mut quantity: ContractOfOutcomeAmount,
+        quantity: ContractOfOutcomeAmount,
     ) {
-        while quantity > ContractOfOutcomeAmount::ZERO {
+        let mut price = None;
+        let mut quantity_remaining = quantity;
+
+        while quantity_remaining > ContractOfOutcomeAmount::ZERO {
             let (_, order_owner) = dbtx
                 .find_by_prefix(&db::OrderPriceTimePriorityPrefix3 {
-                    market: market_out_point.clone(),
-                    outcome: outcome.clone(),
-                    side: side.clone(),
+                    market: market_out_point.to_owned(),
+                    outcome: outcome.to_owned(),
+                    side: side.to_owned(),
                 })
                 .await
                 .next()
                 .await
                 .expect("should always produce order");
 
-            let mut order = dbtx
-                .get_value(&db::OrderKey(order_owner))
-                .await
-                .expect("should always produce order");
-
+            let order = order_cache.get_mut(dbtx, &order_owner).await;
             let satisfied_quantity = order.quantity_waiting_for_match.min(quantity);
 
             order.quantity_waiting_for_match =
                 order.quantity_waiting_for_match - satisfied_quantity;
-            quantity = quantity - satisfied_quantity;
+            quantity_remaining = quantity_remaining - satisfied_quantity;
 
             match side {
                 Side::Buy => {
@@ -1320,8 +1406,6 @@ impl PredictionMarkets {
                 }
             }
 
-            dbtx.insert_entry(&db::OrderKey(order_owner), &order).await;
-
             if order.quantity_waiting_for_match == ContractOfOutcomeAmount::ZERO {
                 dbtx.remove_entry(&db::OrderPriceTimePriorityKey::from_market_and_order(
                     &market, &order,
@@ -1329,7 +1413,20 @@ impl PredictionMarkets {
                 .await
                 .expect("should always find entry to remove");
             }
+
+            if let None = price {
+                price = Some(order.price);
+            }
         }
+
+        candlestick_data_creator
+            .add(
+                dbtx,
+                outcome.to_owned(),
+                price.expect("should always be some"),
+                quantity,
+            )
+            .await;
     }
 
     async fn cancel_order(
@@ -1402,5 +1499,193 @@ impl PredictionMarkets {
     /// Create new module instance
     pub fn new(cfg: PredictionMarketsConfig) -> PredictionMarkets {
         PredictionMarkets { cfg }
+    }
+}
+
+pub struct OrderCache {
+    map: HashMap<XOnlyPublicKey, Order>,
+    mut_orders: HashMap<XOnlyPublicKey, ()>,
+}
+
+impl OrderCache {
+    fn new() -> Self {
+        Self {
+            map: HashMap::new(),
+            mut_orders: HashMap::new(),
+        }
+    }
+
+    async fn get<'a>(
+        &'a mut self,
+        dbtx: &mut ModuleDatabaseTransaction<'_>,
+        order_owner: &XOnlyPublicKey,
+    ) -> &'a Order {
+        if !self.map.contains_key(order_owner) {
+            let order = dbtx
+                .get_value(&db::OrderKey(order_owner.to_owned()))
+                .await
+                .expect("OrderCache always expects order to exist");
+            self.map.insert(order_owner.to_owned(), order);
+        }
+
+        self.map
+            .get(order_owner)
+            .expect("should always produce order")
+    }
+
+    async fn get_mut<'a>(
+        &'a mut self,
+        dbtx: &mut ModuleDatabaseTransaction<'_>,
+        order_owner: &XOnlyPublicKey,
+    ) -> &'a mut Order {
+        if !self.map.contains_key(order_owner) {
+            let order = dbtx
+                .get_value(&db::OrderKey(order_owner.to_owned()))
+                .await
+                .expect("OrderCache always expects order to exist");
+            self.map.insert(order_owner.to_owned(), order);
+        }
+
+        self.mut_orders.insert(order_owner.to_owned(), ());
+
+        self.map
+            .get_mut(order_owner)
+            .expect("should always produce order")
+    }
+
+    async fn save(self, dbtx: &mut ModuleDatabaseTransaction<'_>) {
+        for (order_owner, _) in self.mut_orders {
+            let order = self
+                .map
+                .get(&order_owner)
+                .expect("should always produce order");
+            dbtx.insert_entry(&db::OrderKey(order_owner), order).await;
+        }
+    }
+}
+
+pub struct PriceQuantityCache {
+    pub m: HashMap<(Outcome, Side), (Amount, ContractOfOutcomeAmount)>,
+}
+
+impl PriceQuantityCache {
+    fn new() -> Self {
+        Self { m: HashMap::new() }
+    }
+
+    fn sub_outcome_side_quantity(
+        &mut self,
+        outcome: Outcome,
+        side: Side,
+        quantity: ContractOfOutcomeAmount,
+    ) {
+        let key = (outcome, side);
+
+        let price_quantity = self
+            .m
+            .get_mut(&key)
+            .expect("PriceQuantityCache: sub_outcome_side ran on None outcome side");
+
+        price_quantity.1 = price_quantity.1 - quantity;
+
+        if price_quantity.1 == ContractOfOutcomeAmount::ZERO {
+            self.m.remove(&key);
+        }
+    }
+}
+
+pub struct CandlestickDataCreator {
+    market: OutPoint,
+    consensus_timestamp: UnixTimestamp,
+    candlestick_intervals: Vec<(
+        // candlestick interval
+        Seconds,
+        // outcome to candlstick
+        HashMap<Outcome, Candlestick>,
+    )>,
+}
+
+impl CandlestickDataCreator {
+    fn new(
+        consensus_candlestick_intervals: &Vec<Seconds>,
+        consensus_timestamp: UnixTimestamp,
+        market: OutPoint,
+    ) -> Self {
+        Self {
+            market,
+            consensus_timestamp,
+            candlestick_intervals: consensus_candlestick_intervals
+                .iter()
+                .map(|candlestick_interval_seconds| {
+                    (candlestick_interval_seconds.to_owned(), HashMap::new())
+                })
+                .collect(),
+        }
+    }
+
+    async fn add(
+        &mut self,
+        dbtx: &mut ModuleDatabaseTransaction<'_>,
+        outcome: Outcome,
+        price: Amount,
+        volume: ContractOfOutcomeAmount,
+    ) {
+        for (candlestick_interval_seconds, candlesticks_by_outcome) in
+            self.candlestick_intervals.iter_mut()
+        {
+            let candlestick_timestamp = self
+                .consensus_timestamp
+                .round_down(candlestick_interval_seconds.to_owned());
+
+            if !candlesticks_by_outcome.contains_key(&outcome) {
+                let candlestick_in_db_or_new = dbtx
+                    .get_value(&db::MarketOutcomeCandlesticksKey {
+                        market: self.market,
+                        outcome,
+                        candlestick_interval: candlestick_interval_seconds.to_owned(),
+                        candlestick_timestamp,
+                    })
+                    .await
+                    .unwrap_or(Candlestick {
+                        open: price,
+                        close: price,
+                        high: price,
+                        low: price,
+                        volume: ContractOfOutcomeAmount::ZERO,
+                    });
+
+                candlesticks_by_outcome.insert(outcome, candlestick_in_db_or_new);
+            }
+
+            let candlestick = candlesticks_by_outcome
+                .get_mut(&outcome)
+                .expect("should always produce candlestick");
+
+            candlestick.close = price;
+            candlestick.high = Amount::from_msats(candlestick.high.msats.max(price.msats));
+            candlestick.low = Amount::from_msats(candlestick.low.msats.min(price.msats));
+            candlestick.volume = candlestick.volume + volume;
+        }
+    }
+
+    async fn save(self, dbtx: &mut ModuleDatabaseTransaction<'_>) {
+        for (candlestick_interval_seconds, candlesticks_by_outcome) in self.candlestick_intervals {
+            let candlestick_timestamp = self
+                .consensus_timestamp
+                .round_down(candlestick_interval_seconds.to_owned());
+
+            for (outcome, candlestick) in candlesticks_by_outcome {
+                dbtx.insert_entry(
+                    &db::MarketOutcomeCandlesticksKey {
+                        market: self.market,
+                        outcome,
+                        candlestick_interval: candlestick_interval_seconds,
+                        candlestick_timestamp,
+                    },
+                    &candlestick,
+                )
+                .await;
+            }
+        }
     }
 }
