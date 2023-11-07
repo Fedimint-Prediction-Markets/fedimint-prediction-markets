@@ -145,9 +145,7 @@ impl ServerModuleInit for PredictionMarketsGen {
         config: &ServerModuleConsensusConfig,
     ) -> anyhow::Result<PredictionMarketsClientConfig> {
         let config = PredictionMarketsConfigConsensus::from_erased(config)?;
-        Ok(PredictionMarketsClientConfig {
-            gc: config.gc,
-        })
+        Ok(PredictionMarketsClientConfig { gc: config.gc })
     }
 
     /// Validates the private/public key of configs
@@ -949,13 +947,7 @@ impl PredictionMarkets {
                 candlestick_interval: params.candlestick_interval,
             })
             .await
-            .take(
-                self.cfg
-                    .consensus
-                    .gc
-                    .api_max_number_of_candlesticks_per_get_request
-                    .min(params.candlestick_count) as usize,
-            )
+            .take(params.candlestick_count as usize)
             .map(|(key, value)| (key.candlestick_timestamp, value))
             .collect::<Vec<(UnixTimestamp, Candlestick)>>()
             .await;
@@ -1038,6 +1030,10 @@ impl PredictionMarkets {
         let mut price_quantity_cache = PriceQuantityCache::new();
         let mut candlestick_data_creator = CandlestickDataCreator::new(
             &self.cfg.consensus.gc.candlestick_intervals,
+            self.cfg
+                .consensus
+                .gc
+                .max_candlesticks_kept_per_market_outcome_interval,
             consensus_timestamp,
             market_out_point,
         );
@@ -1596,7 +1592,9 @@ impl PriceQuantityCache {
 
 pub struct CandlestickDataCreator {
     market: OutPoint,
+    consensus_max_candlesticks_kept_per_market_outcome_interval: u64,
     consensus_timestamp: UnixTimestamp,
+
     candlestick_intervals: Vec<(
         // candlestick interval
         Seconds,
@@ -1608,12 +1606,15 @@ pub struct CandlestickDataCreator {
 impl CandlestickDataCreator {
     fn new(
         consensus_candlestick_intervals: &Vec<Seconds>,
+        consensus_max_candlesticks_kept_per_market_outcome_interval: u64,
         consensus_timestamp: UnixTimestamp,
         market: OutPoint,
     ) -> Self {
         Self {
             market,
+            consensus_max_candlesticks_kept_per_market_outcome_interval,
             consensus_timestamp,
+
             candlestick_intervals: consensus_candlestick_intervals
                 .iter()
                 .map(|candlestick_interval_seconds| {
@@ -1668,23 +1669,70 @@ impl CandlestickDataCreator {
         }
     }
 
-    async fn save(self, dbtx: &mut ModuleDatabaseTransaction<'_>) {
-        for (candlestick_interval_seconds, candlesticks_by_outcome) in self.candlestick_intervals {
+    async fn save(mut self, dbtx: &mut ModuleDatabaseTransaction<'_>) {
+        self.clean(dbtx).await;
+
+        for (candlestick_interval, candlesticks_by_outcome) in self.candlestick_intervals {
             let candlestick_timestamp = self
                 .consensus_timestamp
-                .round_down(candlestick_interval_seconds.to_owned());
+                .round_down(candlestick_interval.to_owned());
 
             for (outcome, candlestick) in candlesticks_by_outcome {
                 dbtx.insert_entry(
                     &db::MarketOutcomeCandlesticksKey {
                         market: self.market,
                         outcome,
-                        candlestick_interval: candlestick_interval_seconds,
+                        candlestick_interval,
                         candlestick_timestamp,
                     },
                     &candlestick,
                 )
                 .await;
+            }
+        }
+    }
+
+    async fn clean(&mut self, dbtx: &mut ModuleDatabaseTransaction<'_>) {
+        for (candlestick_interval, candlesticks_by_outcome) in self.candlestick_intervals.iter() {
+            let candlestick_timestamp = self
+                .consensus_timestamp
+                .round_down(candlestick_interval.to_owned());
+
+            let min_candlestick_timestamp = UnixTimestamp {
+                seconds: (candlestick_timestamp.seconds
+                    - (candlestick_interval
+                        * self.consensus_max_candlesticks_kept_per_market_outcome_interval)),
+            };
+
+            for (outcome, _) in candlesticks_by_outcome.iter() {
+                let mut stream = dbtx
+                    .find_by_prefix(&db::MarketOutcomeCandlesticksPrefix3 {
+                        market: self.market,
+                        outcome: outcome.to_owned(),
+                        candlestick_interval: candlestick_interval.to_owned(),
+                    })
+                    .await;
+
+                let mut keys_to_remove = vec![];
+                loop {
+                    let Some((key, _)) = stream.next().await else {
+                        break;
+                    };
+
+                    if key.candlestick_timestamp < min_candlestick_timestamp {
+                        keys_to_remove.push(key);
+                    } else {
+                        break;
+                    }
+                }
+
+                drop(stream);
+
+                for key in keys_to_remove {
+                    dbtx.remove_entry(&key)
+                        .await
+                        .expect("should always be some");
+                }
             }
         }
     }

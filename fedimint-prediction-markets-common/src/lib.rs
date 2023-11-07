@@ -303,6 +303,7 @@ pub struct Order {
     pub quantity_waiting_for_match: ContractOfOutcomeAmount,
 
     // during a payout, the contract prices is payed out to orders accoring to this balance.
+    // payouts empty this balance
     pub contract_of_outcome_balance: ContractOfOutcomeAmount,
 
     // spendable by ConsumeOrderBitcoinBalance input

@@ -55,7 +55,7 @@ impl Default for PredictionMarketsGenParams {
                         60 * 60 * 4,
                         60 * 60 * 24,
                     ],
-                    api_max_number_of_candlesticks_per_get_request: 500,
+                    max_candlesticks_kept_per_market_outcome_interval: 500,
                 },
             },
         }
@@ -128,5 +128,5 @@ pub struct GeneralConsensus {
 
     // match data
     pub candlestick_intervals: Vec<Seconds>,
-    pub api_max_number_of_candlesticks_per_get_request: u32
+    pub max_candlesticks_kept_per_market_outcome_interval: u64
 }
