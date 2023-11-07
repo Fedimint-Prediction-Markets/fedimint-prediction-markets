@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
-use std::ffi;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::ffi;
 
 use anyhow::bail;
 use bitcoin::Denomination;
@@ -136,7 +136,7 @@ pub trait OddsMarketsClientExt {
     ) -> BTreeMap<OrderIdClientSide, Order>;
 
     /// Used to recover orders in case of recovery from seed
-    async fn recover_orders(&self) -> anyhow::Result<()>;
+    async fn recover_orders(&self, gap_size_checked: u8) -> anyhow::Result<()>;
 
     /// Candlesticks
     async fn get_candlesticks(
@@ -836,9 +836,7 @@ impl OddsMarketsClientExt for Client {
         orders
     }
 
-    async fn recover_orders(&self) -> anyhow::Result<()> {
-        const GAP_SIZE_CHECKED: u8 = 25;
-
+    async fn recover_orders(&self, gap_size_checked: u8) -> anyhow::Result<()> {
         let mut order_id = OrderIdClientSide(0);
         let mut slots_without_order = 0u8;
         loop {
@@ -846,7 +844,7 @@ impl OddsMarketsClientExt for Client {
                 slots_without_order = 0;
             } else {
                 slots_without_order += 1;
-                if slots_without_order == GAP_SIZE_CHECKED {
+                if slots_without_order == gap_size_checked {
                     break;
                 }
             }
@@ -1032,10 +1030,7 @@ impl ClientModule for PredictionMarketsClientModule {
                 amount: amount_to_free,
             } => {
                 amount = amount_to_free.to_owned();
-                fee = self
-                    .cfg
-                    .gc
-                    .consumer_order_bitcoin_balance_fee;
+                fee = self.cfg.gc.consumer_order_bitcoin_balance_fee;
             }
             PredictionMarketsInput::NewSellOrder {
                 owner: _,
@@ -1091,23 +1086,23 @@ impl ClientModule for PredictionMarketsClientModule {
         args: &[ffi::OsString],
     ) -> anyhow::Result<serde_json::Value> {
         if args.is_empty() {
-            return Err(anyhow::format_err!(
-                "Expected to be called with at least 1 arguments: <command> …"
-            ));
+            bail!("Expected to be called with at least 1 arguments: <command> …")
         }
 
         let command = args[0].to_string_lossy();
 
         match command.as_ref() {
             "get-outcome-control-public-key" => {
+                if args.len() != 1 {
+                    bail!("`get-outcome-control-public-key` expects 0 arguments")
+                }
+
                 Ok(serde_json::to_value(client.get_outcome_control_public_key())?)
             }
 
             "new-market" => {
                 if args.len() != 3 {
-                    return Err(anyhow::format_err!(
-                        "`new-market` command expects 2 argument: <contract_price_msats> <outcomes>"
-                    ));
+                    bail!("`new-market` command expects 2 argument: <contract_price_msats> <outcomes>")
                 }
 
                 let contract_price =
@@ -1160,6 +1155,10 @@ impl ClientModule for PredictionMarketsClientModule {
             }
 
             "get-outcome-control-markets" => {
+                if args.len() != 1 && args.len() != 2 {
+                    bail!("`get-outcome-control-markets` expects 0 arguments")
+                }
+
                 let outcome_control_markets = client.get_outcome_control_markets(true, UnixTimestamp::ZERO)
                     .await?
                     .into_iter()
@@ -1171,9 +1170,7 @@ impl ClientModule for PredictionMarketsClientModule {
 
             "get-market-outcome-control-proposals" => {
                 if args.len() != 2 {
-                    return Err(anyhow::format_err!(
-                        "`get-market` command expects 1 argument: <market_txid>"
-                    ));
+                    bail!("`get-market-outcome-control-proposals` command expects 1 argument: <market_txid>")
                 }
 
                 let Ok(txid) = TransactionId::from_str(&args[1].to_string_lossy()) else {
@@ -1188,7 +1185,7 @@ impl ClientModule for PredictionMarketsClientModule {
             "propose-outcome-payout" => {
                 if args.len() < 4 {
                     return Err(anyhow::format_err!(
-                        "`get-market` command expects at least 3 arguments: <market_out_point> <outcome_0_payout> <outcome_1_payout> ..."
+                        "`propose-outcome-payout` command expects at least 3 arguments: <market_txid> <outcome_0_payout> <outcome_1_payout> ..."
                     ));
                 }
 
@@ -1219,9 +1216,7 @@ impl ClientModule for PredictionMarketsClientModule {
 
             "new-order" => {
                 if args.len() != 6 {
-                    return Err(anyhow::format_err!(
-                        "`new-order` command expects 5 argument: <market_out_point> <outcome> <side> <price_msats> <quantity>"
-                    ));
+                    bail!("`new-order` command expects 5 argument: <market_txid> <outcome> <side> <price_msats> <quantity>")
                 }
 
                 let Ok(txid) = TransactionId::from_str(&args[1].to_string_lossy()) else {
@@ -1247,10 +1242,8 @@ impl ClientModule for PredictionMarketsClientModule {
             }
 
             "list-orders" => {
-                if args.len() < 1 || args.len() > 3{
-                    return Err(anyhow::format_err!(
-                        "`list-orders` command only accepts 2 argument: (market_out_point) (outcome)"
-                    ));
+                if args.len() < 1 || args.len() > 3 {
+                    bail!("`list-orders` command has 2 optional arguments: (market_txid) (outcome)")
                 }
 
                 let mut market: Option<OutPoint> = None;
@@ -1268,9 +1261,7 @@ impl ClientModule for PredictionMarketsClientModule {
 
             "get-order" => {
                 if args.len() != 2 {
-                    return Err(anyhow::format_err!(
-                        "`get-order` command expects 1 argument: <order_id>"
-                    ));
+                    bail!("`get-order` command expects 1 argument: <order_id>")
                 }
 
                 let id = OrderIdClientSide(args[1].to_string_lossy().parse()?);
@@ -1282,9 +1273,7 @@ impl ClientModule for PredictionMarketsClientModule {
 
             "cancel-order" => {
                 if args.len() != 2 {
-                    return Err(anyhow::format_err!(
-                        "`cancel-order` command expects 1 argument: <order_id>"
-                    ));
+                    bail!("`cancel-order` command expects 1 argument: <order_id>")
                 }
 
                 let id = OrderIdClientSide(args[1].to_string_lossy().parse()?);
@@ -1293,14 +1282,16 @@ impl ClientModule for PredictionMarketsClientModule {
             }
 
             "withdraw-available-bitcoin" => {
+                if args.len() != 1 {
+                    bail!("`withdraw-available-bitcoin` command expects 0 arguments")
+                }
+
                 Ok(serde_json::to_value(client.send_order_bitcoin_balance_to_primary_module().await?)?)
             }
 
             "sync-orders" => {
-                if args.len() < 1 || args.len() > 3{
-                    return Err(anyhow::format_err!(
-                        "`sync-order` command only accepts 2 argument: (market_out_point) (outcome)"
-                    ));
+                if args.len() < 1 || args.len() > 3 {
+                    bail!("`sync-order` command only accepts 2 argument: (market_txid) (outcome)")
                 }
 
                 let mut market: Option<OutPoint> = None;
@@ -1317,22 +1308,39 @@ impl ClientModule for PredictionMarketsClientModule {
             }
 
             "recover-orders" => {
-                Ok(serde_json::to_value(client.recover_orders().await?)?)
+                if args.len() != 1 {
+                    bail!("`recover-orders` command accepts 1 optional arguments: (gap_size_checked)")
+                }
+
+                let mut gap_size_checked = 10u8;
+                if let Some(s) = args.get(1) {
+                    gap_size_checked = s.to_string_lossy().parse()?;
+                }
+
+                Ok(serde_json::to_value(client.recover_orders(gap_size_checked).await?)?)
             }
 
             "get-candlesticks" => {
+                if args.len() != 4 {
+                    bail!("`get-candlesticks` command expects 3 argument and has 1 optional argument: <market_txid> <outcome> <candlestick_interval_seconds> (candlestick_count)")
+                }
+
                 let Ok(txid) = TransactionId::from_str(&args[1].to_string_lossy()) else {
                     bail!("Error getting transaction id");
                 };
-
-                let out_point = OutPoint { txid, out_idx: 0 };
+                let market = OutPoint { txid, out_idx: 0 };
 
                 let outcome: Outcome = args[2].to_string_lossy().parse()?;
 
                 let candlestick_interval: Seconds = args[3].to_string_lossy().parse()?;
 
+                let mut candlestick_count = 1000;
+                if let Some(s) = args.get(4) {
+                    candlestick_count = s.to_string_lossy().parse()?;
+                }
+
                 let candlesticks = client.
-                    get_candlesticks(out_point, outcome, candlestick_interval, 500)
+                    get_candlesticks(market, outcome, candlestick_interval, candlestick_count)
                     .await?
                     .into_iter()
                     .map(|(key,value)| (key.seconds.to_string(), value))
@@ -1341,9 +1349,12 @@ impl ClientModule for PredictionMarketsClientModule {
                 Ok(serde_json::to_value(candlesticks)?)
             }
 
-            command => Err(anyhow::format_err!(
-                "Unknown command: {command}, supported commands: new-market, get-market, payout-market, new-order, get-order, cancel-order, sync-orders"
-            )),
+            command => bail!(
+                "Unknown command: {command}, supported commands: new-market, get-market, 
+                payout-market, new-order, get-order, cancel-order, sync-orders, get-outcome-control-public-key, 
+                get-candlesticks, recover-orders, withdraw-available-bitcoin, list-order, propose-outcome-payout, 
+                get-market-outcome-control-proposals, get-outcome-control-markets"
+            ),
         }
     }
 }
