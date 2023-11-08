@@ -138,7 +138,7 @@ pub trait OddsMarketsClientExt {
     /// Used to recover orders in case of recovery from seed
     async fn recover_orders(&self, gap_size_to_check: u16) -> anyhow::Result<()>;
 
-    /// Candlesticks
+    /// get most recent candlesticks
     async fn get_candlesticks(
         &self,
         market: OutPoint,

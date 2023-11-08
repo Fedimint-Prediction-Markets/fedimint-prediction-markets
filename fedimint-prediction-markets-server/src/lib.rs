@@ -1320,7 +1320,7 @@ impl PredictionMarkets {
 
         price_quantity_cache
             .m
-            .insert((*outcome, *side), (price, quantity));
+            .insert((outcome.to_owned(), side.to_owned()), (price, quantity));
 
         // Weird issue here where not having to_owned() shows error in ide but still compiles as expected.
         Some((price, quantity).to_owned())

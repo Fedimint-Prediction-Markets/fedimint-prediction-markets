@@ -29,14 +29,14 @@ impl Default for PredictionMarketsGenParams {
             consensus: PredictionMarketsGenParamsConsensus {
                 gc: GeneralConsensus {
                     // fees
-                    new_market_fee: Amount::from_sats(100),
-                    new_order_fee: Amount::from_sats(1),
+                    new_market_fee: Amount::from_sats(50),
+                    new_order_fee: Amount::from_msats(2500),
                     consumer_order_bitcoin_balance_fee: Amount::from_msats(100),
-                    payout_proposal_fee: Amount::from_sats(1),
+                    payout_proposal_fee: Amount::from_msats(250),
 
                     // markets
                     max_contract_price: Amount::from_sats(100_000_000),
-                    max_market_outcomes: 30,
+                    max_market_outcomes: 50,
                     max_outcome_control_keys: 25,
 
                     // orders
