@@ -111,7 +111,9 @@ pub trait OddsMarketsClientExt {
     async fn cancel_order(&self, id: OrderIdClientSide) -> anyhow::Result<()>;
 
     /// Spend all bitcoin balance on orders to primary module
-    async fn send_order_bitcoin_balance_to_primary_module(&self) -> anyhow::Result<()>;
+    /// 
+    /// Returns how much bitcoin was sent
+    async fn send_order_bitcoin_balance_to_primary_module(&self) -> anyhow::Result<Amount>;
 
     /// Get all orders that could possibly be unsynced between federation and local order cache because
     /// of an order match.
@@ -645,7 +647,7 @@ impl OddsMarketsClientExt for Client {
         Ok(())
     }
 
-    async fn send_order_bitcoin_balance_to_primary_module(&self) -> anyhow::Result<()> {
+    async fn send_order_bitcoin_balance_to_primary_module(&self) -> anyhow::Result<Amount> {
         let (prediction_markets, instance) =
             self.get_first_module::<PredictionMarketsClientModule>(&KIND);
         let operation_id = OperationId::new_random();
@@ -659,7 +661,7 @@ impl OddsMarketsClientExt for Client {
             .collect::<Vec<_>>()
             .await;
 
-        let mut orders_with_non_zero_bitcoin_balance = BTreeMap::new();
+        let mut orders_with_non_zero_bitcoin_balance = vec![];
         for order_id in non_zero_orders {
             let order = self
                 .get_order(order_id, true)
@@ -667,9 +669,11 @@ impl OddsMarketsClientExt for Client {
                 .expect("should always produce order");
 
             if order.bitcoin_balance != Amount::ZERO {
-                orders_with_non_zero_bitcoin_balance.insert(order_id, order);
+                orders_with_non_zero_bitcoin_balance.push((order_id, order));
             }
         }
+
+        let mut total_amount = Amount::ZERO;
 
         let mut tx = TransactionBuilder::new();
         for (order_id, order) in orders_with_non_zero_bitcoin_balance {
@@ -691,6 +695,8 @@ impl OddsMarketsClientExt for Client {
             };
 
             tx = tx.with_input(input.into_dyn(instance.id));
+
+            total_amount = total_amount + order.bitcoin_balance;
         }
 
         let outpoint = |txid, _| OutPoint { txid, out_idx: 0 };
@@ -706,7 +712,7 @@ impl OddsMarketsClientExt for Client {
         let tx_subscription = self.transaction_updates(operation_id).await;
         tx_subscription.await_tx_accepted(txid).await?;
 
-        Ok(())
+        Ok(total_amount)
     }
 
     async fn sync_orders(
@@ -1350,7 +1356,7 @@ impl ClientModule for PredictionMarketsClientModule {
             }
 
             command => bail!(
-                "Unknown command: {command}, supported commands: new-market, get-market, payout-market, new-order, get-order, cancel-order, sync-orders, get-outcome-control-public-key, get-candlesticks, recover-orders, withdraw-available-bitcoin, list-order, propose-outcome-payout, get-market-outcome-control-proposals, get-outcome-control-markets"
+                "Unknown command: {command}, supported commands: new-market, get-market, payout-market, new-order, get-order, cancel-order, sync-orders, get-outcome-control-public-key, get-candlesticks, recover-orders, withdraw-available-bitcoin, list-orders, propose-outcome-payout, get-market-outcome-control-proposals, get-outcome-control-markets"
             ),
         }
     }
