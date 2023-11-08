@@ -1251,6 +1251,8 @@ impl PredictionMarkets {
         candlestick_data_creator.save(dbtx).await;
     }
 
+    // Note: the quantity returned can be lower than the actual quantity
+    // at a given price.
     async fn get_outcome_side_best_price_quantity(
         dbtx: &mut ModuleDatabaseTransaction<'_>,
         order_cache: &mut OrderCache,
@@ -1259,6 +1261,13 @@ impl PredictionMarkets {
         outcome: &Outcome,
         side: &Side,
     ) -> Option<(Amount, ContractOfOutcomeAmount)> {
+        // This setting is used to adjust the max number of orders used
+        // to create the returning price_quantity. This setting is here to
+        // fix a possible dos attack where the attacker could create many
+        // orders at the same price in order to make this logic run
+        // very slow.
+        const MAX_ORDERS_QUERIED: usize = 15;
+
         if let Some(price_quantity) = price_quantity_cache
             .m
             .get(&(outcome.to_owned(), side.to_owned()))
@@ -1285,7 +1294,7 @@ impl PredictionMarkets {
             }
         };
 
-        loop {
+        for _ in 1..MAX_ORDERS_QUERIED {
             match order_price_time_priority_stream.next().await {
                 Some((key, order)) => {
                     if key.price_priority == first_price_priority {
