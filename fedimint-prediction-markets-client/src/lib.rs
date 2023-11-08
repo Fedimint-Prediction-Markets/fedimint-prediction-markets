@@ -83,8 +83,8 @@ pub trait OddsMarketsClientExt {
         from_local_cache: bool,
     ) -> anyhow::Result<BTreeMap<XOnlyPublicKey, Vec<Amount>>>;
 
-    /// Propose outcome payout
-    async fn propose_outcome_payout(
+    /// Propose payout
+    async fn propose_payout(
         &self,
         market: OutPoint,
         outcome_payouts: Vec<Amount>,
@@ -111,7 +111,7 @@ pub trait OddsMarketsClientExt {
     async fn cancel_order(&self, id: OrderIdClientSide) -> anyhow::Result<()>;
 
     /// Spend all bitcoin balance on orders to primary module
-    /// 
+    ///
     /// Returns how much bitcoin was sent
     async fn send_order_bitcoin_balance_to_primary_module(&self) -> anyhow::Result<Amount>;
 
@@ -146,7 +146,7 @@ pub trait OddsMarketsClientExt {
         market: OutPoint,
         outcome: Outcome,
         candlestick_interval: Seconds,
-        candlestick_count: u32,
+        min_candlestick_timestamp: UnixTimestamp,
     ) -> anyhow::Result<BTreeMap<UnixTimestamp, Candlestick>>;
 }
 
@@ -385,7 +385,7 @@ impl OddsMarketsClientExt for Client {
         }
     }
 
-    async fn propose_outcome_payout(
+    async fn propose_payout(
         &self,
         market_out_point: OutPoint,
         outcome_payouts: Vec<Amount>,
@@ -866,7 +866,7 @@ impl OddsMarketsClientExt for Client {
         market: OutPoint,
         outcome: Outcome,
         candlestick_interval: Seconds,
-        candlestick_count: u32,
+        min_candlestick_timestamp: UnixTimestamp,
     ) -> anyhow::Result<BTreeMap<UnixTimestamp, Candlestick>> {
         let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
 
@@ -876,7 +876,7 @@ impl OddsMarketsClientExt for Client {
                 market,
                 outcome,
                 candlestick_interval,
-                candlestick_count,
+                min_candlestick_timestamp,
             })
             .await?;
 
@@ -1188,10 +1188,10 @@ impl ClientModule for PredictionMarketsClientModule {
                 Ok(serde_json::to_value(client.get_market_outcome_control_proposals(out_point, false).await?)?)
             }
 
-            "propose-outcome-payout" => {
+            "propose-payout" => {
                 if args.len() < 4 {
                     return Err(anyhow::format_err!(
-                        "`propose-outcome-payout` command expects at least 3 arguments: <market_txid> <outcome_0_payout> <outcome_1_payout> ..."
+                        "`propose-payout` command expects at least 3 arguments: <market_txid> <outcome_0_payout> <outcome_1_payout> ..."
                     ));
                 }
 
@@ -1215,7 +1215,7 @@ impl ClientModule for PredictionMarketsClientModule {
 
                 Ok(serde_json::to_value(
                     client
-                        .propose_outcome_payout(market_out_point, outcome_payouts)
+                        .propose_payout(market_out_point, outcome_payouts)
                         .await?,
                 )?)
             }
@@ -1327,8 +1327,8 @@ impl ClientModule for PredictionMarketsClientModule {
             }
 
             "get-candlesticks" => {
-                if args.len() != 4 {
-                    bail!("`get-candlesticks` command expects 3 argument and has 1 optional argument: <market_txid> <outcome> <candlestick_interval_seconds> (candlestick_count)")
+                if args.len() != 4 && args.len() != 5 {
+                    bail!("`get-candlesticks` command expects 3 argument and has 1 optional argument: <market_txid> <outcome> <candlestick_interval_seconds> (min_candlestick_timestamp)")
                 }
 
                 let Ok(txid) = TransactionId::from_str(&args[1].to_string_lossy()) else {
@@ -1340,13 +1340,15 @@ impl ClientModule for PredictionMarketsClientModule {
 
                 let candlestick_interval: Seconds = args[3].to_string_lossy().parse()?;
 
-                let mut candlestick_count = 1000;
+                let mut min_candlestick_timestamp = UnixTimestamp::ZERO;
                 if let Some(s) = args.get(4) {
-                    candlestick_count = s.to_string_lossy().parse()?;
+                    min_candlestick_timestamp = UnixTimestamp{
+                        seconds: s.to_string_lossy().parse()?
+                    }
                 }
 
                 let candlesticks = client.
-                    get_candlesticks(market, outcome, candlestick_interval, candlestick_count)
+                    get_candlesticks(market, outcome, candlestick_interval, min_candlestick_timestamp)
                     .await?
                     .into_iter()
                     .map(|(key,value)| (key.seconds.to_string(), value))
@@ -1356,7 +1358,7 @@ impl ClientModule for PredictionMarketsClientModule {
             }
 
             command => bail!(
-                "Unknown command: {command}, supported commands: new-market, get-market, payout-market, new-order, get-order, cancel-order, sync-orders, get-outcome-control-public-key, get-candlesticks, recover-orders, withdraw-available-bitcoin, list-orders, propose-outcome-payout, get-market-outcome-control-proposals, get-outcome-control-markets"
+                "Unknown command: {command}, supported commands: new-market, get-market, new-order, get-order, cancel-order, sync-orders, get-outcome-control-public-key, get-candlesticks, recover-orders, withdraw-available-bitcoin, list-orders, propose-payout, get-market-outcome-control-proposals, get-outcome-control-markets"
             ),
         }
     }

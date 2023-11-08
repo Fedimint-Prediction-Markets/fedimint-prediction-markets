@@ -659,7 +659,7 @@ pub struct GetMarketOutcomeCandlesticksParams {
     pub market: OutPoint,
     pub outcome: Outcome,
     pub candlestick_interval: Seconds,
-    pub candlestick_count: u32,
+    pub min_candlestick_timestamp: UnixTimestamp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]

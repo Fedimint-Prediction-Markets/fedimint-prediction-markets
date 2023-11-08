@@ -37,7 +37,7 @@ pub use fedimint_prediction_markets_common::{
     PredictionMarketsInput, PredictionMarketsModuleTypes, PredictionMarketsOutput,
     PredictionMarketsOutputOutcome, CONSENSUS_VERSION, KIND,
 };
-use futures::StreamExt;
+use futures::{future, StreamExt};
 
 use secp256k1::XOnlyPublicKey;
 
@@ -947,7 +947,9 @@ impl PredictionMarkets {
                 candlestick_interval: params.candlestick_interval,
             })
             .await
-            .take(params.candlestick_count as usize)
+            .take_while(|(key, _)| {
+                future::ready(key.candlestick_timestamp >= params.min_candlestick_timestamp)
+            })
             .map(|(key, value)| (key.candlestick_timestamp, value))
             .collect::<Vec<(UnixTimestamp, Candlestick)>>()
             .await;
