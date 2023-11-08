@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
+use std::ffi;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::ffi;
 
 use anyhow::bail;
 use bitcoin::Denomination;
@@ -136,7 +136,7 @@ pub trait OddsMarketsClientExt {
     ) -> BTreeMap<OrderIdClientSide, Order>;
 
     /// Used to recover orders in case of recovery from seed
-    async fn recover_orders(&self, gap_size_checked: u8) -> anyhow::Result<()>;
+    async fn recover_orders(&self, gap_size_to_check: u16) -> anyhow::Result<()>;
 
     /// Candlesticks
     async fn get_candlesticks(
@@ -836,15 +836,15 @@ impl OddsMarketsClientExt for Client {
         orders
     }
 
-    async fn recover_orders(&self, gap_size_checked: u8) -> anyhow::Result<()> {
+    async fn recover_orders(&self, gap_size_to_check: u16) -> anyhow::Result<()> {
         let mut order_id = OrderIdClientSide(0);
-        let mut slots_without_order = 0u8;
+        let mut slots_without_order = 0u16;
         loop {
             if let Some(_) = self.get_order(order_id, false).await? {
                 slots_without_order = 0;
             } else {
                 slots_without_order += 1;
-                if slots_without_order == gap_size_checked {
+                if slots_without_order == gap_size_to_check {
                     break;
                 }
             }
@@ -1308,16 +1308,16 @@ impl ClientModule for PredictionMarketsClientModule {
             }
 
             "recover-orders" => {
-                if args.len() != 1 {
+                if args.len() != 1 && args.len() != 2 {
                     bail!("`recover-orders` command accepts 1 optional arguments: (gap_size_checked)")
                 }
 
-                let mut gap_size_checked = 10u8;
+                let mut gap_size_to_check = 20u16;
                 if let Some(s) = args.get(1) {
-                    gap_size_checked = s.to_string_lossy().parse()?;
+                    gap_size_to_check = s.to_string_lossy().parse()?;
                 }
 
-                Ok(serde_json::to_value(client.recover_orders(gap_size_checked).await?)?)
+                Ok(serde_json::to_value(client.recover_orders(gap_size_to_check).await?)?)
             }
 
             "get-candlesticks" => {
@@ -1350,10 +1350,7 @@ impl ClientModule for PredictionMarketsClientModule {
             }
 
             command => bail!(
-                "Unknown command: {command}, supported commands: new-market, get-market, 
-                payout-market, new-order, get-order, cancel-order, sync-orders, get-outcome-control-public-key, 
-                get-candlesticks, recover-orders, withdraw-available-bitcoin, list-order, propose-outcome-payout, 
-                get-market-outcome-control-proposals, get-outcome-control-markets"
+                "Unknown command: {command}, supported commands: new-market, get-market, payout-market, new-order, get-order, cancel-order, sync-orders, get-outcome-control-public-key, get-candlesticks, recover-orders, withdraw-available-bitcoin, list-order, propose-outcome-payout, get-market-outcome-control-proposals, get-outcome-control-markets"
             ),
         }
     }
