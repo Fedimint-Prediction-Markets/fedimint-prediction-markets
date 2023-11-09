@@ -1094,9 +1094,9 @@ impl ClientModule for PredictionMarketsClientModule {
         let command = args[0].to_string_lossy();
 
         match command.as_ref() {
-            "get-outcome-control-public-key" => {
+            "get-payout-control-public-key" => {
                 if args.len() != 1 {
-                    bail!("`get-outcome-control-public-key` expects 0 arguments")
+                    bail!("`get-payout-control-public-key` expects 0 arguments")
                 }
 
                 Ok(serde_json::to_value(client.get_payout_control_public_key())?)
@@ -1156,9 +1156,9 @@ impl ClientModule for PredictionMarketsClientModule {
                 Ok(serde_json::to_value(client.get_market(out_point, false).await?)?)
             }
 
-            "get-outcome-control-markets" => {
+            "get-payout-control-markets" => {
                 if args.len() != 1 && args.len() != 2 {
-                    bail!("`get-outcome-control-markets` expects 0 arguments")
+                    bail!("`get-payout-control-markets` expects 0 arguments")
                 }
 
                 let payout_control_markets = client.get_payout_control_markets(true, UnixTimestamp::ZERO)
@@ -1170,9 +1170,9 @@ impl ClientModule for PredictionMarketsClientModule {
                 Ok(serde_json::to_value(payout_control_markets)?)
             }
 
-            "get-market-outcome-control-proposals" => {
+            "get-market-payout-control-proposals" => {
                 if args.len() != 2 {
-                    bail!("`get-market-outcome-control-proposals` command expects 1 argument: <market_txid>")
+                    bail!("`get-market-payout-control-proposals` command expects 1 argument: <market_txid>")
                 }
 
                 let Ok(txid) = TransactionId::from_str(&args[1].to_string_lossy()) else {
@@ -1354,7 +1354,7 @@ impl ClientModule for PredictionMarketsClientModule {
             }
 
             command => bail!(
-                "Unknown command: {command}, supported commands: new-market, get-market, new-order, get-order, cancel-order, sync-orders, get-outcome-control-public-key, get-candlesticks, recover-orders, withdraw-available-bitcoin, list-orders, propose-payout, get-market-outcome-control-proposals, get-outcome-control-markets"
+                "Unknown command: {command}, supported commands: new-market, get-market, new-order, get-order, cancel-order, sync-orders, get-payout-control-public-key, get-candlesticks, recover-orders, withdraw-available-bitcoin, list-orders, propose-payout, get-market-payout-control-proposals, get-payout-control-markets"
             ),
         }
     }
