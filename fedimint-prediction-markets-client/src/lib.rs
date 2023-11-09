@@ -123,12 +123,14 @@ pub trait OddsMarketsClientExt {
     ///
     /// Optionally provide a market (and outcome) to update only orders belonging to that market (and outcome).
     /// This option does not effect updating orders that have changed because of an operation the client has performed.
+    /// 
+    /// Returns number of orders updated
     async fn sync_orders(
         &self,
         sync_possible_payouts: bool,
         market: Option<OutPoint>,
         outcome: Option<Outcome>,
-    ) -> anyhow::Result<()>;
+    ) -> anyhow::Result<u64>;
 
     /// Get all orders in the db.
     /// Optionally provide a market (and outcome) to get only orders belonging to that market (and outcome)
@@ -719,7 +721,7 @@ impl OddsMarketsClientExt for Client {
         sync_possible_payouts: bool,
         market: Option<OutPoint>,
         outcome: Option<Outcome>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<u64> {
         let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
         let mut dbtx = instance.db.begin_transaction().await;
 
@@ -776,15 +778,17 @@ impl OddsMarketsClientExt for Client {
             orders_to_update.insert(key.order, ());
         }
 
-        let mut get_order_futures = orders_to_update
+        let updated_order_count = orders_to_update.len().try_into()?;
+
+        let mut get_order_futures_unordered = orders_to_update
             .into_keys()
             .map(|id| async move { self.get_order(id.to_owned(), false).await })
             .collect::<FuturesUnordered<_>>();
-        while let Some(result) = get_order_futures.next().await {
+        while let Some(result) = get_order_futures_unordered.next().await {
             result?.expect("should always produce order");
         }
 
-        Ok(())
+        Ok(updated_order_count)
     }
 
     async fn get_orders_from_db(
