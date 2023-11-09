@@ -7,7 +7,7 @@ use fedimint_core::task::{MaybeSend, MaybeSync};
 use fedimint_core::{apply, async_trait_maybe_send, Amount, OutPoint};
 use fedimint_prediction_markets_common::{
     GetMarketOutcomeCandlesticksParams, GetMarketOutcomeCandlesticksResult,
-    GetOutcomeControlMarketsParams, GetOutcomeControlMarketsResult, Market, Order
+    GetPayoutControlMarketsParams, GetPayoutControlMarketsResult, Market, Order
 };
 use secp256k1::XOnlyPublicKey;
 
@@ -15,11 +15,11 @@ use secp256k1::XOnlyPublicKey;
 pub trait PredictionMarketsFederationApi {
     async fn get_market(&self, market: OutPoint) -> FederationResult<Option<Market>>;
     async fn get_order(&self, order: XOnlyPublicKey) -> FederationResult<Option<Order>>;
-    async fn get_outcome_control_markets(
+    async fn get_payout_control_markets(
         &self,
-        params: GetOutcomeControlMarketsParams,
-    ) -> FederationResult<GetOutcomeControlMarketsResult>;
-    async fn get_market_outcome_control_proposals(
+        params: GetPayoutControlMarketsParams,
+    ) -> FederationResult<GetPayoutControlMarketsResult>;
+    async fn get_market_payout_control_proposals(
         &self,
         market: OutPoint,
     ) -> FederationResult<BTreeMap<XOnlyPublicKey, Vec<Amount>>>;
@@ -44,23 +44,23 @@ where
             .await
     }
 
-    async fn get_outcome_control_markets(
+    async fn get_payout_control_markets(
         &self,
-        params: GetOutcomeControlMarketsParams,
-    ) -> FederationResult<GetOutcomeControlMarketsResult> {
+        params: GetPayoutControlMarketsParams,
+    ) -> FederationResult<GetPayoutControlMarketsResult> {
         self.request_current_consensus(
-            "get_outcome_control_markets".to_string(),
+            "get_payout_control_markets".to_string(),
             ApiRequestErased::new(params),
         )
         .await
     }
 
-    async fn get_market_outcome_control_proposals(
+    async fn get_market_payout_control_proposals(
         &self,
         market: OutPoint,
     ) -> FederationResult<BTreeMap<XOnlyPublicKey, Vec<Amount>>> {
         self.request_current_consensus(
-            "get_market_outcome_control_proposals".to_string(),
+            "get_market_payout_control_proposals".to_string(),
             ApiRequestErased::new(market),
         )
         .await

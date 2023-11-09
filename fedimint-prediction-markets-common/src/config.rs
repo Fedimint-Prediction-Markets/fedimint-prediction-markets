@@ -37,7 +37,7 @@ impl Default for PredictionMarketsGenParams {
                     // markets
                     max_contract_price: Amount::from_sats(100_000_000),
                     max_market_outcomes: 50,
-                    max_outcome_control_keys: 25,
+                    max_payout_control_keys: 25,
 
                     // orders
                     max_order_quantity: ContractOfOutcomeAmount(1000000),
@@ -118,7 +118,7 @@ pub struct GeneralConsensus {
     // markets
     pub max_contract_price: Amount,
     pub max_market_outcomes: Outcome,
-    pub max_outcome_control_keys: u16,
+    pub max_payout_control_keys: u16,
 
     // orders
     pub max_order_quantity: ContractOfOutcomeAmount,

@@ -51,7 +51,7 @@ pub enum PredictionMarketsInput {
     },
     PayoutProposal {
         market: OutPoint,
-        outcome_control: XOnlyPublicKey,
+        payout_control: XOnlyPublicKey,
         outcome_payouts: Vec<Amount>,
     },
 }
@@ -62,7 +62,7 @@ pub enum PredictionMarketsOutput {
     NewMarket {
         contract_price: Amount,
         outcomes: Outcome,
-        outcome_control_weights: BTreeMap<XOnlyPublicKey, Weight>,
+        payout_control_weights: BTreeMap<XOnlyPublicKey, Weight>,
         weight_required: WeightRequired,
         information: MarketInformation,
     },
@@ -176,7 +176,7 @@ pub struct Market {
     // static
     pub contract_price: Amount,
     pub outcomes: Outcome,
-    pub outcome_controls_weights: BTreeMap<XOnlyPublicKey, Weight>,
+    pub payout_controls_weights: BTreeMap<XOnlyPublicKey, Weight>,
     pub weight_required: WeightRequired,
     pub information: MarketInformation,
 
@@ -191,10 +191,10 @@ impl Market {
     pub fn validate_market_params(
         consensus_max_contract_price: &Amount,
         consensus_max_market_outcomes: &Outcome,
-        consensus_max_outcome_control_keys: &u16,
+        consensus_max_payout_control_keys: &u16,
         contract_price: &Amount,
         outcomes: &Outcome,
-        outcome_control_weights: &BTreeMap<XOnlyPublicKey, Weight>,
+        payout_control_weights: &BTreeMap<XOnlyPublicKey, Weight>,
         information: &MarketInformation,
     ) -> Result<(), ()> {
         // verify market params
@@ -202,12 +202,12 @@ impl Market {
             || contract_price > consensus_max_contract_price
             || outcomes < &2
             || outcomes > consensus_max_market_outcomes
-            || outcome_control_weights.len() > usize::from(*consensus_max_outcome_control_keys)
+            || payout_control_weights.len() > usize::from(*consensus_max_payout_control_keys)
         {
             return Err(());
         }
 
-        for (_, weight) in outcome_control_weights.iter() {
+        for (_, weight) in payout_control_weights.iter() {
             if weight == &0 {
                 return Err(());
             }
@@ -644,13 +644,13 @@ impl UnixTimestamp {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
-pub struct GetOutcomeControlMarketsParams {
-    pub outcome_control: XOnlyPublicKey,
+pub struct GetPayoutControlMarketsParams {
+    pub payout_control: XOnlyPublicKey,
     pub markets_created_after_and_including: UnixTimestamp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
-pub struct GetOutcomeControlMarketsResult {
+pub struct GetPayoutControlMarketsResult {
     pub markets: Vec<OutPoint>,
 }
 

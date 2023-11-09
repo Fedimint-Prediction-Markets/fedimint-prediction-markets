@@ -21,17 +21,17 @@ pub enum DbKeyPrefix {
     /// [OrderIdClientSide] to [Order]
     Order = 0x01,
 
-    /// Cache for market outcome control proposal
+    /// Cache for market payout control proposals
     /// 
     /// (Market's [OutPoint], [XOnlyPublicKey]) to [Vec<Amount>]
-    MarketOutcomeControlProposal = 0x02, 
+    MarketPayoutControlProposal = 0x02, 
 
     /// ----- 20-3f reserved for lookup indexes -----
 
-    /// Markets that our outcome control key has some portion of control over.
+    /// Markets that our payout control key has some portion of control over.
     ///
     /// (Market's creation time [UnixTimestamp], Market's [OutPoint]) to ()
-    OutcomeControlMarkets = 0x20,
+    PayoutControlMarkets = 0x20,
 
     /// Index for orders by market outcome
     ///
@@ -92,52 +92,52 @@ impl_db_record!(
 
 impl_db_lookup!(key = OrderKey, query_prefix = OrderPrefixAll);
 
-// MarketOutcomeControlProposal
+// MarketPayoutControlProposal
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash)]
-pub struct MarketOutcomeControlProposalKey {
+pub struct MarketPayoutControlProposalKey {
     pub market: OutPoint,
-    pub outcome_control: XOnlyPublicKey,
+    pub payout_control: XOnlyPublicKey,
 }
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct MarketOutcomeControlProposalPrefixAll;
+pub struct MarketPayoutControlProposalPrefixAll;
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct MarketOutcomeControlProposalPrefix1 {
+pub struct MarketPayoutControlProposalPrefix1 {
     pub market: OutPoint,
 }
 
 impl_db_record!(
-    key = MarketOutcomeControlProposalKey,
+    key = MarketPayoutControlProposalKey,
     value = Vec<Amount>,
-    db_prefix = DbKeyPrefix::MarketOutcomeControlProposal,
+    db_prefix = DbKeyPrefix::MarketPayoutControlProposal,
 );
 
 impl_db_lookup!(
-    key = MarketOutcomeControlProposalKey,
-    query_prefix = MarketOutcomeControlProposalPrefixAll,
-    query_prefix = MarketOutcomeControlProposalPrefix1
+    key = MarketPayoutControlProposalKey,
+    query_prefix = MarketPayoutControlProposalPrefixAll,
+    query_prefix = MarketPayoutControlProposalPrefix1
 );
 
-// OutcomeControlMarkets
+// PayoutControlMarkets
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash)]
-pub struct OutcomeControlMarketsKey {
+pub struct PayoutControlMarketsKey {
     pub market_created: UnixTimestamp,
     pub market: OutPoint,
 }
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct OutcomeControlMarketsPrefixAll;
+pub struct PayoutControlMarketsPrefixAll;
 
 impl_db_record!(
-    key = OutcomeControlMarketsKey,
+    key = PayoutControlMarketsKey,
     value = (),
-    db_prefix = DbKeyPrefix::OutcomeControlMarkets,
+    db_prefix = DbKeyPrefix::PayoutControlMarkets,
 );
 
 impl_db_lookup!(
-    key = OutcomeControlMarketsKey,
-    query_prefix = OutcomeControlMarketsPrefixAll
+    key = PayoutControlMarketsKey,
+    query_prefix = PayoutControlMarketsPrefixAll
 );
 
 // OrdersByMarketOutcome

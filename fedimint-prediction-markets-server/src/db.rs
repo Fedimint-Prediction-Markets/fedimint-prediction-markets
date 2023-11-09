@@ -56,7 +56,7 @@ pub enum DbKeyPrefix {
     /// These keys are used to implement threshold payouts.
     ///
     /// (Market's [OutPoint], [XOnlyPublicKey]) to [Vec<Amount>]
-    MarketOutcomeControlProposal = 0x23,
+    MarketPayoutControlProposal = 0x23,
     /// (Market's [OutPoint], [Vec<Amount>], [XOnlyPublicKey]) to ()
     MarketOutcomePayoutsProposals = 0x24,
 
@@ -65,11 +65,11 @@ pub enum DbKeyPrefix {
 
     /// ----- 40-4f reserved for api lookup indexes -----
 
-    /// Indexes outcome control keys to the markets they belong to
+    /// Indexes payout control keys to the markets they belong to
     /// Used by client for data recovery in case of data loss
     ///
     /// ([XOnlyPublicKey], [UnixTimestamp], Market's [OutPoint]) to ()
-    OutcomeControlMarkets = 0x40,
+    PayoutControlMarkets = 0x40,
 
     /// ----- 50-5f reserved for consensus items -----
 
@@ -227,39 +227,39 @@ impl_db_lookup!(
     query_prefix = OrderPriceTimePriorityPrefixAll
 );
 
-/// OutcomeControlMarkets
+/// PayoutControlMarkets
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
-pub struct OutcomeControlMarketsKey {
-    pub outcome_control: XOnlyPublicKey,
+pub struct PayoutControlMarketsKey {
+    pub payout_control: XOnlyPublicKey,
     pub market_created: UnixTimestamp,
     pub market: OutPoint,
 }
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct OutcomeControlMarketsPrefixAll;
+pub struct PayoutControlMarketsPrefixAll;
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct OutcomeControlMarketsPrefix1 {
-    pub outcome_control: XOnlyPublicKey,
+pub struct PayoutControlMarketsPrefix1 {
+    pub payout_control: XOnlyPublicKey,
 }
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct OutcomeControlMarketsPrefix2 {
-    pub outcome_control: XOnlyPublicKey,
+pub struct PayoutControlMarketsPrefix2 {
+    pub payout_control: XOnlyPublicKey,
     pub market_created: UnixTimestamp,
 }
 
 impl_db_record!(
-    key = OutcomeControlMarketsKey,
+    key = PayoutControlMarketsKey,
     value = (),
-    db_prefix = DbKeyPrefix::OutcomeControlMarkets,
+    db_prefix = DbKeyPrefix::PayoutControlMarkets,
 );
 
 impl_db_lookup!(
-    key = OutcomeControlMarketsKey,
-    query_prefix = OutcomeControlMarketsPrefixAll,
-    query_prefix = OutcomeControlMarketsPrefix1,
-    query_prefix = OutcomeControlMarketsPrefix2
+    key = PayoutControlMarketsKey,
+    query_prefix = PayoutControlMarketsPrefixAll,
+    query_prefix = PayoutControlMarketsPrefix1,
+    query_prefix = PayoutControlMarketsPrefix2
 );
 
 /// PeersProposedTimestamp
@@ -282,31 +282,31 @@ impl_db_lookup!(
     query_prefix = PeersProposedTimestampPrefixAll
 );
 
-// MarketOutcomeControlProposal
+// MarketPayoutControlProposal
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
-pub struct MarketOutcomeControlProposalKey {
+pub struct MarketPayoutControlProposalKey {
     pub market: OutPoint,
-    pub outcome_control: XOnlyPublicKey,
+    pub payout_control: XOnlyPublicKey,
 }
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct MarketOutcomeControlProposalPrefixAll;
+pub struct MarketPayoutControlProposalPrefixAll;
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct MarketOutcomeControlProposalPrefix1 {
+pub struct MarketPayoutControlProposalPrefix1 {
     pub market: OutPoint,
 }
 
 impl_db_record!(
-    key = MarketOutcomeControlProposalKey,
+    key = MarketPayoutControlProposalKey,
     value = Vec<Amount>,
-    db_prefix = DbKeyPrefix::MarketOutcomeControlProposal,
+    db_prefix = DbKeyPrefix::MarketPayoutControlProposal,
 );
 
 impl_db_lookup!(
-    key = MarketOutcomeControlProposalKey,
-    query_prefix = MarketOutcomeControlProposalPrefixAll,
-    query_prefix = MarketOutcomeControlProposalPrefix1
+    key = MarketPayoutControlProposalKey,
+    query_prefix = MarketPayoutControlProposalPrefixAll,
+    query_prefix = MarketPayoutControlProposalPrefix1
 );
 
 // MarketOutcomePayoutsProposals
@@ -314,7 +314,7 @@ impl_db_lookup!(
 pub struct MarketOutcomePayoutsProposalsKey {
     pub market: OutPoint,
     pub outcome_payouts: Vec<Amount>,
-    pub outcome_control: XOnlyPublicKey,
+    pub payout_control: XOnlyPublicKey,
 }
 
 #[derive(Debug, Encodable, Decodable)]

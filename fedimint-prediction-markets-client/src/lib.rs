@@ -22,7 +22,7 @@ use fedimint_core::module::{
 };
 use fedimint_prediction_markets_common::{
     Candlestick, ContractOfOutcomeAmount, GetMarketOutcomeCandlesticksParams,
-    GetMarketOutcomeCandlesticksResult, GetOutcomeControlMarketsParams, Market, MarketInformation,
+    GetMarketOutcomeCandlesticksResult, GetPayoutControlMarketsParams, Market, MarketInformation,
     Order, OrderIdClientSide, Outcome, Seconds, Side, UnixTimestamp, Weight, WeightRequired,
 };
 
@@ -46,15 +46,15 @@ mod states;
 /// Exposed API calls for client apps
 #[apply(async_trait_maybe_send!)]
 pub trait OddsMarketsClientExt {
-    /// Get outcome control public key that client controls.
-    fn get_outcome_control_public_key(&self) -> XOnlyPublicKey;
+    /// Get payout control public key that client controls.
+    fn get_payout_control_public_key(&self) -> XOnlyPublicKey;
 
     /// Create new market
     async fn new_market(
         &self,
         contract_price: Amount,
         outcomes: Outcome,
-        outcome_control_weights: BTreeMap<XOnlyPublicKey, Weight>,
+        payout_control_weights: BTreeMap<XOnlyPublicKey, Weight>,
         weight_required: WeightRequired,
         information: MarketInformation,
     ) -> anyhow::Result<OutPoint>;
@@ -66,18 +66,18 @@ pub trait OddsMarketsClientExt {
         from_local_cache: bool,
     ) -> anyhow::Result<Option<Market>>;
 
-    /// Get all market [OutPoint]s that our outcome control key has some sort of authority over.
+    /// Get all market [OutPoint]s that our payout control key has some sort of authority over.
     ///
     /// Returns (market creation time) to (market outpoint)
-    async fn get_outcome_control_markets(
+    async fn get_payout_control_markets(
         &self,
         sync_new_markets: bool,
         markets_created_after_and_including: UnixTimestamp,
     ) -> anyhow::Result<BTreeMap<UnixTimestamp, OutPoint>>;
 
-    /// Get market outcome control proposals
-    /// outcome control to proposed payout
-    async fn get_market_outcome_control_proposals(
+    /// Get market payout control proposals
+    /// payout control to proposed payout
+    async fn get_market_payout_control_proposals(
         &self,
         market: OutPoint,
         from_local_cache: bool,
@@ -152,10 +152,10 @@ pub trait OddsMarketsClientExt {
 
 #[apply(async_trait_maybe_send!)]
 impl OddsMarketsClientExt for Client {
-    fn get_outcome_control_public_key(&self) -> XOnlyPublicKey {
+    fn get_payout_control_public_key(&self) -> XOnlyPublicKey {
         let (prediction_markets, _) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
 
-        let key = prediction_markets.get_outcome_control_key_pair();
+        let key = prediction_markets.get_payout_control_key_pair();
 
         XOnlyPublicKey::from_keypair(&key).0
     }
@@ -164,7 +164,7 @@ impl OddsMarketsClientExt for Client {
         &self,
         contract_price: Amount,
         outcomes: Outcome,
-        outcome_control_weights: BTreeMap<XOnlyPublicKey, Weight>,
+        payout_control_weights: BTreeMap<XOnlyPublicKey, Weight>,
         weight_required: WeightRequired,
         information: MarketInformation,
     ) -> anyhow::Result<OutPoint> {
@@ -175,7 +175,7 @@ impl OddsMarketsClientExt for Client {
             output: PredictionMarketsOutput::NewMarket {
                 contract_price,
                 outcomes,
-                outcome_control_weights,
+                payout_control_weights,
                 weight_required,
                 information,
             },
@@ -241,11 +241,11 @@ impl OddsMarketsClientExt for Client {
 
                 if let Some(market) = market_option.as_ref() {
                     // if this is the first time we have recieved this market with a payout, refresh
-                    // market outcome control proposals so that Self::get_market_outcome_control_proposals
+                    // market payout control proposals so that Self::get_market_payout_control_proposals
                     // can always use local db if market in local db has payout.
                     if market.payout.is_some() {
                         _ = self
-                            .get_market_outcome_control_proposals(market_out_point, false)
+                            .get_market_payout_control_proposals(market_out_point, false)
                             .await?;
                     }
 
@@ -264,7 +264,7 @@ impl OddsMarketsClientExt for Client {
         }
     }
 
-    async fn get_outcome_control_markets(
+    async fn get_payout_control_markets(
         &self,
         sync_new_markets: bool,
         markets_created_after_and_including: UnixTimestamp,
@@ -275,11 +275,11 @@ impl OddsMarketsClientExt for Client {
         let mut dbtx = instance.db.begin_transaction().await;
 
         if sync_new_markets {
-            let outcome_control =
-                XOnlyPublicKey::from_keypair(&prediction_markets.get_outcome_control_key_pair()).0;
+            let payout_control =
+                XOnlyPublicKey::from_keypair(&prediction_markets.get_payout_control_key_pair()).0;
             let markets_created_after_and_including = {
                 let mut stream = dbtx
-                    .find_by_prefix_sorted_descending(&db::OutcomeControlMarketsPrefixAll)
+                    .find_by_prefix_sorted_descending(&db::PayoutControlMarketsPrefixAll)
                     .await;
 
                 stream
@@ -288,22 +288,22 @@ impl OddsMarketsClientExt for Client {
                     .map(|(key, _)| key.market_created)
                     .unwrap_or(UnixTimestamp::ZERO)
             };
-            let get_outcome_control_markets_result = instance
+            let get_payout_control_markets_result = instance
                 .api
-                .get_outcome_control_markets(GetOutcomeControlMarketsParams {
-                    outcome_control,
+                .get_payout_control_markets(GetPayoutControlMarketsParams {
+                    payout_control,
                     markets_created_after_and_including,
                 })
                 .await?;
 
-            for market_out_point in get_outcome_control_markets_result.markets {
+            for market_out_point in get_payout_control_markets_result.markets {
                 let market = self
                     .get_market(market_out_point, false)
                     .await?
                     .expect("should always produce market");
 
                 dbtx.insert_entry(
-                    &db::OutcomeControlMarketsKey {
+                    &db::PayoutControlMarketsKey {
                         market_created: market.created_consensus_timestamp,
                         market: market_out_point,
                     },
@@ -314,9 +314,9 @@ impl OddsMarketsClientExt for Client {
         }
 
         let mut market_stream_newest_first = dbtx
-            .find_by_prefix_sorted_descending(&db::OutcomeControlMarketsPrefixAll)
+            .find_by_prefix_sorted_descending(&db::PayoutControlMarketsPrefixAll)
             .await;
-        let mut outcome_control_markets = BTreeMap::new();
+        let mut payout_control_markets = BTreeMap::new();
         loop {
             let Some((key, _)) = market_stream_newest_first.next().await else {
                 break;
@@ -325,16 +325,16 @@ impl OddsMarketsClientExt for Client {
                 break;
             }
 
-            outcome_control_markets.insert(key.market_created, key.market);
+            payout_control_markets.insert(key.market_created, key.market);
         }
 
         drop(market_stream_newest_first);
         dbtx.commit_tx().await;
 
-        Ok(outcome_control_markets)
+        Ok(payout_control_markets)
     }
 
-    async fn get_market_outcome_control_proposals(
+    async fn get_market_payout_control_proposals(
         &self,
         market: OutPoint,
         from_local_cache: bool,
@@ -344,35 +344,35 @@ impl OddsMarketsClientExt for Client {
 
         match from_local_cache {
             true => Ok(dbtx
-                .find_by_prefix(&db::MarketOutcomeControlProposalPrefix1 { market })
+                .find_by_prefix(&db::MarketPayoutControlProposalPrefix1 { market })
                 .await
-                .map(|(key, value)| (key.outcome_control, value))
+                .map(|(key, value)| (key.payout_control, value))
                 .collect::<BTreeMap<_, _>>()
                 .await),
 
             false => {
-                // if market has payout in local db, Self::get_market has called Self::get_market_outcome_control_proposals to
-                // get final version of market outcome control proposals.
+                // if market has payout in local db, Self::get_market has called Self::get_market_payout_control_proposals to
+                // get final version of market payout control proposals.
                 if let Some(market_db) = self.get_market(market, true).await? {
                     if market_db.payout.is_some() {
                         return self
-                            .get_market_outcome_control_proposals(market, true)
+                            .get_market_payout_control_proposals(market, true)
                             .await;
                     }
                 }
 
-                let market_outcome_control_proposals = instance
+                let market_payout_control_proposals = instance
                     .api
-                    .get_market_outcome_control_proposals(market)
+                    .get_market_payout_control_proposals(market)
                     .await?;
 
-                dbtx.remove_by_prefix(&db::MarketOutcomeControlProposalPrefix1 { market })
+                dbtx.remove_by_prefix(&db::MarketPayoutControlProposalPrefix1 { market })
                     .await;
-                for (outcome_control, outcome_payout) in market_outcome_control_proposals.iter() {
+                for (payout_control, outcome_payout) in market_payout_control_proposals.iter() {
                     dbtx.insert_entry(
-                        &db::MarketOutcomeControlProposalKey {
+                        &db::MarketPayoutControlProposalKey {
                             market,
-                            outcome_control: outcome_control.to_owned(),
+                            payout_control: payout_control.to_owned(),
                         },
                         outcome_payout,
                     )
@@ -380,7 +380,7 @@ impl OddsMarketsClientExt for Client {
                 }
                 dbtx.commit_tx().await;
 
-                Ok(market_outcome_control_proposals)
+                Ok(market_payout_control_proposals)
             }
         }
     }
@@ -394,12 +394,12 @@ impl OddsMarketsClientExt for Client {
             self.get_first_module::<PredictionMarketsClientModule>(&KIND);
         let operation_id = OperationId::new_random();
 
-        let outcome_control_key = prediction_markets.get_outcome_control_key_pair();
+        let payout_control_key = prediction_markets.get_payout_control_key_pair();
 
         let input = ClientInput {
             input: PredictionMarketsInput::PayoutProposal {
                 market: market_out_point,
-                outcome_control: XOnlyPublicKey::from_keypair(&outcome_control_key).0,
+                payout_control: XOnlyPublicKey::from_keypair(&payout_control_key).0,
                 outcome_payouts,
             },
             state_machines: Arc::new(move |tx_id, _| {
@@ -408,7 +408,7 @@ impl OddsMarketsClientExt for Client {
                     tx_id,
                 }]
             }),
-            keys: vec![outcome_control_key],
+            keys: vec![payout_control_key],
         };
 
         let tx = TransactionBuilder::new().with_input(input.into_dyn(instance.id));
@@ -894,12 +894,12 @@ pub struct PredictionMarketsClientModule {
 }
 
 impl PredictionMarketsClientModule {
-    const MARKET_OUTCOME_CONTROL_FROM_ROOT_SECRET: ChildId = ChildId(0);
+    const MARKET_PAYOUT_CONTROL_FROM_ROOT_SECRET: ChildId = ChildId(0);
     const ORDER_FROM_ROOT_SECRET: ChildId = ChildId(1);
 
-    fn get_outcome_control_key_pair(&self) -> KeyPair {
+    fn get_payout_control_key_pair(&self) -> KeyPair {
         self.root_secret
-            .child_key(Self::MARKET_OUTCOME_CONTROL_FROM_ROOT_SECRET)
+            .child_key(Self::MARKET_PAYOUT_CONTROL_FROM_ROOT_SECRET)
             .to_secp_key(&Secp256k1::new())
     }
 
@@ -1021,7 +1021,7 @@ impl ClientModule for PredictionMarketsClientModule {
         match input {
             PredictionMarketsInput::PayoutProposal {
                 market: _,
-                outcome_control: _,
+                payout_control: _,
                 outcome_payouts: _,
             } => {
                 amount = Amount::ZERO;
@@ -1064,7 +1064,7 @@ impl ClientModule for PredictionMarketsClientModule {
             PredictionMarketsOutput::NewMarket {
                 contract_price: _,
                 outcomes: _,
-                outcome_control_weights: _,
+                payout_control_weights: _,
                 weight_required: _,
                 information: _,
             } => {
@@ -1103,7 +1103,7 @@ impl ClientModule for PredictionMarketsClientModule {
                     bail!("`get-outcome-control-public-key` expects 0 arguments")
                 }
 
-                Ok(serde_json::to_value(client.get_outcome_control_public_key())?)
+                Ok(serde_json::to_value(client.get_payout_control_public_key())?)
             }
 
             "new-market" => {
@@ -1115,8 +1115,8 @@ impl ClientModule for PredictionMarketsClientModule {
                     Amount::from_str_in(&args[1].to_string_lossy(), Denomination::MilliSatoshi)?;
                 let outcomes: Outcome = args[2].to_string_lossy().parse()?;
 
-                let mut outcome_control_weights = BTreeMap::new();
-                outcome_control_weights.insert(client.get_outcome_control_public_key(), 1);
+                let mut payout_control_weights = BTreeMap::new();
+                payout_control_weights.insert(client.get_payout_control_public_key(), 1);
 
                 let weight_required = 1;
 
@@ -1124,7 +1124,7 @@ impl ClientModule for PredictionMarketsClientModule {
                     .new_market(
                         contract_price,
                         outcomes,
-                        outcome_control_weights,
+                        payout_control_weights,
                         weight_required,
                         MarketInformation {
                             title: "my market".to_owned(),
@@ -1165,13 +1165,13 @@ impl ClientModule for PredictionMarketsClientModule {
                     bail!("`get-outcome-control-markets` expects 0 arguments")
                 }
 
-                let outcome_control_markets = client.get_outcome_control_markets(true, UnixTimestamp::ZERO)
+                let payout_control_markets = client.get_payout_control_markets(true, UnixTimestamp::ZERO)
                     .await?
                     .into_iter()
                     .map(|(_,market)|market)
                     .collect::<Vec<_>>();
 
-                Ok(serde_json::to_value(outcome_control_markets)?)
+                Ok(serde_json::to_value(payout_control_markets)?)
             }
 
             "get-market-outcome-control-proposals" => {
@@ -1185,7 +1185,7 @@ impl ClientModule for PredictionMarketsClientModule {
 
                 let out_point = OutPoint { txid, out_idx: 0 };
 
-                Ok(serde_json::to_value(client.get_market_outcome_control_proposals(out_point, false).await?)?)
+                Ok(serde_json::to_value(client.get_market_payout_control_proposals(out_point, false).await?)?)
             }
 
             "propose-payout" => {
