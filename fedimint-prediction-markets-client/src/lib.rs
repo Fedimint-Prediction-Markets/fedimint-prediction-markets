@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ffi;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -33,7 +33,8 @@ use fedimint_prediction_markets_common::{
     PredictionMarketsOutput, KIND,
 };
 
-use futures::{future, StreamExt};
+use futures::stream::FuturesUnordered;
+use futures::StreamExt;
 use secp256k1::{KeyPair, Secp256k1, XOnlyPublicKey};
 use states::PredictionMarketsStateMachine;
 
@@ -75,6 +76,13 @@ pub trait OddsMarketsClientExt {
         markets_created_after_and_including: UnixTimestamp,
     ) -> anyhow::Result<BTreeMap<UnixTimestamp, OutPoint>>;
 
+    /// Propose payout
+    async fn propose_payout(
+        &self,
+        market: OutPoint,
+        outcome_payouts: Vec<Amount>,
+    ) -> anyhow::Result<()>;
+
     /// Get market payout control proposals
     /// payout control to proposed payout
     async fn get_market_payout_control_proposals(
@@ -82,13 +90,6 @@ pub trait OddsMarketsClientExt {
         market: OutPoint,
         from_local_cache: bool,
     ) -> anyhow::Result<BTreeMap<XOnlyPublicKey, Vec<Amount>>>;
-
-    /// Propose payout
-    async fn propose_payout(
-        &self,
-        market: OutPoint,
-        outcome_payouts: Vec<Amount>,
-    ) -> anyhow::Result<()>;
 
     /// Create new order
     async fn new_order(
@@ -115,18 +116,18 @@ pub trait OddsMarketsClientExt {
     /// Returns how much bitcoin was sent
     async fn send_order_bitcoin_balance_to_primary_module(&self) -> anyhow::Result<Amount>;
 
-    /// Get all orders that could possibly be unsynced between federation and local order cache because
-    /// of an order match.
+    /// Update all orders in db that could possibly be unsynced between federation and local order cache because
+    /// of an order match or because of an operation the client has performed.
     ///
-    /// Optionally provide a market (and outcome) to update only orders belonging to that market (and outcome)
+    /// Setting sync_possible_payouts to true also syncs orders that could have changed because of a market payout.
     ///
-    /// Setting sync_possible_payouts to true syncs order that could have changed because of a market payout
-    /// as well as an order match.
+    /// Optionally provide a market (and outcome) to update only orders belonging to that market (and outcome).
+    /// This option does not effect updating orders that have changed because of an operation the client has performed.
     async fn sync_orders(
         &self,
+        sync_possible_payouts: bool,
         market: Option<OutPoint>,
         outcome: Option<Outcome>,
-        sync_possible_payouts: bool,
     ) -> anyhow::Result<()>;
 
     /// Get all orders in the db.
@@ -355,9 +356,7 @@ impl OddsMarketsClientExt for Client {
                 // get final version of market payout control proposals.
                 if let Some(market_db) = self.get_market(market, true).await? {
                     if market_db.payout.is_some() {
-                        return self
-                            .get_market_payout_control_proposals(market, true)
-                            .await;
+                        return self.get_market_payout_control_proposals(market, true).await;
                     }
                 }
 
@@ -717,12 +716,14 @@ impl OddsMarketsClientExt for Client {
 
     async fn sync_orders(
         &self,
+        sync_possible_payouts: bool,
         market: Option<OutPoint>,
         outcome: Option<Outcome>,
-        sync_possible_payouts: bool,
     ) -> anyhow::Result<()> {
         let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
         let mut dbtx = instance.db.begin_transaction().await;
+
+        let mut orders_to_update = HashMap::new();
 
         let non_zero_orders: Vec<_> = match market {
             None => {
@@ -753,7 +754,6 @@ impl OddsMarketsClientExt for Client {
             },
         };
 
-        let mut possibly_changed_orders = vec![];
         for order_id in non_zero_orders {
             let order = self
                 .get_order(order_id, true)
@@ -768,27 +768,19 @@ impl OddsMarketsClientExt for Client {
                 continue;
             }
 
-            possibly_changed_orders.push(order_id);
-        }
-        let get_order_futures = possibly_changed_orders
-            .iter()
-            .map(|id| async { self.get_order(id.to_owned(), false).await });
-        let results = future::join_all(get_order_futures).await;
-        for result in results {
-            result?.expect("should always produce order");
+            orders_to_update.insert(order_id, ());
         }
 
-        let need_update_orders: Vec<_> = dbtx
-            .find_by_prefix(&db::OrderNeedsUpdatePrefixAll)
-            .await
-            .map(|(key, _)| key.order)
-            .collect()
-            .await;
-        let get_order_futures = need_update_orders
-            .iter()
-            .map(|id| async { self.get_order(id.to_owned(), false).await });
-        let results = future::join_all(get_order_futures).await;
-        for result in results {
+        let mut stream = dbtx.find_by_prefix(&db::OrderNeedsUpdatePrefixAll).await;
+        while let Some((key, _)) = stream.next().await {
+            orders_to_update.insert(key.order, ());
+        }
+
+        let mut get_order_futures = orders_to_update
+            .into_keys()
+            .map(|id| async move { self.get_order(id.to_owned(), false).await })
+            .collect::<FuturesUnordered<_>>();
+        while let Some(result) = get_order_futures.next().await {
             result?.expect("should always produce order");
         }
 
@@ -1310,7 +1302,7 @@ impl ClientModule for PredictionMarketsClientModule {
                     outcome = Some(Outcome::from_str(&arg_outcome.to_string_lossy())?);
                 }
 
-                Ok(serde_json::to_value(client.sync_orders(market, outcome, true).await?)?)
+                Ok(serde_json::to_value(client.sync_orders(true, market, outcome).await?)?)
             }
 
             "recover-orders" => {
