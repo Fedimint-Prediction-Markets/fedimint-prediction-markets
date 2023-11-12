@@ -1268,7 +1268,7 @@ impl PredictionMarkets {
         // fix a possible dos attack where the attacker could create many
         // orders at the same price in order to make this logic run
         // very slow.
-        const MAX_ORDERS_QUERIED: usize = 15;
+        const MAX_ORDERS_QUERIED: usize = 4;
 
         if let Some(price_quantity) = price_quantity_cache
             .m
