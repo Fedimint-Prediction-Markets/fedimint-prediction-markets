@@ -1088,7 +1088,7 @@ impl ClientModule for PredictionMarketsClientModule {
         args: &[ffi::OsString],
     ) -> anyhow::Result<serde_json::Value> {
         if args.is_empty() {
-            bail!("Expected to be called with at least 1 arguments: <command> …")
+            bail!("Expected to be called with at least 1 argument: <command> …")
         }
 
         let command = args[0].to_string_lossy();
@@ -1104,7 +1104,7 @@ impl ClientModule for PredictionMarketsClientModule {
 
             "new-market" => {
                 if args.len() != 3 {
-                    bail!("`new-market` command expects 2 argument: <contract_price_msats> <outcomes>")
+                    bail!("`new-market` command expects 2 arguments: <contract_price_msats> <outcomes>")
                 }
 
                 let contract_price =
@@ -1218,7 +1218,7 @@ impl ClientModule for PredictionMarketsClientModule {
 
             "new-order" => {
                 if args.len() != 6 {
-                    bail!("`new-order` command expects 5 argument: <market_txid> <outcome> <side> <price_msats> <quantity>")
+                    bail!("`new-order` command expects 5 arguments: <market_txid> <outcome> <side> <price_msats> <quantity>")
                 }
 
                 let Ok(txid) = TransactionId::from_str(&args[1].to_string_lossy()) else {
@@ -1293,7 +1293,7 @@ impl ClientModule for PredictionMarketsClientModule {
 
             "sync-orders" => {
                 if args.len() < 1 || args.len() > 3 {
-                    bail!("`sync-order` command only accepts 2 argument: (market_txid) (outcome)")
+                    bail!("`sync-order` command accepts 2 optional arguments: (market_txid) (outcome)")
                 }
 
                 let mut market: Option<OutPoint> = None;
@@ -1311,7 +1311,7 @@ impl ClientModule for PredictionMarketsClientModule {
 
             "recover-orders" => {
                 if args.len() != 1 && args.len() != 2 {
-                    bail!("`recover-orders` command accepts 1 optional arguments: (gap_size_checked)")
+                    bail!("`recover-orders` command accepts 1 optional argument: (gap_size_checked)")
                 }
 
                 let mut gap_size_to_check = 20u16;
@@ -1324,7 +1324,7 @@ impl ClientModule for PredictionMarketsClientModule {
 
             "get-candlesticks" => {
                 if args.len() != 4 && args.len() != 5 {
-                    bail!("`get-candlesticks` command expects 3 argument and has 1 optional argument: <market_txid> <outcome> <candlestick_interval_seconds> (min_candlestick_timestamp)")
+                    bail!("`get-candlesticks` command expects 3 arguments and has 1 optional argument: <market_txid> <outcome> <candlestick_interval_seconds> (min_candlestick_timestamp)")
                 }
 
                 let Ok(txid) = TransactionId::from_str(&args[1].to_string_lossy()) else {
