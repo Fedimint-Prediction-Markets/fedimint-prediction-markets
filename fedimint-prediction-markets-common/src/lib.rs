@@ -225,9 +225,8 @@ impl Market {
 pub struct MarketInformation {
     pub title: String,
     pub description: String,
-
     pub outcome_titles: Vec<String>,
-    pub expected_payout_time: UnixTimestamp,
+    pub expected_payout_timestamp: UnixTimestamp,
 }
 
 impl MarketInformation {
@@ -606,34 +605,30 @@ pub type Seconds = u64;
     PartialOrd,
     Ord,
 )]
-pub struct UnixTimestamp {
-    pub seconds: Seconds,
-}
+pub struct UnixTimestamp(pub Seconds);
 
 impl UnixTimestamp {
-    pub const ZERO: Self = Self { seconds: 0 };
+    pub const ZERO: Self = Self(0);
 
     pub fn now() -> Self {
-        UnixTimestamp {
-            seconds: SystemTime::now()
+        UnixTimestamp(
+            SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .expect("failed to get system unix timestamp")
                 .as_secs(),
-        }
+        )
     }
 
     pub fn round_down(&self, seconds: Seconds) -> Self {
-        UnixTimestamp {
-            seconds: self.seconds - self.seconds % seconds,
-        }
+        UnixTimestamp(self.0 - self.0 % seconds)
     }
 
     pub fn divisible(&self, seconds: Seconds) -> bool {
-        self.seconds % seconds == 0
+        self.0 % seconds == 0
     }
 
     pub fn duration_till(&self) -> Duration {
-        Duration::from_secs(self.seconds)
+        Duration::from_secs(self.0)
             .checked_sub(
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)

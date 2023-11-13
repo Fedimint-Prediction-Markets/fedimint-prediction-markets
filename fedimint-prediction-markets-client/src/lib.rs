@@ -23,7 +23,8 @@ use fedimint_core::module::{
 use fedimint_prediction_markets_common::{
     Candlestick, ContractOfOutcomeAmount, GetMarketOutcomeCandlesticksParams,
     GetMarketOutcomeCandlesticksResult, GetPayoutControlMarketsParams, Market, MarketInformation,
-    Order, OrderIdClientSide, Outcome, Seconds, Side, UnixTimestamp, Weight, WeightRequiredForPayout,
+    Order, OrderIdClientSide, Outcome, Seconds, Side, UnixTimestamp, Weight,
+    WeightRequiredForPayout,
 };
 
 use fedimint_core::{apply, async_trait_maybe_send, Amount, OutPoint, TransactionId};
@@ -123,7 +124,7 @@ pub trait OddsMarketsClientExt {
     ///
     /// Optionally provide a market (and outcome) to update only orders belonging to that market (and outcome).
     /// This option does not effect updating orders that have changed because of an operation the client has performed.
-    /// 
+    ///
     /// Returns number of orders updated
     async fn sync_orders(
         &self,
@@ -1087,6 +1088,8 @@ impl ClientModule for PredictionMarketsClientModule {
         client: &Client,
         args: &[ffi::OsString],
     ) -> anyhow::Result<serde_json::Value> {
+        const SUPPORTED_COMMANDS: &str = "new-market, get-market, new-order, get-order, cancel-order, sync-orders, get-payout-control-public-key, get-candlesticks, recover-orders, withdraw-available-bitcoin, list-orders, propose-payout, get-market-payout-control-proposals, get-payout-control-markets";
+
         if args.is_empty() {
             bail!("Expected to be called with at least 1 argument: <command> …")
         }
@@ -1133,7 +1136,7 @@ impl ClientModule for PredictionMarketsClientModule {
 
                                 title
                             }).collect(),
-                            expected_payout_time: UnixTimestamp::ZERO,
+                            expected_payout_timestamp: UnixTimestamp::ZERO,
                         },
                     ).await?;
 
@@ -1338,23 +1341,30 @@ impl ClientModule for PredictionMarketsClientModule {
 
                 let mut min_candlestick_timestamp = UnixTimestamp::ZERO;
                 if let Some(s) = args.get(4) {
-                    min_candlestick_timestamp = UnixTimestamp{
-                        seconds: s.to_string_lossy().parse()?
-                    }
+                    min_candlestick_timestamp = UnixTimestamp(
+                        s.to_string_lossy().parse()?
+                    )
                 }
 
                 let candlesticks = client.
                     get_candlesticks(market, outcome, candlestick_interval, min_candlestick_timestamp)
                     .await?
                     .into_iter()
-                    .map(|(key,value)| (key.seconds.to_string(), value))
+                    .map(|(key,value)| (key.0.to_string(), value))
                     .collect::<BTreeMap<String, Candlestick>>();
 
                 Ok(serde_json::to_value(candlesticks)?)
             }
 
+            "help" => {
+                let mut m = HashMap::new();
+                m.insert("supported_commands", SUPPORTED_COMMANDS);
+
+                Ok(serde_json::to_value(m)?)
+            }
+
             command => bail!(
-                "Unknown command: {command}, supported commands: new-market, get-market, new-order, get-order, cancel-order, sync-orders, get-payout-control-public-key, get-candlesticks, recover-orders, withdraw-available-bitcoin, list-orders, propose-payout, get-market-payout-control-proposals, get-payout-control-markets"
+                "Unknown command: {command}, supported commands: {SUPPORTED_COMMANDS}"
             ),
         }
     }

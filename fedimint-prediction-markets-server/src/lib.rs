@@ -309,7 +309,7 @@ impl ServerModule for PredictionMarkets {
 
         let next_consensus_timestamp = {
             let mut current = self.get_consensus_timestamp(dbtx).await;
-            current.seconds += self.cfg.consensus.gc.timestamp_interval;
+            current.0 += self.cfg.consensus.gc.timestamp_interval;
             current
         };
 
@@ -1709,11 +1709,11 @@ impl CandlestickDataCreator {
                 .consensus_timestamp
                 .round_down(candlestick_interval.to_owned());
 
-            let min_candlestick_timestamp = UnixTimestamp {
-                seconds: (candlestick_timestamp.seconds
+            let min_candlestick_timestamp = UnixTimestamp(
+                candlestick_timestamp.0
                     - (candlestick_interval
-                        * self.consensus_max_candlesticks_kept_per_market_outcome_interval)),
-            };
+                        * self.consensus_max_candlesticks_kept_per_market_outcome_interval),
+            );
 
             for (outcome, _) in candlesticks_by_outcome.iter() {
                 let mut stream = dbtx
