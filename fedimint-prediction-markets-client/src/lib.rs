@@ -23,7 +23,7 @@ use fedimint_core::module::{
 use fedimint_prediction_markets_common::{
     Candlestick, ContractOfOutcomeAmount, GetMarketOutcomeCandlesticksParams,
     GetMarketOutcomeCandlesticksResult, GetPayoutControlMarketsParams, Market, MarketInformation,
-    Order, OrderIdClientSide, Outcome, Seconds, Side, UnixTimestamp, Weight, WeightRequired,
+    Order, OrderIdClientSide, Outcome, Seconds, Side, UnixTimestamp, Weight, WeightRequiredForPayout,
 };
 
 use fedimint_core::{apply, async_trait_maybe_send, Amount, OutPoint, TransactionId};
@@ -56,7 +56,7 @@ pub trait OddsMarketsClientExt {
         contract_price: Amount,
         outcomes: Outcome,
         payout_control_weights: BTreeMap<XOnlyPublicKey, Weight>,
-        weight_required: WeightRequired,
+        weight_required_for_payout: WeightRequiredForPayout,
         information: MarketInformation,
     ) -> anyhow::Result<OutPoint>;
 
@@ -168,7 +168,7 @@ impl OddsMarketsClientExt for Client {
         contract_price: Amount,
         outcomes: Outcome,
         payout_control_weights: BTreeMap<XOnlyPublicKey, Weight>,
-        weight_required: WeightRequired,
+        weight_required_for_payout: WeightRequiredForPayout,
         information: MarketInformation,
     ) -> anyhow::Result<OutPoint> {
         let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
@@ -179,7 +179,7 @@ impl OddsMarketsClientExt for Client {
                 contract_price,
                 outcomes,
                 payout_control_weights,
-                weight_required,
+                weight_required_for_payout,
                 information,
             },
             state_machines: Arc::new(move |tx_id, _| {
@@ -1061,7 +1061,7 @@ impl ClientModule for PredictionMarketsClientModule {
                 contract_price: _,
                 outcomes: _,
                 payout_control_weights: _,
-                weight_required: _,
+                weight_required_for_payout: _,
                 information: _,
             } => {
                 amount = Amount::ZERO;

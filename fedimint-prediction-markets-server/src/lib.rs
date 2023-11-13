@@ -30,7 +30,7 @@ use fedimint_prediction_markets_common::{
     Candlestick, ContractAmount, ContractOfOutcomeAmount, GetMarketOutcomeCandlesticksParams,
     GetMarketOutcomeCandlesticksResult, GetPayoutControlMarketsParams,
     GetPayoutControlMarketsResult, Market, Order, Outcome, Payout, Seconds, Side, SignedAmount,
-    TimeOrdering, UnixTimestamp, WeightRequired,
+    TimeOrdering, UnixTimestamp, WeightRequiredForPayout,
 };
 pub use fedimint_prediction_markets_common::{
     PredictionMarketsCommonGen, PredictionMarketsConsensusItem, PredictionMarketsError,
@@ -587,16 +587,16 @@ impl ServerModule for PredictionMarkets {
                         .collect()
                         .await;
 
-                    let mut total_weight_of_votes: WeightRequired = 0;
+                    let mut total_weight_of_votes: WeightRequiredForPayout = 0;
                     for payout_control in payout_controls_with_proposal {
                         let weight = market
                             .payout_controls_weights
                             .get(&payout_control)
                             .expect("should always find payout_control");
-                        total_weight_of_votes += WeightRequired::from(weight.to_owned())
+                        total_weight_of_votes += WeightRequiredForPayout::from(weight.to_owned())
                     }
 
-                    if total_weight_of_votes >= market.weight_required {
+                    if total_weight_of_votes >= market.weight_required_for_payout {
                         true
                     } else {
                         false
@@ -676,7 +676,7 @@ impl ServerModule for PredictionMarkets {
                 contract_price,
                 outcomes,
                 payout_control_weights,
-                weight_required,
+                weight_required_for_payout,
                 information,
             } => {
                 // verify market params
@@ -713,7 +713,7 @@ impl ServerModule for PredictionMarkets {
                         contract_price: contract_price.to_owned(),
                         outcomes: outcomes.to_owned(),
                         payout_controls_weights: payout_control_weights.to_owned(),
-                        weight_required: weight_required.to_owned(),
+                        weight_required_for_payout: weight_required_for_payout.to_owned(),
                         information: information.to_owned(),
                         created_consensus_timestamp: consensus_timestamp,
 

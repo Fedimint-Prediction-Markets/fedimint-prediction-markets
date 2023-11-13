@@ -63,7 +63,7 @@ pub enum PredictionMarketsOutput {
         contract_price: Amount,
         outcomes: Outcome,
         payout_control_weights: BTreeMap<XOnlyPublicKey, Weight>,
-        weight_required: WeightRequired,
+        weight_required_for_payout: WeightRequiredForPayout,
         information: MarketInformation,
     },
     NewBuyOrder {
@@ -177,7 +177,7 @@ pub struct Market {
     pub contract_price: Amount,
     pub outcomes: Outcome,
     pub payout_controls_weights: BTreeMap<XOnlyPublicKey, Weight>,
-    pub weight_required: WeightRequired,
+    pub weight_required_for_payout: WeightRequiredForPayout,
     pub information: MarketInformation,
 
     pub created_consensus_timestamp: UnixTimestamp,
@@ -668,7 +668,7 @@ pub struct GetMarketOutcomeCandlesticksResult {
 }
 
 pub type Weight = u8;
-pub type WeightRequired = u32;
+pub type WeightRequiredForPayout = u32;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct Candlestick {
