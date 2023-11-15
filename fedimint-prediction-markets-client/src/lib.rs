@@ -125,13 +125,13 @@ pub trait OddsMarketsClientExt {
     /// Optionally provide a market (and outcome) to update only orders belonging to that market (and outcome).
     /// This option does not effect updating orders that have changed because of an operation the client has performed.
     ///
-    /// Returns number of orders updated
+    /// Returns orders that recieved mutating update. Returned orders are filtered by market and outcome.
     async fn sync_orders(
         &self,
         sync_possible_payouts: bool,
         market: Option<OutPoint>,
         outcome: Option<Outcome>,
-    ) -> anyhow::Result<u64>;
+    ) -> anyhow::Result<BTreeMap<OrderIdClientSide, Order>>;
 
     /// Get all orders in the db.
     /// Optionally provide a market (and outcome) to get only orders belonging to that market (and outcome)
@@ -722,7 +722,7 @@ impl OddsMarketsClientExt for Client {
         sync_possible_payouts: bool,
         market: Option<OutPoint>,
         outcome: Option<Outcome>,
-    ) -> anyhow::Result<u64> {
+    ) -> anyhow::Result<BTreeMap<OrderIdClientSide, Order>> {
         let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
         let mut dbtx = instance.db.begin_transaction().await;
 
@@ -779,17 +779,46 @@ impl OddsMarketsClientExt for Client {
             orders_to_update.insert(key.order, ());
         }
 
-        let updated_order_count = orders_to_update.len().try_into()?;
-
+        let mut changed_orders = BTreeMap::new();
         let mut get_order_futures_unordered = orders_to_update
             .into_keys()
-            .map(|id| async move { self.get_order(id.to_owned(), false).await })
+            .map(|id| async move {
+                (   
+                    // id of order
+                    id,
+                    // order we have currently in cache
+                    self.get_order(id, true).await,
+                    // updated order
+                    self.get_order(id, false).await,
+                )
+            })
             .collect::<FuturesUnordered<_>>();
-        while let Some(result) = get_order_futures_unordered.next().await {
-            result?.expect("should always produce order");
+        while let Some((id, from_cache, updated)) = get_order_futures_unordered.next().await {
+            if let Err(e) = updated {
+                bail!("Error getting order from federation: {:?}", e)
+            }
+
+            let updated = updated?;
+            if from_cache? != updated {
+                let order = updated.expect("should always be some");
+
+                if let Some(market) = market {
+                    if order.market != market {
+                        continue
+                    }
+                }
+
+                if let Some(outcome) = outcome {
+                    if order.outcome != outcome {
+                        continue;
+                    }
+                }
+                
+                changed_orders.insert(id, order);
+            }
         }
 
-        Ok(updated_order_count)
+        Ok(changed_orders)
     }
 
     async fn get_orders_from_db(
@@ -1102,7 +1131,9 @@ impl ClientModule for PredictionMarketsClientModule {
                     bail!("`get-payout-control-public-key` expects 0 arguments")
                 }
 
-                Ok(serde_json::to_value(client.get_payout_control_public_key())?)
+                Ok(serde_json::to_value(
+                    client.get_payout_control_public_key(),
+                )?)
             }
 
             "new-market" => {
@@ -1128,17 +1159,20 @@ impl ClientModule for PredictionMarketsClientModule {
                         MarketInformation {
                             title: "my market".to_owned(),
                             description: "this is my market".to_owned(),
-                            outcome_titles: (0..outcomes).map(|i| {
-                                let mut title = String::new();
+                            outcome_titles: (0..outcomes)
+                                .map(|i| {
+                                    let mut title = String::new();
 
-                                title.push_str("Outcome ");
-                                title.push_str(&i.to_string());
+                                    title.push_str("Outcome ");
+                                    title.push_str(&i.to_string());
 
-                                title
-                            }).collect(),
+                                    title
+                                })
+                                .collect(),
                             expected_payout_timestamp: UnixTimestamp::ZERO,
                         },
-                    ).await?;
+                    )
+                    .await?;
 
                 Ok(serde_json::to_value(market_out_point.txid)?)
             }
@@ -1156,7 +1190,9 @@ impl ClientModule for PredictionMarketsClientModule {
 
                 let out_point = OutPoint { txid, out_idx: 0 };
 
-                Ok(serde_json::to_value(client.get_market(out_point, false).await?)?)
+                Ok(serde_json::to_value(
+                    client.get_market(out_point, false).await?,
+                )?)
             }
 
             "get-payout-control-markets" => {
@@ -1164,10 +1200,11 @@ impl ClientModule for PredictionMarketsClientModule {
                     bail!("`get-payout-control-markets` expects 0 arguments")
                 }
 
-                let payout_control_markets = client.get_payout_control_markets(true, UnixTimestamp::ZERO)
+                let payout_control_markets = client
+                    .get_payout_control_markets(true, UnixTimestamp::ZERO)
                     .await?
                     .into_iter()
-                    .map(|(_,market)|market)
+                    .map(|(_, market)| market)
                     .collect::<Vec<_>>();
 
                 Ok(serde_json::to_value(payout_control_markets)?)
@@ -1184,7 +1221,11 @@ impl ClientModule for PredictionMarketsClientModule {
 
                 let out_point = OutPoint { txid, out_idx: 0 };
 
-                Ok(serde_json::to_value(client.get_market_payout_control_proposals(out_point, false).await?)?)
+                Ok(serde_json::to_value(
+                    client
+                        .get_market_payout_control_proposals(out_point, false)
+                        .await?,
+                )?)
             }
 
             "propose-payout" => {
@@ -1253,7 +1294,10 @@ impl ClientModule for PredictionMarketsClientModule {
 
                 let mut market: Option<OutPoint> = None;
                 if let Some(arg_tx_id) = args.get(1) {
-                    market = Some(OutPoint{txid: TransactionId::from_str(&arg_tx_id.to_string_lossy())?, out_idx: 0});
+                    market = Some(OutPoint {
+                        txid: TransactionId::from_str(&arg_tx_id.to_string_lossy())?,
+                        out_idx: 0,
+                    });
                 };
 
                 let mut outcome: Option<Outcome> = None;
@@ -1261,7 +1305,9 @@ impl ClientModule for PredictionMarketsClientModule {
                     outcome = Some(Outcome::from_str(&arg_outcome.to_string_lossy())?);
                 }
 
-                Ok(serde_json::to_value(client.get_orders_from_db(market, outcome).await)?)
+                Ok(serde_json::to_value(
+                    client.get_orders_from_db(market, outcome).await,
+                )?)
             }
 
             "get-order" => {
@@ -1271,9 +1317,7 @@ impl ClientModule for PredictionMarketsClientModule {
 
                 let id = OrderIdClientSide(args[1].to_string_lossy().parse()?);
 
-                Ok(serde_json::to_value(
-                    client.get_order(id, false).await?,
-                )?)
+                Ok(serde_json::to_value(client.get_order(id, false).await?)?)
             }
 
             "cancel-order" => {
@@ -1291,7 +1335,11 @@ impl ClientModule for PredictionMarketsClientModule {
                     bail!("`withdraw-available-bitcoin` command expects 0 arguments")
                 }
 
-                Ok(serde_json::to_value(client.send_order_bitcoin_balance_to_primary_module().await?)?)
+                Ok(serde_json::to_value(
+                    client
+                        .send_order_bitcoin_balance_to_primary_module()
+                        .await?,
+                )?)
             }
 
             "sync-orders" => {
@@ -1301,7 +1349,10 @@ impl ClientModule for PredictionMarketsClientModule {
 
                 let mut market: Option<OutPoint> = None;
                 if let Some(arg_tx_id) = args.get(1) {
-                    market = Some(OutPoint{txid: TransactionId::from_str(&arg_tx_id.to_string_lossy())?, out_idx: 0});
+                    market = Some(OutPoint {
+                        txid: TransactionId::from_str(&arg_tx_id.to_string_lossy())?,
+                        out_idx: 0,
+                    });
                 };
 
                 let mut outcome: Option<Outcome> = None;
@@ -1309,12 +1360,16 @@ impl ClientModule for PredictionMarketsClientModule {
                     outcome = Some(Outcome::from_str(&arg_outcome.to_string_lossy())?);
                 }
 
-                Ok(serde_json::to_value(client.sync_orders(true, market, outcome).await?)?)
+                Ok(serde_json::to_value(
+                    client.sync_orders(true, market, outcome).await?,
+                )?)
             }
 
             "recover-orders" => {
                 if args.len() != 1 && args.len() != 2 {
-                    bail!("`recover-orders` command accepts 1 optional argument: (gap_size_checked)")
+                    bail!(
+                        "`recover-orders` command accepts 1 optional argument: (gap_size_checked)"
+                    )
                 }
 
                 let mut gap_size_to_check = 20u16;
@@ -1322,7 +1377,9 @@ impl ClientModule for PredictionMarketsClientModule {
                     gap_size_to_check = s.to_string_lossy().parse()?;
                 }
 
-                Ok(serde_json::to_value(client.recover_orders(gap_size_to_check).await?)?)
+                Ok(serde_json::to_value(
+                    client.recover_orders(gap_size_to_check).await?,
+                )?)
             }
 
             "get-candlesticks" => {
@@ -1341,16 +1398,19 @@ impl ClientModule for PredictionMarketsClientModule {
 
                 let mut min_candlestick_timestamp = UnixTimestamp::ZERO;
                 if let Some(s) = args.get(4) {
-                    min_candlestick_timestamp = UnixTimestamp(
-                        s.to_string_lossy().parse()?
-                    )
+                    min_candlestick_timestamp = UnixTimestamp(s.to_string_lossy().parse()?)
                 }
 
-                let candlesticks = client.
-                    get_candlesticks(market, outcome, candlestick_interval, min_candlestick_timestamp)
+                let candlesticks = client
+                    .get_candlesticks(
+                        market,
+                        outcome,
+                        candlestick_interval,
+                        min_candlestick_timestamp,
+                    )
                     .await?
                     .into_iter()
-                    .map(|(key,value)| (key.0.to_string(), value))
+                    .map(|(key, value)| (key.0.to_string(), value))
                     .collect::<BTreeMap<String, Candlestick>>();
 
                 Ok(serde_json::to_value(candlesticks)?)
@@ -1363,9 +1423,9 @@ impl ClientModule for PredictionMarketsClientModule {
                 Ok(serde_json::to_value(m)?)
             }
 
-            command => bail!(
-                "Unknown command: {command}, supported commands: {SUPPORTED_COMMANDS}"
-            ),
+            command => {
+                bail!("Unknown command: {command}, supported commands: {SUPPORTED_COMMANDS}")
+            }
         }
     }
 }
