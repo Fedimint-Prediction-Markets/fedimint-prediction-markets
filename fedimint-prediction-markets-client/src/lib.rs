@@ -9,13 +9,13 @@ use db::OrderIdSlot;
 use fedimint_client::derivable_secret::{ChildId, DerivableSecret};
 use fedimint_client::module::init::ClientModuleInit;
 use fedimint_client::module::{ClientModule, IClientModule};
-use fedimint_client::sm::{Context, ModuleNotifier, OperationId};
+use fedimint_client::sm::{Context, ModuleNotifier, OperationId, Executor};
 use fedimint_client::transaction::{ClientInput, ClientOutput, TransactionBuilder};
 use fedimint_client::{Client, DynGlobalClientContext};
 use fedimint_core::api::{DynGlobalApi, DynModuleApi};
 use fedimint_core::config::FederationId;
-use fedimint_core::core::{Decoder, IntoDynInstance};
-use fedimint_core::db::{Database, ModuleDatabaseTransaction};
+use fedimint_core::core::{Decoder, IntoDynInstance, ModuleInstanceId};
+use fedimint_core::db::{Database, ModuleDatabaseTransaction, DatabaseTransaction};
 use fedimint_core::module::{
     ApiVersion, CommonModuleInit, ExtendsCommonModuleInit, ModuleCommon, MultiApiVersion,
     TransactionItemAmount,
@@ -1427,6 +1427,32 @@ impl ClientModule for PredictionMarketsClientModule {
                 bail!("Unknown command: {command}, supported commands: {SUPPORTED_COMMANDS}")
             }
         }
+    }
+
+    fn supports_backup(&self) -> bool  {
+        false
+    }
+
+    async fn backup(
+        &self,
+        _dbtx: &mut ModuleDatabaseTransaction<'_>,
+        _executor: Executor<DynGlobalClientContext>,
+        _api: DynGlobalApi,
+        _module_instance_id: ModuleInstanceId,
+    ) -> anyhow::Result<Vec<u8>> {
+        anyhow::bail!("Backup not supported");
+    }
+
+    async fn restore(
+        &self,
+        // _dbtx: &mut ModuleDatabaseTransaction<'_>,
+        _dbtx: &mut DatabaseTransaction<'_>,
+        _module_instance_id: ModuleInstanceId,
+        _executor: Executor<DynGlobalClientContext>,
+        _api: DynGlobalApi,
+        _snapshot: Option<&[u8]>,
+    ) -> anyhow::Result<()> {
+        anyhow::bail!("Backup not supported");
     }
 }
 
