@@ -9,7 +9,7 @@ use secp256k1::XOnlyPublicKey;
 #[repr(u8)]
 #[derive(Clone, Debug)]
 pub enum DbKeyPrefix {
-    /// ----- 00-1f reserved for struct storage -----
+    /// ----- 00-1f reserved for caches -----
 
     /// Cache for markets
     ///
@@ -26,30 +26,36 @@ pub enum DbKeyPrefix {
     /// (Market's [OutPoint], [XOnlyPublicKey]) to [Vec<Amount>]
     MarketPayoutControlProposal = 0x02, 
 
-    /// ----- 20-3f reserved for lookup indexes -----
+    /// ----- 20-3f reserved for indexes -----
 
     /// Markets that our payout control key has some portion of control over.
     ///
     /// (Market's creation time [UnixTimestamp], Market's [OutPoint]) to ()
     PayoutControlMarkets = 0x20,
 
-    /// Index for orders by market outcome
+    /// Orders by market outcome
     ///
     /// (Market's [OutPoint], [Outcome], [OrderIdClientSide]) to ()
     OrdersByMarketOutcome = 0x21,
 
-    /// Index for orders with some kind of balance.
+    /// Orders with some kind of balance.
     ///
     /// (Market's [OutPoint], [Outcome], [OrderIdClientSide]) to ()
     NonZeroOrdersByMarketOutcome = 0x22,
 
     /// ----- 40-4f reserved for client operation -----
 
-    /// Orders are added to this set when they are known to be out of
-    /// date in local db
+    /// Order ids are added to this set when the order in local db is known 
+    /// to be out of sync with the order on server
     ///
     /// ([OrderIdClientSide]) to ()
     OrderNeedsUpdate = 0x40,
+
+    /// (Market's [OutPoint]) to (Saved to db [UnixTimestamp])
+    ClientSavedMarkets = 0x41,
+
+    /// (Name [String]) to (Payout control [XOnlyPublicKey])
+    ClientSavedPayoutControls = 0x42,
 }
 
 // Market
@@ -228,6 +234,46 @@ impl_db_record!(
 impl_db_lookup!(
     key = OrderNeedsUpdateKey,
     query_prefix = OrderNeedsUpdatePrefixAll
+);
+
+// ClientSavedMarkets
+#[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash)]
+pub struct ClientSavedMarketsKey {
+    pub market: OutPoint,
+}
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct ClientSavedMarketsPrefixAll;
+
+impl_db_record!(
+    key = ClientSavedMarketsKey,
+    value = UnixTimestamp,
+    db_prefix = DbKeyPrefix::ClientSavedMarkets,
+);
+
+impl_db_lookup!(
+    key = ClientSavedMarketsKey,
+    query_prefix = ClientSavedMarketsPrefixAll
+);
+
+// ClientSavedPayoutControls
+#[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash)]
+pub struct ClientSavedPayoutControlsKey {
+    pub name: String,
+}
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct ClientSavedPayoutControlsPrefixAll;
+
+impl_db_record!(
+    key = ClientSavedPayoutControlsKey,
+    value = XOnlyPublicKey,
+    db_prefix = DbKeyPrefix::ClientSavedPayoutControls,
+);
+
+impl_db_lookup!(
+    key = ClientSavedPayoutControlsKey,
+    query_prefix = ClientSavedPayoutControlsPrefixAll
 );
 
 // template

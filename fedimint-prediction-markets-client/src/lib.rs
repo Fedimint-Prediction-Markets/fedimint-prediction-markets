@@ -9,13 +9,13 @@ use db::OrderIdSlot;
 use fedimint_client::derivable_secret::{ChildId, DerivableSecret};
 use fedimint_client::module::init::ClientModuleInit;
 use fedimint_client::module::{ClientModule, IClientModule};
-use fedimint_client::sm::{Context, ModuleNotifier, OperationId, Executor};
+use fedimint_client::sm::{Context, Executor, ModuleNotifier, OperationId};
 use fedimint_client::transaction::{ClientInput, ClientOutput, TransactionBuilder};
 use fedimint_client::{Client, DynGlobalClientContext};
 use fedimint_core::api::{DynGlobalApi, DynModuleApi};
 use fedimint_core::config::FederationId;
 use fedimint_core::core::{Decoder, IntoDynInstance, ModuleInstanceId};
-use fedimint_core::db::{Database, ModuleDatabaseTransaction, DatabaseTransaction};
+use fedimint_core::db::{Database, DatabaseTransaction, ModuleDatabaseTransaction};
 use fedimint_core::module::{
     ApiVersion, CommonModuleInit, ExtendsCommonModuleInit, ModuleCommon, MultiApiVersion,
     TransactionItemAmount,
@@ -152,6 +152,18 @@ pub trait OddsMarketsClientExt {
         candlestick_interval: Seconds,
         min_candlestick_timestamp: UnixTimestamp,
     ) -> anyhow::Result<BTreeMap<UnixTimestamp, Candlestick>>;
+
+    // Functions for interacting with client saved markets.
+    async fn save_market(&self, market: OutPoint);
+    async fn unsave_market(&self, market: OutPoint);
+    // return map: saved timestamp to market.
+    async fn get_saved_markets(&self) -> BTreeMap<UnixTimestamp, OutPoint>;
+
+    // Functions for interacting with client saved payout control keys
+    async fn save_payout_control(&self, name: String, public_key: XOnlyPublicKey);
+    async fn unsave_payout_control(&self, name: String);
+    async fn get_payout_control(&self, name: String) -> Option<XOnlyPublicKey>;
+    async fn get_payout_controls_map(&self) -> BTreeMap<String, XOnlyPublicKey>;
 }
 
 #[apply(async_trait_maybe_send!)]
@@ -783,7 +795,7 @@ impl OddsMarketsClientExt for Client {
         let mut get_order_futures_unordered = orders_to_update
             .into_keys()
             .map(|id| async move {
-                (   
+                (
                     // id of order
                     id,
                     // order we have currently in cache
@@ -804,7 +816,7 @@ impl OddsMarketsClientExt for Client {
 
                 if let Some(market) = market {
                     if order.market != market {
-                        continue
+                        continue;
                     }
                 }
 
@@ -813,7 +825,7 @@ impl OddsMarketsClientExt for Client {
                         continue;
                     }
                 }
-                
+
                 changed_orders.insert(id, order);
             }
         }
@@ -909,6 +921,72 @@ impl OddsMarketsClientExt for Client {
         let candlesticks = candlesticks.into_iter().collect::<BTreeMap<_, _>>();
 
         Ok(candlesticks)
+    }
+
+    async fn save_market(&self, market: OutPoint) {
+        let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+        let mut dbtx = instance.db.begin_transaction().await;
+
+        dbtx.insert_entry(&db::ClientSavedMarketsKey { market }, &UnixTimestamp::now())
+            .await;
+        dbtx.commit_tx().await;
+    }
+
+    async fn unsave_market(&self, market: OutPoint) {
+        let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+        let mut dbtx = instance.db.begin_transaction().await;
+
+        dbtx.remove_entry(&db::ClientSavedMarketsKey { market })
+            .await;
+        dbtx.commit_tx().await;
+    }
+
+    async fn get_saved_markets(&self) -> BTreeMap<UnixTimestamp, OutPoint> {
+        let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+        let mut dbtx = instance.db.begin_transaction().await;
+
+        dbtx.find_by_prefix(&db::ClientSavedMarketsPrefixAll)
+            .await
+            .map(|(k, v)| (v, k.market))
+            .collect()
+            .await
+    }
+
+    async fn save_payout_control(&self, name: String, public_key: XOnlyPublicKey) {
+        let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+        let mut dbtx = instance.db.begin_transaction().await;
+
+        dbtx.insert_entry(&db::ClientSavedPayoutControlsKey { name }, &public_key)
+            .await;
+        dbtx.commit_tx().await;
+    }
+
+    async fn unsave_payout_control(&self, name: String) {
+        let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+        let mut dbtx = instance.db.begin_transaction().await;
+
+        dbtx.remove_entry(&db::ClientSavedPayoutControlsKey { name })
+            .await;
+        dbtx.commit_tx().await;
+    }
+
+    async fn get_payout_control(&self, name: String) -> Option<XOnlyPublicKey> {
+        let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+        let mut dbtx = instance.db.begin_transaction().await;
+
+        dbtx.get_value(&db::ClientSavedPayoutControlsKey { name })
+            .await
+    }
+
+    async fn get_payout_controls_map(&self) -> BTreeMap<String, XOnlyPublicKey> {
+        let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+        let mut dbtx = instance.db.begin_transaction().await;
+
+        dbtx.find_by_prefix(&db::ClientSavedPayoutControlsPrefixAll)
+            .await
+            .map(|(k, v)| (k.name, v))
+            .collect()
+            .await
     }
 }
 
@@ -1429,7 +1507,7 @@ impl ClientModule for PredictionMarketsClientModule {
         }
     }
 
-    fn supports_backup(&self) -> bool  {
+    fn supports_backup(&self) -> bool {
         false
     }
 
