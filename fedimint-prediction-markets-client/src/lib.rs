@@ -163,7 +163,7 @@ pub trait OddsMarketsClientExt {
     async fn assign_name_to_payout_control(&self, payout_control: XOnlyPublicKey, name: String);
     async fn unassign_name_from_payout_control(&self, payout_control: XOnlyPublicKey);
     async fn get_payout_control_name(&self, payout_control: XOnlyPublicKey) -> Option<String>;
-    async fn get_payout_control_name_map(&self) -> BTreeMap<XOnlyPublicKey, String>;
+    async fn get_payout_control_name_map(&self) -> HashMap<XOnlyPublicKey, String>;
 }
 
 #[apply(async_trait_maybe_send!)]
@@ -978,7 +978,7 @@ impl OddsMarketsClientExt for Client {
             .await
     }
 
-    async fn get_payout_control_name_map(&self) -> BTreeMap<XOnlyPublicKey, String> {
+    async fn get_payout_control_name_map(&self) -> HashMap<XOnlyPublicKey, String> {
         let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
         let mut dbtx = instance.db.begin_transaction().await;
 
