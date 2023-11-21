@@ -159,11 +159,11 @@ pub trait OddsMarketsClientExt {
     // return map: saved timestamp to market.
     async fn get_saved_markets(&self) -> BTreeMap<UnixTimestamp, OutPoint>;
 
-    // Functions for interacting with client saved payout control keys
-    async fn save_payout_control(&self, name: String, public_key: XOnlyPublicKey);
-    async fn unsave_payout_control(&self, name: String);
-    async fn get_payout_control(&self, name: String) -> Option<XOnlyPublicKey>;
-    async fn get_payout_controls_map(&self) -> BTreeMap<String, XOnlyPublicKey>;
+    // Functions for interacting with client named payout control keys
+    async fn assign_name_to_payout_control(&self, payout_control: XOnlyPublicKey, name: String);
+    async fn unassign_name_from_payout_control(&self, payout_control: XOnlyPublicKey);
+    async fn get_payout_control_name(&self, payout_control: XOnlyPublicKey) -> Option<String>;
+    async fn get_payout_control_name_map(&self) -> BTreeMap<XOnlyPublicKey, String>;
 }
 
 #[apply(async_trait_maybe_send!)]
@@ -952,39 +952,39 @@ impl OddsMarketsClientExt for Client {
             .await
     }
 
-    async fn save_payout_control(&self, name: String, public_key: XOnlyPublicKey) {
+    async fn assign_name_to_payout_control(&self, payout_control: XOnlyPublicKey, name: String) {
         let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
         let mut dbtx = instance.db.begin_transaction().await;
 
-        dbtx.insert_entry(&db::ClientSavedPayoutControlsKey { name }, &public_key)
+        dbtx.insert_entry(&db::ClientNamedPayoutControlsKey { payout_control }, &name)
             .await;
         dbtx.commit_tx().await;
     }
 
-    async fn unsave_payout_control(&self, name: String) {
+    async fn unassign_name_from_payout_control(&self, payout_control: XOnlyPublicKey) {
         let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
         let mut dbtx = instance.db.begin_transaction().await;
 
-        dbtx.remove_entry(&db::ClientSavedPayoutControlsKey { name })
+        dbtx.remove_entry(&db::ClientNamedPayoutControlsKey { payout_control })
             .await;
         dbtx.commit_tx().await;
     }
 
-    async fn get_payout_control(&self, name: String) -> Option<XOnlyPublicKey> {
+    async fn get_payout_control_name(&self, payout_control: XOnlyPublicKey) -> Option<String> {
         let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
         let mut dbtx = instance.db.begin_transaction().await;
 
-        dbtx.get_value(&db::ClientSavedPayoutControlsKey { name })
+        dbtx.get_value(&db::ClientNamedPayoutControlsKey { payout_control })
             .await
     }
 
-    async fn get_payout_controls_map(&self) -> BTreeMap<String, XOnlyPublicKey> {
+    async fn get_payout_control_name_map(&self) -> BTreeMap<XOnlyPublicKey, String> {
         let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
         let mut dbtx = instance.db.begin_transaction().await;
 
-        dbtx.find_by_prefix(&db::ClientSavedPayoutControlsPrefixAll)
+        dbtx.find_by_prefix(&db::ClientNamedPayoutControlsPrefixAll)
             .await
-            .map(|(k, v)| (k.name, v))
+            .map(|(k, v)| (k.payout_control, v))
             .collect()
             .await
     }

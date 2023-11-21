@@ -54,8 +54,8 @@ pub enum DbKeyPrefix {
     /// (Market's [OutPoint]) to (Saved to db [UnixTimestamp])
     ClientSavedMarkets = 0x41,
 
-    /// (Name [String]) to (Payout control [XOnlyPublicKey])
-    ClientSavedPayoutControls = 0x42,
+    /// (Payout control [XOnlyPublicKey]) to (Name [String])
+    ClientNamedPayoutControls = 0x42,
 }
 
 // Market
@@ -258,22 +258,22 @@ impl_db_lookup!(
 
 // ClientSavedPayoutControls
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash)]
-pub struct ClientSavedPayoutControlsKey {
-    pub name: String,
+pub struct ClientNamedPayoutControlsKey {
+    pub payout_control: XOnlyPublicKey,
 }
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct ClientSavedPayoutControlsPrefixAll;
+pub struct ClientNamedPayoutControlsPrefixAll;
 
 impl_db_record!(
-    key = ClientSavedPayoutControlsKey,
-    value = XOnlyPublicKey,
-    db_prefix = DbKeyPrefix::ClientSavedPayoutControls,
+    key = ClientNamedPayoutControlsKey,
+    value = String,
+    db_prefix = DbKeyPrefix::ClientNamedPayoutControls,
 );
 
 impl_db_lookup!(
-    key = ClientSavedPayoutControlsKey,
-    query_prefix = ClientSavedPayoutControlsPrefixAll
+    key = ClientNamedPayoutControlsKey,
+    query_prefix = ClientNamedPayoutControlsPrefixAll
 );
 
 // template
