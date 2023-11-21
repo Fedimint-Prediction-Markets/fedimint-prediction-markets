@@ -202,6 +202,7 @@ impl Market {
             || contract_price > consensus_max_contract_price
             || outcomes < &2
             || outcomes > consensus_max_market_outcomes
+            || payout_control_weights.len() == 0
             || payout_control_weights.len() > usize::from(*consensus_max_payout_control_keys)
         {
             return Err(());
