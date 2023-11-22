@@ -11,16 +11,16 @@ use fedimint_core::config::{
     ConfigGenModuleParams, DkgResult, ServerModuleConfig, ServerModuleConsensusConfig,
     TypedServerModuleConfig, TypedServerModuleConsensusConfig,
 };
-use fedimint_core::db::{Database, DatabaseVersion, MigrationMap, ModuleDatabaseTransaction};
+use fedimint_core::db::{DatabaseVersion, MigrationMap, ModuleDatabaseTransaction};
 
 use fedimint_core::module::audit::Audit;
 use fedimint_core::module::{
     api_endpoint, ApiEndpoint, ApiError, ConsensusProposal, CoreConsensusVersion,
     ExtendsCommonModuleInit, InputMeta, IntoModuleError, ModuleConsensusVersion, ModuleError,
-    PeerHandle, ServerModuleInit, SupportedModuleApiVersions, TransactionItemAmount,
+    PeerHandle, ServerModuleInit, SupportedModuleApiVersions, TransactionItemAmount, ServerModuleInitArgs,
 };
 use fedimint_core::server::DynServerModule;
-use fedimint_core::task::TaskGroup;
+
 use fedimint_core::{push_db_pair_items, Amount, OutPoint, PeerId, ServerModule};
 pub use fedimint_prediction_markets_common::config::{
     PredictionMarketsClientConfig, PredictionMarketsConfig, PredictionMarketsConfigConsensus,
@@ -72,11 +72,9 @@ impl ServerModuleInit for PredictionMarketsGen {
     /// Initialize the module
     async fn init(
         &self,
-        cfg: ServerModuleConfig,
-        _db: Database,
-        _task_group: &mut TaskGroup,
+        args: &ServerModuleInitArgs<Self>
     ) -> anyhow::Result<DynServerModule> {
-        Ok(PredictionMarkets::new(cfg.to_typed()?).into())
+        Ok(PredictionMarkets::new(args.cfg().to_typed()?).into())
     }
 
     /// DB migrations to move from old to newer versions

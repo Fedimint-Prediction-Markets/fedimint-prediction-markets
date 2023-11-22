@@ -7,15 +7,14 @@ use anyhow::bail;
 use bitcoin::Denomination;
 use db::OrderIdSlot;
 use fedimint_client::derivable_secret::{ChildId, DerivableSecret};
-use fedimint_client::module::init::ClientModuleInit;
+use fedimint_client::module::init::{ClientModuleInit, ClientModuleInitArgs};
 use fedimint_client::module::{ClientModule, IClientModule};
 use fedimint_client::sm::{Context, Executor, ModuleNotifier, OperationId};
 use fedimint_client::transaction::{ClientInput, ClientOutput, TransactionBuilder};
 use fedimint_client::{Client, DynGlobalClientContext};
-use fedimint_core::api::{DynGlobalApi, DynModuleApi};
-use fedimint_core::config::FederationId;
+use fedimint_core::api::DynGlobalApi;
 use fedimint_core::core::{Decoder, IntoDynInstance, ModuleInstanceId};
-use fedimint_core::db::{Database, DatabaseTransaction, ModuleDatabaseTransaction};
+use fedimint_core::db::{DatabaseTransaction, ModuleDatabaseTransaction};
 use fedimint_core::module::{
     ApiVersion, CommonModuleInit, ExtendsCommonModuleInit, ModuleCommon, MultiApiVersion,
     TransactionItemAmount,
@@ -1554,19 +1553,12 @@ impl ClientModuleInit for PredictionMarketsClientGen {
 
     async fn init(
         &self,
-        _federation_id: FederationId,
-        cfg: PredictionMarketsClientConfig,
-        _db: Database,
-        _api_version: ApiVersion,
-        root_secret: DerivableSecret,
-        notifier: ModuleNotifier<DynGlobalClientContext, <Self::Module as ClientModule>::States>,
-        _api: DynGlobalApi,
-        _module_api: DynModuleApi,
+        args: &ClientModuleInitArgs<Self>
     ) -> anyhow::Result<Self::Module> {
         Ok(PredictionMarketsClientModule {
-            cfg,
-            root_secret,
-            _notifier: notifier,
+            cfg: args.cfg().to_owned(),
+            root_secret: args.module_root_secret().to_owned(),
+            _notifier: args.notifier().to_owned(),
         })
     }
 }
