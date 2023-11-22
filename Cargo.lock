@@ -1500,7 +1500,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
- "threshold_crypto",
  "tracing",
 ]
 
@@ -1520,7 +1519,6 @@ dependencies = [
  "strum",
  "strum_macros",
  "thiserror",
- "threshold_crypto",
  "tracing",
 ]
 
@@ -1542,7 +1540,6 @@ dependencies = [
  "strum",
  "strum_macros",
  "thiserror",
- "threshold_crypto",
  "tokio",
  "tracing",
 ]
