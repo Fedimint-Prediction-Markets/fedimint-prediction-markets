@@ -29,7 +29,7 @@ fedimint-logging = { git = "https://github.com/fedimint/fedimint", tag = "v0.1.4
 fedimint-server = { git = "https://github.com/fedimint/fedimint", tag = "v0.1.4" }
 devimint = { git = "https://github.com/fedimint/fedimint", tag = "v0.1.4" }
 aead = { git = "https://github.com/fedimint/fedimint", tag = "v0.1.4" }
-# threshold_crypto = { git = "https://github.com/fedimint/threshold_crypto" }
+fedimint-threshold-crypto = { git = "https://github.com/fedimint/threshold_crypto" }
 tbs = { git = "https://github.com/fedimint/fedimint", tag = "v0.1.4" }
 
 # Comment above lines and uncomment these to work with local fedimint dependencies
@@ -59,7 +59,7 @@ zeroize = { opt-level = 3 }
 bls12_381 = { opt-level = 3 }
 subtle = { opt-level = 3 }
 ring = { opt-level = 3 }
-threshold_crypto = { opt-level = 3 }
+fedimint-threshold-crypto = { opt-level = 3 }
 
 
 [patch.crates-io]
