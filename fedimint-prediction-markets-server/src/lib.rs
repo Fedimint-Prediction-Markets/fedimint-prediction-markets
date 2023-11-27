@@ -1672,8 +1672,8 @@ impl CandlestickDataCreator {
                 .expect("should always produce candlestick");
 
             candlestick.close = price;
-            candlestick.high = Amount::from_msats(candlestick.high.msats.max(price.msats));
-            candlestick.low = Amount::from_msats(candlestick.low.msats.min(price.msats));
+            candlestick.high = candlestick.high.max(price);
+            candlestick.low = candlestick.low.min(price);
             candlestick.volume = candlestick.volume + volume;
         }
     }
