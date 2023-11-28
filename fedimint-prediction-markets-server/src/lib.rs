@@ -542,7 +542,7 @@ impl ServerModule for PredictionMarkets {
 
                 // clear out old payout proposal if exists
                 if let Some(outcome_payouts) = dbtx
-                    .get_value(&db::MarketPayoutControlProposalKey {
+                    .remove_entry(&db::MarketPayoutControlProposalKey {
                         market: market_out_point.to_owned(),
                         payout_control: payout_control.to_owned(),
                     })
