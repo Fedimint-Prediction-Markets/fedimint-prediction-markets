@@ -17,7 +17,8 @@ use fedimint_core::module::audit::Audit;
 use fedimint_core::module::{
     api_endpoint, ApiEndpoint, ApiError, ConsensusProposal, CoreConsensusVersion,
     ExtendsCommonModuleInit, InputMeta, IntoModuleError, ModuleConsensusVersion, ModuleError,
-    PeerHandle, ServerModuleInit, SupportedModuleApiVersions, TransactionItemAmount, ServerModuleInitArgs,
+    PeerHandle, ServerModuleInit, ServerModuleInitArgs, SupportedModuleApiVersions,
+    TransactionItemAmount,
 };
 use fedimint_core::server::DynServerModule;
 
@@ -70,10 +71,7 @@ impl ServerModuleInit for PredictionMarketsGen {
     }
 
     /// Initialize the module
-    async fn init(
-        &self,
-        args: &ServerModuleInitArgs<Self>
-    ) -> anyhow::Result<DynServerModule> {
+    async fn init(&self, args: &ServerModuleInitArgs<Self>) -> anyhow::Result<DynServerModule> {
         Ok(PredictionMarkets::new(args.cfg().to_typed()?).into())
     }
 
@@ -497,7 +495,11 @@ impl ServerModule for PredictionMarkets {
                 pub_keys = vec![order_owner.to_owned()];
 
                 // cancel order
-                Self::cancel_order(dbtx, order_owner.to_owned(), &mut order).await;
+                let market = dbtx
+                    .get_value(&db::MarketKey(order.market))
+                    .await
+                    .expect("should always be some");
+                Self::cancel_order(dbtx, &market, order_owner.to_owned(), &mut order).await;
             }
             PredictionMarketsInput::PayoutProposal {
                 market: market_out_point,
@@ -594,11 +596,7 @@ impl ServerModule for PredictionMarkets {
                         total_weight_of_votes += WeightRequiredForPayout::from(weight.to_owned())
                     }
 
-                    if total_weight_of_votes >= market.weight_required_for_payout {
-                        true
-                    } else {
-                        false
-                    }
+                    total_weight_of_votes >= market.weight_required_for_payout
                 };
 
                 if payout_triggered {
@@ -619,7 +617,7 @@ impl ServerModule for PredictionMarkets {
                             .await
                             .expect("should always find order");
 
-                        Self::cancel_order(dbtx, order_owner, &mut order).await;
+                        Self::cancel_order(dbtx, &market, order_owner, &mut order).await;
 
                         let payout_per_contract_of_outcome = outcome_payouts
                             .get(usize::from(order.outcome))
@@ -1027,7 +1025,7 @@ impl PredictionMarkets {
         let beginning_market_open_contracts = market.open_contracts;
 
         let mut order_cache = OrderCache::new();
-        let mut price_quantity_cache = PriceQuantityCache::new();
+        let mut highest_priority_order_cache = HighestPriorityOrderCache::new(&market);
         let mut candlestick_data_creator = CandlestickDataCreator::new(
             &self.cfg.consensus.gc.candlestick_intervals,
             self.cfg
@@ -1056,23 +1054,23 @@ impl PredictionMarkets {
         };
 
         while order.quantity_waiting_for_match > ContractOfOutcomeAmount::ZERO {
-            let own = Self::get_outcome_side_best_price_quantity(
+            let own = Self::get_own_outcome_price_quantity(
                 dbtx,
                 &mut order_cache,
-                &mut price_quantity_cache,
+                &mut highest_priority_order_cache,
                 &market_out_point,
-                &outcome,
-                &side.opposite(),
+                &order.outcome,
+                &order.side,
             )
             .await;
-            let other = Self::get_other_outcome_sides_best_price_quantity(
+            let other = Self::get_other_outcomes_price_quantity(
                 dbtx,
                 &mut order_cache,
-                &mut price_quantity_cache,
+                &mut highest_priority_order_cache,
                 &market_out_point,
                 &market,
-                &outcome,
-                &side,
+                &order.outcome,
+                &order.side,
             )
             .await;
 
@@ -1106,22 +1104,16 @@ impl PredictionMarkets {
                 let (own_price, own_quantity) = own.expect("should always be some");
                 let satisfied_quantity = order.quantity_waiting_for_match.min(own_quantity);
 
-                Self::process_market_quantity(
+                Self::process_quantity_on_outcome(
                     dbtx,
-                    &mut order_cache,
-                    &mut candlestick_data_creator,
-                    &market_out_point,
                     &market,
-                    &outcome,
-                    &side.opposite(),
-                    satisfied_quantity,
+                    &mut order_cache,
+                    &mut highest_priority_order_cache,
+                    &mut candlestick_data_creator,
+                    &order.outcome,
+                    &satisfied_quantity,
                 )
                 .await;
-                price_quantity_cache.sub_outcome_side_quantity(
-                    outcome,
-                    side.opposite(),
-                    satisfied_quantity,
-                );
 
                 order.quantity_waiting_for_match =
                     order.quantity_waiting_for_match - satisfied_quantity;
@@ -1156,20 +1148,20 @@ impl PredictionMarkets {
                 let satisfied_quantity = order.quantity_waiting_for_match.min(other_quantity);
 
                 for i in 0..market.outcomes {
-                    if i != outcome {
-                        Self::process_market_quantity(
-                            dbtx,
-                            &mut order_cache,
-                            &mut candlestick_data_creator,
-                            &market_out_point,
-                            &market,
-                            &i,
-                            &side,
-                            satisfied_quantity,
-                        )
-                        .await;
-                        price_quantity_cache.sub_outcome_side_quantity(i, side, satisfied_quantity);
+                    if i == order.outcome {
+                        continue;
                     }
+
+                    Self::process_quantity_on_outcome(
+                        dbtx,
+                        &market,
+                        &mut order_cache,
+                        &mut highest_priority_order_cache,
+                        &mut candlestick_data_creator,
+                        &i,
+                        &satisfied_quantity,
+                    )
+                    .await;
                 }
 
                 order.quantity_waiting_for_match =
@@ -1207,7 +1199,7 @@ impl PredictionMarkets {
                 candlestick_data_creator
                     .add(
                         dbtx,
-                        outcome,
+                        order.outcome,
                         other_price.try_into().unwrap_or(Amount::ZERO),
                         satisfied_quantity,
                     )
@@ -1247,89 +1239,70 @@ impl PredictionMarkets {
         // save order cache
         order_cache.save(dbtx).await;
 
-        // save candlestick
+        // save candlesticks
         candlestick_data_creator.save(dbtx).await;
     }
 
-    // Note: the quantity returned can be lower than the actual quantity
-    // at a given price.
-    async fn get_outcome_side_best_price_quantity(
+    async fn get_outcome_side_highest_priority_order_price_quantity(
         dbtx: &mut ModuleDatabaseTransaction<'_>,
         order_cache: &mut OrderCache,
-        price_quantity_cache: &mut PriceQuantityCache,
+        highest_priority_order_cache: &mut HighestPriorityOrderCache,
         market: &OutPoint,
         outcome: &Outcome,
         side: &Side,
     ) -> Option<(Amount, ContractOfOutcomeAmount)> {
-        // This setting is used to adjust the max number of orders used
-        // to create the returning price_quantity. This setting is here to
-        // fix a possible dos attack where the attacker could create many
-        // orders at the same price in order to make this logic run
-        // very slow.
-        const MAX_ORDERS_QUERIED: usize = 4;
-
-        if let Some(price_quantity) = price_quantity_cache
-            .m
-            .get(&(outcome.to_owned(), side.to_owned()))
-        {
-            return Some(price_quantity.to_owned());
+        if let Some(order_owner) = highest_priority_order_cache.get(outcome.to_owned()) {
+            let order = order_cache.get(dbtx, order_owner).await;
+            assert_ne!(order.quantity_waiting_for_match, ContractOfOutcomeAmount(0));
+            return Some((order.price, order.quantity_waiting_for_match));
         }
 
-        let mut order_price_time_priority_stream = dbtx
+        let Some(highest_priority_order_owner) = dbtx
             .find_by_prefix(&db::OrderPriceTimePriorityPrefix3 {
-                market: market.clone(),
-                outcome: outcome.clone(),
-                side: side.clone(),
+                market: market.to_owned(),
+                outcome: outcome.to_owned(),
+                side: side.to_owned(),
             })
-            .await;
-
-        let mut top_price_priority_orders = vec![];
-        let first_price_priority = match order_price_time_priority_stream.next().await {
-            Some((key, order)) => {
-                top_price_priority_orders.push(order);
-                key.price_priority
-            }
-            None => {
-                return None;
-            }
+            .await
+            .next()
+            .await
+            .map(|(_, v)| v)
+        else {
+            return None;
         };
 
-        for _ in 1..MAX_ORDERS_QUERIED {
-            match order_price_time_priority_stream.next().await {
-                Some((key, order)) => {
-                    if key.price_priority == first_price_priority {
-                        top_price_priority_orders.push(order)
-                    } else {
-                        break;
-                    }
-                }
-                None => break,
-            }
-        }
+        let highest_priority_order = order_cache.get(dbtx, &highest_priority_order_owner).await;
+        highest_priority_order_cache.set(outcome.to_owned(), Some(highest_priority_order_owner));
 
-        drop(order_price_time_priority_stream);
-
-        let mut price = Amount::ZERO;
-        let mut quantity = ContractOfOutcomeAmount::ZERO;
-        for order_owner in top_price_priority_orders {
-            let order = order_cache.get(dbtx, &order_owner).await;
-
-            price = order.price;
-            quantity = quantity + order.quantity_waiting_for_match;
-        }
-
-        price_quantity_cache
-            .m
-            .insert((outcome.to_owned(), side.to_owned()), (price, quantity));
-
-        // Weird issue here where not having to_owned() shows error in ide but still compiles as expected.
-        Some((price, quantity).to_owned())
+        Some((
+            highest_priority_order.price,
+            highest_priority_order.quantity_waiting_for_match,
+        ))
     }
 
-    async fn get_other_outcome_sides_best_price_quantity(
+    async fn get_own_outcome_price_quantity(
         dbtx: &mut ModuleDatabaseTransaction<'_>,
         order_cache: &mut OrderCache,
-        price_quantity_cache: &mut PriceQuantityCache,
+        highest_priority_order_cache: &mut HighestPriorityOrderCache,
+        market: &OutPoint,
+        outcome: &Outcome,
+        side: &Side,
+    ) -> Option<(Amount, ContractOfOutcomeAmount)> {
+        Self::get_outcome_side_highest_priority_order_price_quantity(
+            dbtx,
+            order_cache,
+            highest_priority_order_cache,
+            market,
+            outcome,
+            &side.opposite(),
+        )
+        .await
+    }
+
+    async fn get_other_outcomes_price_quantity(
+        dbtx: &mut ModuleDatabaseTransaction<'_>,
+        order_cache: &mut OrderCache,
+        highest_priority_order_cache: &mut HighestPriorityOrderCache,
         market_out_point: &OutPoint,
         market: &Market,
         outcome: &Outcome,
@@ -1339,103 +1312,82 @@ impl PredictionMarkets {
         let mut quantity = ContractOfOutcomeAmount(u64::MAX);
 
         for i in 0..market.outcomes {
-            if &i != outcome {
-                match Self::get_outcome_side_best_price_quantity(
+            if &i == outcome {
+                continue;
+            }
+
+            let (outcome_side_price, outcome_side_quantity) =
+                Self::get_outcome_side_highest_priority_order_price_quantity(
                     dbtx,
                     order_cache,
-                    price_quantity_cache,
+                    highest_priority_order_cache,
                     market_out_point,
                     &i,
                     &side,
                 )
-                .await
-                {
-                    Some((outcome_side_price, outcome_side_quantity)) => {
-                        price = price - outcome_side_price.into();
-                        quantity = quantity.min(outcome_side_quantity);
-                    }
-                    None => return None,
-                }
-            }
+                .await?;
+
+            price = price - outcome_side_price.into();
+            quantity = quantity.min(outcome_side_quantity);
         }
 
         Some((price, quantity))
     }
 
-    async fn process_market_quantity(
+    /// uses [HighestPriorityOrderCache] to find the order that quantity will be processed on.
+    async fn process_quantity_on_outcome(
         dbtx: &mut ModuleDatabaseTransaction<'_>,
-        order_cache: &mut OrderCache,
-        candlestick_data_creator: &mut CandlestickDataCreator,
-        market_out_point: &OutPoint,
         market: &Market,
+        order_cache: &mut OrderCache,
+        highest_priority_order_cache: &mut HighestPriorityOrderCache,
+        candlestick_data_creator: &mut CandlestickDataCreator,
         outcome: &Outcome,
-        side: &Side,
-        quantity: ContractOfOutcomeAmount,
+        quantity: &ContractOfOutcomeAmount,
     ) {
-        let mut price = None;
-        let mut quantity_remaining = quantity;
+        let Some(order_owner) = highest_priority_order_cache.get(outcome.to_owned()) else {
+            panic!("order should always exist for outcome before process market quantity is ran")
+        };
 
-        while quantity_remaining > ContractOfOutcomeAmount::ZERO {
-            let (_, order_owner) = dbtx
-                .find_by_prefix(&db::OrderPriceTimePriorityPrefix3 {
-                    market: market_out_point.to_owned(),
-                    outcome: outcome.to_owned(),
-                    side: side.to_owned(),
-                })
-                .await
-                .next()
-                .await
-                .expect("should always produce order");
+        let order = order_cache.get_mut(dbtx, order_owner).await;
 
-            let order = order_cache.get_mut(dbtx, &order_owner).await;
-            let satisfied_quantity = order.quantity_waiting_for_match.min(quantity);
+        let satisfied_quantity = quantity.to_owned();
+        order.quantity_waiting_for_match = order.quantity_waiting_for_match - satisfied_quantity;
 
-            order.quantity_waiting_for_match =
-                order.quantity_waiting_for_match - satisfied_quantity;
-            quantity_remaining = quantity_remaining - satisfied_quantity;
+        match order.side {
+            Side::Buy => {
+                order.contract_of_outcome_balance =
+                    order.contract_of_outcome_balance + satisfied_quantity;
 
-            match side {
-                Side::Buy => {
-                    order.contract_of_outcome_balance =
-                        order.contract_of_outcome_balance + satisfied_quantity;
-
-                    order.bitcoin_cost =
-                        order.bitcoin_cost + SignedAmount::from(order.price * satisfied_quantity.0);
-                }
-                Side::Sell => {
-                    order.bitcoin_balance =
-                        order.bitcoin_balance + (order.price * satisfied_quantity.0);
-
-                    order.bitcoin_cost =
-                        order.bitcoin_cost - SignedAmount::from(order.price * satisfied_quantity.0);
-                }
+                order.bitcoin_cost =
+                    order.bitcoin_cost + SignedAmount::from(order.price * satisfied_quantity.0);
             }
+            Side::Sell => {
+                order.bitcoin_balance =
+                    order.bitcoin_balance + (order.price * satisfied_quantity.0);
 
-            if order.quantity_waiting_for_match == ContractOfOutcomeAmount::ZERO {
-                dbtx.remove_entry(&db::OrderPriceTimePriorityKey::from_market_and_order(
-                    &market, &order,
-                ))
-                .await
-                .expect("should always find entry to remove");
-            }
-
-            if let None = price {
-                price = Some(order.price);
+                order.bitcoin_cost =
+                    order.bitcoin_cost - SignedAmount::from(order.price * satisfied_quantity.0);
             }
         }
 
+        if order.quantity_waiting_for_match == ContractOfOutcomeAmount::ZERO {
+            highest_priority_order_cache.set(outcome.to_owned(), None);
+
+            dbtx.remove_entry(&db::OrderPriceTimePriorityKey::from_market_and_order(
+                &market, &order,
+            ))
+            .await
+            .expect("should always find entry to remove");
+        }
+
         candlestick_data_creator
-            .add(
-                dbtx,
-                outcome.to_owned(),
-                price.expect("should always be some"),
-                quantity,
-            )
+            .add(dbtx, order.outcome, order.price, satisfied_quantity)
             .await;
     }
 
     async fn cancel_order(
         dbtx: &mut ModuleDatabaseTransaction<'_>,
+        market: &Market,
         order_owner: XOnlyPublicKey,
         order: &mut Order,
     ) {
@@ -1452,15 +1404,11 @@ impl PredictionMarkets {
                 }
             }
             order.quantity_waiting_for_match = ContractOfOutcomeAmount::ZERO;
+
             dbtx.insert_entry(&db::OrderKey(order_owner.to_owned()), &order)
                 .await;
-
-            let market = dbtx
-                .get_value(&db::MarketKey(order.market))
-                .await
-                .expect("should always find market");
             dbtx.remove_entry(&db::OrderPriceTimePriorityKey::from_market_and_order(
-                &market, &order,
+                market, order,
             ))
             .await
             .expect("should always remove order");
@@ -1508,14 +1456,14 @@ impl PredictionMarkets {
 }
 
 pub struct OrderCache {
-    map: HashMap<XOnlyPublicKey, Order>,
+    m: HashMap<XOnlyPublicKey, Order>,
     mut_orders: HashMap<XOnlyPublicKey, ()>,
 }
 
 impl OrderCache {
     fn new() -> Self {
         Self {
-            map: HashMap::new(),
+            m: HashMap::new(),
             mut_orders: HashMap::new(),
         }
     }
@@ -1525,15 +1473,15 @@ impl OrderCache {
         dbtx: &mut ModuleDatabaseTransaction<'_>,
         order_owner: &XOnlyPublicKey,
     ) -> &'a Order {
-        if !self.map.contains_key(order_owner) {
+        if !self.m.contains_key(order_owner) {
             let order = dbtx
                 .get_value(&db::OrderKey(order_owner.to_owned()))
                 .await
                 .expect("OrderCache always expects order to exist");
-            self.map.insert(order_owner.to_owned(), order);
+            self.m.insert(order_owner.to_owned(), order);
         }
 
-        self.map
+        self.m
             .get(order_owner)
             .expect("should always produce order")
     }
@@ -1543,17 +1491,17 @@ impl OrderCache {
         dbtx: &mut ModuleDatabaseTransaction<'_>,
         order_owner: &XOnlyPublicKey,
     ) -> &'a mut Order {
-        if !self.map.contains_key(order_owner) {
+        if !self.m.contains_key(order_owner) {
             let order = dbtx
                 .get_value(&db::OrderKey(order_owner.to_owned()))
                 .await
                 .expect("OrderCache always expects order to exist");
-            self.map.insert(order_owner.to_owned(), order);
+            self.m.insert(order_owner.to_owned(), order);
         }
 
         self.mut_orders.insert(order_owner.to_owned(), ());
 
-        self.map
+        self.m
             .get_mut(order_owner)
             .expect("should always produce order")
     }
@@ -1561,7 +1509,7 @@ impl OrderCache {
     async fn save(self, dbtx: &mut ModuleDatabaseTransaction<'_>) {
         for (order_owner, _) in self.mut_orders {
             let order = self
-                .map
+                .m
                 .get(&order_owner)
                 .expect("should always produce order");
             dbtx.insert_entry(&db::OrderKey(order_owner), order).await;
@@ -1569,33 +1517,29 @@ impl OrderCache {
     }
 }
 
-pub struct PriceQuantityCache {
-    pub m: HashMap<(Outcome, Side), (Amount, ContractOfOutcomeAmount)>,
+pub struct HighestPriorityOrderCache {
+    v: Vec<Option<XOnlyPublicKey>>,
 }
 
-impl PriceQuantityCache {
-    fn new() -> Self {
-        Self { m: HashMap::new() }
+impl HighestPriorityOrderCache {
+    fn new(market: &Market) -> Self {
+        Self {
+            v: vec![None; usize::from(market.outcomes)],
+        }
     }
 
-    fn sub_outcome_side_quantity(
-        &mut self,
-        outcome: Outcome,
-        side: Side,
-        quantity: ContractOfOutcomeAmount,
-    ) {
-        let key = (outcome, side);
+    fn set(&mut self, outcome: Outcome, order_owner: Option<XOnlyPublicKey>) {
+        let v = self
+            .v
+            .get_mut(usize::from(outcome))
+            .expect("vec's length is number of outcomes");
+        *v = order_owner;
+    }
 
-        let price_quantity = self
-            .m
-            .get_mut(&key)
-            .expect("PriceQuantityCache: sub_outcome_side ran on None outcome side");
-
-        price_quantity.1 = price_quantity.1 - quantity;
-
-        if price_quantity.1 == ContractOfOutcomeAmount::ZERO {
-            self.m.remove(&key);
-        }
+    fn get<'a>(&'a self, outcome: Outcome) -> &'a Option<XOnlyPublicKey> {
+        self.v
+            .get(usize::from(outcome))
+            .expect("vec's length is number of outcomes")
     }
 }
 

@@ -302,7 +302,7 @@ pub struct Order {
     // active market quantity
     pub quantity_waiting_for_match: ContractOfOutcomeAmount,
 
-    // during a payout, the contract prices is payed out to orders accoring to this balance.
+    // during a payout, the contract price is payed out to orders accoring to this balance.
     // payouts empty this balance
     pub contract_of_outcome_balance: ContractOfOutcomeAmount,
 
@@ -310,7 +310,7 @@ pub struct Order {
     pub bitcoin_balance: Amount,
 
     // cost incurred by order matches
-    // buys (for posistive prices) add to cost
+    // buys (for positive prices) add to cost
     // sells subtract from cost
     pub bitcoin_cost: SignedAmount,
 }
@@ -524,7 +524,7 @@ impl PartialOrd for SignedAmount {
 impl Ord for SignedAmount {
     fn cmp(&self, other: &Self) -> Ordering {
         match (self.negative, other.negative) {
-            (true, true) => other.amount.msats.cmp(&self.amount.msats),
+            (true, true) => other.amount.cmp(&self.amount),
             (true, false) => {
                 if self.amount == Amount::ZERO && other.amount == Amount::ZERO {
                     Ordering::Equal
@@ -539,7 +539,7 @@ impl Ord for SignedAmount {
                     Ordering::Greater
                 }
             }
-            (false, false) => self.amount.msats.cmp(&other.amount.msats),
+            (false, false) => self.amount.cmp(&other.amount),
         }
     }
 }
