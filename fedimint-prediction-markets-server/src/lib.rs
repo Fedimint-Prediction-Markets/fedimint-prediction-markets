@@ -23,15 +23,20 @@ use fedimint_core::module::{
 use fedimint_core::server::DynServerModule;
 
 use fedimint_core::{push_db_pair_items, Amount, OutPoint, PeerId, ServerModule};
+use fedimint_prediction_markets_common::api::{
+    WaitMarketOutcomeCandlesticksParams, WaitMarketOutcomeCandlesticksResult,
+};
 pub use fedimint_prediction_markets_common::config::{
     PredictionMarketsClientConfig, PredictionMarketsConfig, PredictionMarketsConfigConsensus,
     PredictionMarketsConfigLocal, PredictionMarketsConfigPrivate, PredictionMarketsGenParams,
 };
 use fedimint_prediction_markets_common::{
-    Candlestick, ContractAmount, ContractOfOutcomeAmount, GetMarketOutcomeCandlesticksParams,
-    GetMarketOutcomeCandlesticksResult, GetPayoutControlMarketsParams,
-    GetPayoutControlMarketsResult, Market, Order, Outcome, Payout, Seconds, Side, SignedAmount,
-    TimeOrdering, UnixTimestamp, WeightRequiredForPayout,
+    api::{
+        GetMarketOutcomeCandlesticksParams, GetMarketOutcomeCandlesticksResult,
+        GetPayoutControlMarketsParams, GetPayoutControlMarketsResult,
+    },
+    Candlestick, ContractAmount, ContractOfOutcomeAmount, Market, Order, Outcome, Payout, Seconds,
+    Side, SignedAmount, TimeOrdering, UnixTimestamp, WeightRequiredForPayout,
 };
 pub use fedimint_prediction_markets_common::{
     PredictionMarketsCommonGen, PredictionMarketsConsensusItem, PredictionMarketsError,
@@ -879,6 +884,12 @@ impl ServerModule for PredictionMarkets {
                     module.api_get_market_outcome_candlesticks(&mut context.dbtx(), params).await
                 }
             },
+            api_endpoint! {
+                "wait_market_outcome_candlesticks",
+                async |module: &PredictionMarkets, context, params: WaitMarketOutcomeCandlesticksParams| -> WaitMarketOutcomeCandlesticksResult {
+                    module.api_wait_market_outcome_candlesticks(&mut context.dbtx(), params).await
+                }
+            },
         ]
     }
 }
@@ -961,6 +972,14 @@ impl PredictionMarkets {
             .await;
 
         Ok(GetMarketOutcomeCandlesticksResult { candlesticks })
+    }
+
+    async fn api_wait_market_outcome_candlesticks(
+        &self,
+        dbtx: &mut ModuleDatabaseTransaction<'_>,
+        params: WaitMarketOutcomeCandlesticksParams,
+    ) -> Result<WaitMarketOutcomeCandlesticksResult, ApiError> {
+        unimplemented!()
     }
 }
 

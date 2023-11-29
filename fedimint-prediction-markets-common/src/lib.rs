@@ -20,6 +20,9 @@ use thiserror::Error;
 // The client and server configuration
 pub mod config;
 
+// api params and results
+pub mod api;
+
 /// Unique name for this module
 pub const KIND: ModuleKind = ModuleKind::from_static_str("prediction-markets");
 
@@ -637,30 +640,6 @@ impl UnixTimestamp {
             )
             .unwrap_or(Duration::ZERO)
     }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
-pub struct GetPayoutControlMarketsParams {
-    pub payout_control: XOnlyPublicKey,
-    pub markets_created_after_and_including: UnixTimestamp,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
-pub struct GetPayoutControlMarketsResult {
-    pub markets: Vec<OutPoint>,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
-pub struct GetMarketOutcomeCandlesticksParams {
-    pub market: OutPoint,
-    pub outcome: Outcome,
-    pub candlestick_interval: Seconds,
-    pub min_candlestick_timestamp: UnixTimestamp,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
-pub struct GetMarketOutcomeCandlesticksResult {
-    pub candlesticks: Vec<(UnixTimestamp, Candlestick)>,
 }
 
 pub type Weight = u8;

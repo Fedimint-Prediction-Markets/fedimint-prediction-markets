@@ -20,10 +20,12 @@ use fedimint_core::module::{
     TransactionItemAmount,
 };
 use fedimint_prediction_markets_common::{
-    Candlestick, ContractOfOutcomeAmount, GetMarketOutcomeCandlesticksParams,
-    GetMarketOutcomeCandlesticksResult, GetPayoutControlMarketsParams, Market, MarketInformation,
-    Order, OrderIdClientSide, Outcome, Seconds, Side, UnixTimestamp, Weight,
-    WeightRequiredForPayout,
+    api::{
+        GetMarketOutcomeCandlesticksParams, GetMarketOutcomeCandlesticksResult,
+        GetPayoutControlMarketsParams,
+    },
+    Candlestick, ContractOfOutcomeAmount, Market, MarketInformation, Order, OrderIdClientSide,
+    Outcome, Seconds, Side, UnixTimestamp, Weight, WeightRequiredForPayout,
 };
 
 use fedimint_core::{apply, async_trait_maybe_send, Amount, OutPoint, TransactionId};
@@ -1551,10 +1553,7 @@ impl ClientModuleInit for PredictionMarketsClientGen {
             .expect("no version conflicts")
     }
 
-    async fn init(
-        &self,
-        args: &ClientModuleInitArgs<Self>
-    ) -> anyhow::Result<Self::Module> {
+    async fn init(&self, args: &ClientModuleInitArgs<Self>) -> anyhow::Result<Self::Module> {
         Ok(PredictionMarketsClientModule {
             cfg: args.cfg().to_owned(),
             root_secret: args.module_root_secret().to_owned(),

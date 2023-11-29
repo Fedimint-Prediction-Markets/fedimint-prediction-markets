@@ -6,8 +6,11 @@ use fedimint_core::module::ApiRequestErased;
 use fedimint_core::task::{MaybeSend, MaybeSync};
 use fedimint_core::{apply, async_trait_maybe_send, Amount, OutPoint};
 use fedimint_prediction_markets_common::{
-    GetMarketOutcomeCandlesticksParams, GetMarketOutcomeCandlesticksResult,
-    GetPayoutControlMarketsParams, GetPayoutControlMarketsResult, Market, Order
+    api::{
+        GetMarketOutcomeCandlesticksParams, GetMarketOutcomeCandlesticksResult,
+        GetPayoutControlMarketsParams, GetPayoutControlMarketsResult,
+    },
+    Market, Order,
 };
 use secp256k1::XOnlyPublicKey;
 
