@@ -276,7 +276,17 @@ impl ServerModuleInit for PredictionMarketsGen {
                         db::PeersProposedTimestampKey,
                         UnixTimestamp,
                         items,
-                        "PeersProposedTimestampKey"
+                        "PeersProposedTimestamp"
+                    );
+                }
+                DbKeyPrefix::MarketOutcomeNewestCandlestick => {
+                    push_db_pair_items!(
+                        dbtx,
+                        db::MarketOutcomeNewestCandlestickPrefixAll,
+                        db::MarketOutcomeNewestCandlestickKey,
+                        (UnixTimestamp, Candlestick),
+                        items,
+                        "MarketOutcomeNewestCandlestick"
                     );
                 }
             }
@@ -1034,6 +1044,7 @@ impl PredictionMarkets {
                 .max_candlesticks_kept_per_market_outcome_interval,
             consensus_timestamp,
             market_out_point,
+            &market,
         );
 
         let mut order = Order {
@@ -1239,8 +1250,10 @@ impl PredictionMarkets {
         // save order cache
         order_cache.save(dbtx).await;
 
-        // save candlesticks
-        candlestick_data_creator.save(dbtx).await;
+        // save candlesticks if order matched with anything
+        if order.original_quantity != order.quantity_waiting_for_match {
+            candlestick_data_creator.save(dbtx).await;
+        }
     }
 
     async fn get_outcome_side_highest_priority_order_price_quantity(
@@ -1524,21 +1537,21 @@ pub struct HighestPriorityOrderCache {
 impl HighestPriorityOrderCache {
     fn new(market: &Market) -> Self {
         Self {
-            v: vec![None; usize::from(market.outcomes)],
+            v: vec![None; market.outcomes.into()],
         }
     }
 
     fn set(&mut self, outcome: Outcome, order_owner: Option<XOnlyPublicKey>) {
         let v = self
             .v
-            .get_mut(usize::from(outcome))
+            .get_mut::<usize>(outcome.into())
             .expect("vec's length is number of outcomes");
         *v = order_owner;
     }
 
     fn get<'a>(&'a self, outcome: Outcome) -> &'a Option<XOnlyPublicKey> {
         self.v
-            .get(usize::from(outcome))
+            .get::<usize>(outcome.into())
             .expect("vec's length is number of outcomes")
     }
 }
@@ -1552,7 +1565,7 @@ pub struct CandlestickDataCreator {
         // candlestick interval
         Seconds,
         // outcome to candlstick
-        HashMap<Outcome, Candlestick>,
+        Vec<Option<Candlestick>>,
     )>,
 }
 
@@ -1561,17 +1574,21 @@ impl CandlestickDataCreator {
         consensus_candlestick_intervals: &Vec<Seconds>,
         consensus_max_candlesticks_kept_per_market_outcome_interval: u64,
         consensus_timestamp: UnixTimestamp,
-        market: OutPoint,
+        market_out_point: OutPoint,
+        market: &Market,
     ) -> Self {
         Self {
-            market,
+            market: market_out_point,
             consensus_max_candlesticks_kept_per_market_outcome_interval,
             consensus_timestamp,
 
             candlestick_intervals: consensus_candlestick_intervals
                 .iter()
                 .map(|candlestick_interval_seconds| {
-                    (candlestick_interval_seconds.to_owned(), HashMap::new())
+                    (
+                        candlestick_interval_seconds.to_owned(),
+                        vec![None; market.outcomes.into()],
+                    )
                 })
                 .collect(),
         }
@@ -1591,7 +1608,11 @@ impl CandlestickDataCreator {
                 .consensus_timestamp
                 .round_down(candlestick_interval_seconds.to_owned());
 
-            if !candlesticks_by_outcome.contains_key(&outcome) {
+            let candlestick_opt = candlesticks_by_outcome
+                .get_mut::<usize>(outcome.into())
+                .expect("vec's length is number of outcomes");
+
+            if let None = candlestick_opt {
                 let candlestick_in_db_or_new = dbtx
                     .get_value(&db::MarketOutcomeCandlesticksKey {
                         market: self.market,
@@ -1608,13 +1629,12 @@ impl CandlestickDataCreator {
                         volume: ContractOfOutcomeAmount::ZERO,
                     });
 
-                candlesticks_by_outcome.insert(outcome, candlestick_in_db_or_new);
+                *candlestick_opt = Some(candlestick_in_db_or_new);
             }
 
-            let candlestick = candlesticks_by_outcome
-                .get_mut(&outcome)
-                .expect("should always produce candlestick");
-
+            let Some(candlestick) = candlestick_opt else {
+                panic!("candlestick should always be some")
+            };
             candlestick.close = price;
             candlestick.high = candlestick.high.max(price);
             candlestick.low = candlestick.low.min(price);
@@ -1623,29 +1643,43 @@ impl CandlestickDataCreator {
     }
 
     async fn save(mut self, dbtx: &mut ModuleDatabaseTransaction<'_>) {
-        self.clean(dbtx).await;
+        self.remove_old_candlesticks(dbtx).await;
 
         for (candlestick_interval, candlesticks_by_outcome) in self.candlestick_intervals {
             let candlestick_timestamp = self
                 .consensus_timestamp
                 .round_down(candlestick_interval.to_owned());
 
-            for (outcome, candlestick) in candlesticks_by_outcome {
+            for (i, candlestick_opt) in candlesticks_by_outcome.into_iter().enumerate() {
+                let Some(candlestick) = candlestick_opt else {
+                    continue;
+                };
+
                 dbtx.insert_entry(
                     &db::MarketOutcomeCandlesticksKey {
                         market: self.market,
-                        outcome,
+                        outcome: i as Outcome,
                         candlestick_interval,
                         candlestick_timestamp,
                     },
                     &candlestick,
                 )
                 .await;
+
+                dbtx.insert_entry(
+                    &db::MarketOutcomeNewestCandlestickKey {
+                        market: self.market,
+                        outcome: i as Outcome,
+                        candlestick_interval,
+                    },
+                    &(self.consensus_timestamp, candlestick),
+                )
+                .await;
             }
         }
     }
 
-    async fn clean(&mut self, dbtx: &mut ModuleDatabaseTransaction<'_>) {
+    async fn remove_old_candlesticks(&mut self, dbtx: &mut ModuleDatabaseTransaction<'_>) {
         for (candlestick_interval, candlesticks_by_outcome) in self.candlestick_intervals.iter() {
             let candlestick_timestamp = self
                 .consensus_timestamp
@@ -1657,29 +1691,20 @@ impl CandlestickDataCreator {
                         * self.consensus_max_candlesticks_kept_per_market_outcome_interval),
             );
 
-            for (outcome, _) in candlesticks_by_outcome.iter() {
-                let mut stream = dbtx
+            for outcome in 0..candlesticks_by_outcome.len() {
+                let keys_to_remove = dbtx
                     .find_by_prefix(&db::MarketOutcomeCandlesticksPrefix3 {
                         market: self.market,
-                        outcome: outcome.to_owned(),
+                        outcome: outcome as Outcome,
                         candlestick_interval: candlestick_interval.to_owned(),
                     })
+                    .await
+                    .map(|(k, _)| k)
+                    .take_while(|k| {
+                        future::ready(k.candlestick_timestamp < min_candlestick_timestamp)
+                    })
+                    .collect::<Vec<_>>()
                     .await;
-
-                let mut keys_to_remove = vec![];
-                loop {
-                    let Some((key, _)) = stream.next().await else {
-                        break;
-                    };
-
-                    if key.candlestick_timestamp < min_candlestick_timestamp {
-                        keys_to_remove.push(key);
-                    } else {
-                        break;
-                    }
-                }
-
-                drop(stream);
 
                 for key in keys_to_remove {
                     dbtx.remove_entry(&key)
