@@ -279,12 +279,12 @@ impl ServerModuleInit for PredictionMarketsGen {
                         "PeersProposedTimestamp"
                     );
                 }
-                DbKeyPrefix::MarketOutcomeNewestCandlestick => {
+                DbKeyPrefix::MarketOutcomeNewestCandlestickVolume => {
                     push_db_pair_items!(
                         dbtx,
-                        db::MarketOutcomeNewestCandlestickPrefixAll,
+                        db::MarketOutcomeNewestCandlestickVolumePrefixAll,
                         db::MarketOutcomeNewestCandlestickKey,
-                        (UnixTimestamp, Candlestick),
+                        (UnixTimestamp, ContractOfOutcomeAmount),
                         items,
                         "MarketOutcomeNewestCandlestick"
                     );
@@ -1667,12 +1667,12 @@ impl CandlestickDataCreator {
                 .await;
 
                 dbtx.insert_entry(
-                    &db::MarketOutcomeNewestCandlestickKey {
+                    &db::MarketOutcomeNewestCandlestickVolumeKey {
                         market: self.market,
                         outcome: i as Outcome,
                         candlestick_interval,
                     },
-                    &(self.consensus_timestamp, candlestick),
+                    &(self.consensus_timestamp, candlestick.volume),
                 )
                 .await;
             }

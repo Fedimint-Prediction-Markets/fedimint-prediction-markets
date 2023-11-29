@@ -5,7 +5,7 @@ use fedimint_core::{impl_db_lookup, impl_db_record, Amount, OutPoint, PeerId};
 #[allow(unused_imports)]
 use fedimint_prediction_markets_common::{
     Candlestick, ContractAmount, Market, Order, Outcome, Payout, Seconds, Side, TimeOrdering,
-    UnixTimestamp,
+    UnixTimestamp, ContractOfOutcomeAmount
 };
 
 use secp256k1::XOnlyPublicKey;
@@ -62,8 +62,8 @@ pub enum DbKeyPrefix {
 
     /// (Market's [OutPoint], [Outcome], candlestick interval [Seconds], Candle's [UnixTimestamp]) to [Candlestick]
     MarketOutcomeCandlesticks = 0x25,
-    /// (Market's [OutPoint], [Outcome], candlestick interval [Seconds]) to (Candle's [UnixTimestamp], [Candlestick]) 
-    MarketOutcomeNewestCandlestick = 0x26,
+    /// (Market's [OutPoint], [Outcome], candlestick interval [Seconds]) to (Candle's [UnixTimestamp], [ContractOfOutcomeAmount]) 
+    MarketOutcomeNewestCandlestickVolume = 0x26,
 
     /// ----- 40-4f reserved for api lookup indexes -----
 
@@ -371,27 +371,27 @@ impl_db_lookup!(
     query_prefix = MarketOutcomeCandlesticksPrefix3,
 );
 
-// MarketOutcomeNewestCandlestick
+// MarketOutcomeNewestCandlestickVolume
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
-pub struct MarketOutcomeNewestCandlestickKey {
+pub struct MarketOutcomeNewestCandlestickVolumeKey {
     pub market: OutPoint,
     pub outcome: Outcome,
     pub candlestick_interval: Seconds,
 }
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct MarketOutcomeNewestCandlestickPrefixAll;
+pub struct MarketOutcomeNewestCandlestickVolumePrefixAll;
 
 impl_db_record!(
-    key = MarketOutcomeNewestCandlestickKey,
-    value = (UnixTimestamp, Candlestick),
-    db_prefix = DbKeyPrefix::MarketOutcomeNewestCandlestick,
+    key = MarketOutcomeNewestCandlestickVolumeKey,
+    value = (UnixTimestamp, ContractOfOutcomeAmount),
+    db_prefix = DbKeyPrefix::MarketOutcomeNewestCandlestickVolume,
     notify_on_modify = true
 );
 
 impl_db_lookup!(
-    key = MarketOutcomeNewestCandlestickKey,
-    query_prefix = MarketOutcomeNewestCandlestickPrefixAll
+    key = MarketOutcomeNewestCandlestickVolumeKey,
+    query_prefix = MarketOutcomeNewestCandlestickVolumePrefixAll
 );
 
 // template
