@@ -15,10 +15,10 @@ use fedimint_core::db::{DatabaseVersion, MigrationMap, ModuleDatabaseTransaction
 
 use fedimint_core::module::audit::Audit;
 use fedimint_core::module::{
-    api_endpoint, ApiEndpoint, ApiError, ConsensusProposal, CoreConsensusVersion,
-    ExtendsCommonModuleInit, InputMeta, IntoModuleError, ModuleConsensusVersion, ModuleError,
-    PeerHandle, ServerModuleInit, ServerModuleInitArgs, SupportedModuleApiVersions,
-    TransactionItemAmount,
+    api_endpoint, ApiEndpoint, ApiEndpointContext, ApiError, ConsensusProposal,
+    CoreConsensusVersion, ExtendsCommonModuleInit, InputMeta, IntoModuleError,
+    ModuleConsensusVersion, ModuleError, PeerHandle, ServerModuleInit, ServerModuleInitArgs,
+    SupportedModuleApiVersions, TransactionItemAmount,
 };
 use fedimint_core::server::DynServerModule;
 
@@ -887,7 +887,7 @@ impl ServerModule for PredictionMarkets {
             api_endpoint! {
                 "wait_market_outcome_candlesticks",
                 async |module: &PredictionMarkets, context, params: WaitMarketOutcomeCandlesticksParams| -> WaitMarketOutcomeCandlesticksResult {
-                    module.api_wait_market_outcome_candlesticks(&mut context.dbtx(), params).await
+                    module.api_wait_market_outcome_candlesticks(context, params).await
                 }
             },
         ]
@@ -917,24 +917,18 @@ impl PredictionMarkets {
         dbtx: &mut ModuleDatabaseTransaction<'_>,
         params: GetPayoutControlMarketsParams,
     ) -> Result<GetPayoutControlMarketsResult, ApiError> {
-        let mut markets = vec![];
-
-        let mut stream = dbtx
+        let markets = dbtx
             .find_by_prefix_sorted_descending(&db::PayoutControlMarketsPrefix1 {
                 payout_control: params.payout_control,
             })
+            .await
+            .map(|(k, _)| k)
+            .take_while(|k| {
+                future::ready(k.market_created < params.markets_created_after_and_including)
+            })
+            .map(|k| k.market)
+            .collect::<Vec<_>>()
             .await;
-        loop {
-            let Some((key, _)) = stream.next().await else {
-                break;
-            };
-
-            if key.market_created < params.markets_created_after_and_including {
-                break;
-            }
-
-            markets.push(key.market);
-        }
 
         Ok(GetPayoutControlMarketsResult { markets })
     }
@@ -947,7 +941,7 @@ impl PredictionMarkets {
         Ok(dbtx
             .find_by_prefix(&db::MarketPayoutControlProposalPrefix1 { market })
             .await
-            .map(|(key, value)| (key.payout_control, value))
+            .map(|(k, v)| (k.payout_control, v))
             .collect()
             .await)
     }
@@ -964,10 +958,10 @@ impl PredictionMarkets {
                 candlestick_interval: params.candlestick_interval,
             })
             .await
-            .take_while(|(key, _)| {
-                future::ready(key.candlestick_timestamp >= params.min_candlestick_timestamp)
+            .take_while(|(k, _)| {
+                future::ready(k.candlestick_timestamp >= params.min_candlestick_timestamp)
             })
-            .map(|(key, value)| (key.candlestick_timestamp, value))
+            .map(|(k, v)| (k.candlestick_timestamp, v))
             .collect::<Vec<(UnixTimestamp, Candlestick)>>()
             .await;
 
@@ -976,10 +970,38 @@ impl PredictionMarkets {
 
     async fn api_wait_market_outcome_candlesticks(
         &self,
-        dbtx: &mut ModuleDatabaseTransaction<'_>,
+        context: &mut ApiEndpointContext<'_>,
         params: WaitMarketOutcomeCandlesticksParams,
     ) -> Result<WaitMarketOutcomeCandlesticksResult, ApiError> {
-        unimplemented!()
+        let future = context.wait_value_matches(
+            db::MarketOutcomeNewestCandlestickVolumeKey {
+                market: params.market,
+                outcome: params.outcome,
+                candlestick_interval: params.candlestick_interval,
+            },
+            |(current_timestamp, current_volume)| {
+                current_volume != &params.candlestick_volume
+                    || current_timestamp != &params.candlestick_timestamp
+            },
+        );
+        _ = future.await;
+
+        let mut dbtx = context.dbtx();
+        let candlesticks = dbtx
+            .find_by_prefix_sorted_descending(&db::MarketOutcomeCandlesticksPrefix3 {
+                market: params.market,
+                outcome: params.outcome,
+                candlestick_interval: params.candlestick_interval,
+            })
+            .await
+            .take_while(|(k, _)| {
+                future::ready(k.candlestick_timestamp >= params.candlestick_timestamp)
+            })
+            .map(|(k, v)| (k.candlestick_timestamp, v))
+            .collect::<Vec<(UnixTimestamp, Candlestick)>>()
+            .await;
+
+        Ok(WaitMarketOutcomeCandlesticksResult { candlesticks })
     }
 }
 
