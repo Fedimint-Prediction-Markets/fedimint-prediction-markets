@@ -2,8 +2,10 @@ use std::collections::{BTreeMap, HashMap};
 use std::ffi;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::bail;
+use async_stream::stream;
 use bitcoin::Denomination;
 use db::OrderIdSlot;
 use fedimint_client::derivable_secret::{ChildId, DerivableSecret};
@@ -19,6 +21,8 @@ use fedimint_core::module::{
     ApiVersion, CommonModuleInit, ExtendsCommonModuleInit, ModuleCommon, MultiApiVersion,
     TransactionItemAmount,
 };
+use fedimint_core::util::BoxStream;
+use fedimint_prediction_markets_common::api::WaitMarketOutcomeCandlesticksParams;
 use fedimint_prediction_markets_common::{
     api::{
         GetMarketOutcomeCandlesticksParams, GetMarketOutcomeCandlesticksResult,
@@ -39,6 +43,7 @@ use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use secp256k1::{KeyPair, Secp256k1, XOnlyPublicKey};
 use states::PredictionMarketsStateMachine;
+use tokio::time::Instant;
 
 use crate::api::PredictionMarketsFederationApi;
 
@@ -48,7 +53,7 @@ mod states;
 
 /// Exposed API calls for client apps
 #[apply(async_trait_maybe_send!)]
-pub trait OddsMarketsClientExt {
+pub trait PredictionMarketsClientExt {
     /// Get payout control public key that client controls.
     fn get_payout_control_public_key(&self) -> XOnlyPublicKey;
 
@@ -154,6 +159,15 @@ pub trait OddsMarketsClientExt {
         min_candlestick_timestamp: UnixTimestamp,
     ) -> anyhow::Result<BTreeMap<UnixTimestamp, Candlestick>>;
 
+    async fn stream_candlesticks(
+        &self,
+        market: OutPoint,
+        outcome: Outcome,
+        candlestick_interval: Seconds,
+        min_candlestick_timestamp: UnixTimestamp,
+        min_wait_between_requests_milliseconds: u64,
+    ) -> BoxStream<'static, BTreeMap<UnixTimestamp, Candlestick>>;
+
     // Functions for interacting with client saved markets.
     async fn save_market(&self, market: OutPoint);
     async fn unsave_market(&self, market: OutPoint);
@@ -168,7 +182,7 @@ pub trait OddsMarketsClientExt {
 }
 
 #[apply(async_trait_maybe_send!)]
-impl OddsMarketsClientExt for Client {
+impl PredictionMarketsClientExt for Client {
     fn get_payout_control_public_key(&self) -> XOnlyPublicKey {
         let (prediction_markets, _) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
 
@@ -922,6 +936,56 @@ impl OddsMarketsClientExt for Client {
         let candlesticks = candlesticks.into_iter().collect::<BTreeMap<_, _>>();
 
         Ok(candlesticks)
+    }
+
+    async fn stream_candlesticks(
+        &self,
+        market: OutPoint,
+        outcome: Outcome,
+        candlestick_interval: Seconds,
+        min_candlestick_timestamp: UnixTimestamp,
+        min_wait_between_requests_milliseconds: u64,
+    ) -> BoxStream<'static, BTreeMap<UnixTimestamp, Candlestick>> {
+        let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+
+        let mut current_candlestick_timestamp = min_candlestick_timestamp;
+        let mut current_candlestick_volume = ContractOfOutcomeAmount::ZERO;
+        Box::pin(stream! {
+            loop {
+                let start_api_request = Instant::now();
+                let api_result = instance.api.wait_market_outcome_candlesticks(WaitMarketOutcomeCandlesticksParams {
+                    market,
+                    outcome,
+                    candlestick_interval,
+                    candlestick_timestamp: current_candlestick_timestamp,
+                    candlestick_volume: current_candlestick_volume,
+                }).await;
+
+                match api_result {
+                    Ok(r) => {
+                        let b = r.candlesticks.into_iter().collect::<BTreeMap<_, _>>();
+                        if b.len() != 0 {
+                            let (newest_candlestick_timestamp, newest_candlestick) = b.last_key_value().expect("should always be some");
+
+                            current_candlestick_timestamp = newest_candlestick_timestamp.to_owned();
+                            current_candlestick_volume = newest_candlestick.volume;
+
+                            yield b;
+                        }
+                    }
+                    Err(_) => {
+                        // wait some time on error
+                        tokio::time::sleep(Duration::from_secs(5)).await;
+                    }
+                }
+
+                tokio::time::sleep(
+                    Duration::from_millis(min_wait_between_requests_milliseconds).saturating_sub(
+                        Instant::now().duration_since(start_api_request)
+                    )
+                ).await;
+            }
+        })
     }
 
     async fn save_market(&self, market: OutPoint) {
