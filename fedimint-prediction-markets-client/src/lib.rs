@@ -702,8 +702,11 @@ impl PredictionMarketsClientExt for Client {
             }
         }
 
-        let mut total_amount = Amount::ZERO;
+        if orders_with_non_zero_bitcoin_balance.len() == 0 {
+            return Ok(Amount::ZERO);
+        }
 
+        let mut total_amount = Amount::ZERO;
         let mut tx = TransactionBuilder::new();
         for (order_id, order) in orders_with_non_zero_bitcoin_balance {
             let order_key = prediction_markets.order_id_to_key_pair(order_id);
