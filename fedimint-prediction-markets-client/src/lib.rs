@@ -47,7 +47,7 @@ use tokio::time::Instant;
 
 use crate::api::PredictionMarketsFederationApi;
 
-pub mod api;
+mod api;
 mod db;
 mod states;
 
