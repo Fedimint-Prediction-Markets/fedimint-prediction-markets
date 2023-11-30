@@ -307,15 +307,16 @@ pub struct Order {
 
     // during a payout, the contract price is payed out to orders accoring to this balance.
     // payouts empty this balance
+    // sells use this balance for funding
     pub contract_of_outcome_balance: ContractOfOutcomeAmount,
 
     // spendable by ConsumeOrderBitcoinBalance input
     pub bitcoin_balance: Amount,
 
-    // cost incurred by order matches
-    // buys (for positive prices) add to cost
-    // sells subtract from cost
-    pub bitcoin_cost: SignedAmount,
+    // bitcoin earned from order matches
+    // buys (for positive prices) subtract from this
+    // sells add to this
+    pub bitcoin_acquired: SignedAmount,
 }
 
 impl Order {

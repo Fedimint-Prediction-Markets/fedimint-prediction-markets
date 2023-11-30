@@ -642,7 +642,7 @@ impl ServerModule for PredictionMarkets {
 
                         order.contract_of_outcome_balance = ContractOfOutcomeAmount::ZERO;
                         order.bitcoin_balance = order.bitcoin_balance + order_payout;
-                        order.bitcoin_cost = order.bitcoin_cost - SignedAmount::from(order_payout);
+                        order.bitcoin_acquired = order.bitcoin_acquired + SignedAmount::from(order_payout);
 
                         dbtx.insert_entry(&db::OrderKey(order_owner), &order).await;
 
@@ -1102,7 +1102,7 @@ impl PredictionMarkets {
             contract_of_outcome_balance: ContractOfOutcomeAmount::ZERO,
             bitcoin_balance: Amount::ZERO,
 
-            bitcoin_cost: SignedAmount::ZERO,
+            bitcoin_acquired: SignedAmount::ZERO,
         };
 
         while order.quantity_waiting_for_match > ContractOfOutcomeAmount::ZERO {
@@ -1178,15 +1178,15 @@ impl PredictionMarkets {
                         order.bitcoin_balance = order.bitcoin_balance
                             + ((order.price - own_price) * satisfied_quantity.0);
 
-                        order.bitcoin_cost = order.bitcoin_cost
-                            + SignedAmount::from(own_price * satisfied_quantity.0);
+                        order.bitcoin_acquired = order.bitcoin_acquired
+                            - SignedAmount::from(own_price * satisfied_quantity.0);
                     }
                     Side::Sell => {
                         order.bitcoin_balance =
                             order.bitcoin_balance + (own_price * satisfied_quantity.0);
 
-                        order.bitcoin_cost = order.bitcoin_cost
-                            - SignedAmount::from(own_price * satisfied_quantity.0);
+                        order.bitcoin_acquired = order.bitcoin_acquired
+                            + SignedAmount::from(own_price * satisfied_quantity.0);
                     }
                 }
 
@@ -1229,8 +1229,8 @@ impl PredictionMarkets {
                                 .expect("should always convert")
                                 * satisfied_quantity.0);
 
-                        order.bitcoin_cost =
-                            order.bitcoin_cost + (other_price * satisfied_quantity.0);
+                        order.bitcoin_acquired =
+                            order.bitcoin_acquired - (other_price * satisfied_quantity.0);
 
                         market.open_contracts =
                             market.open_contracts + ContractAmount(satisfied_quantity.0);
@@ -1240,8 +1240,8 @@ impl PredictionMarkets {
                             + (Amount::try_from(other_price).expect("should always convert")
                                 * satisfied_quantity.0);
 
-                        order.bitcoin_cost =
-                            order.bitcoin_cost - (other_price * satisfied_quantity.0);
+                        order.bitcoin_acquired =
+                            order.bitcoin_acquired + (other_price * satisfied_quantity.0);
 
                         market.open_contracts =
                             market.open_contracts - ContractAmount(satisfied_quantity.0);
@@ -1412,15 +1412,15 @@ impl PredictionMarkets {
                 order.contract_of_outcome_balance =
                     order.contract_of_outcome_balance + satisfied_quantity;
 
-                order.bitcoin_cost =
-                    order.bitcoin_cost + SignedAmount::from(order.price * satisfied_quantity.0);
+                order.bitcoin_acquired =
+                    order.bitcoin_acquired - SignedAmount::from(order.price * satisfied_quantity.0);
             }
             Side::Sell => {
                 order.bitcoin_balance =
                     order.bitcoin_balance + (order.price * satisfied_quantity.0);
 
-                order.bitcoin_cost =
-                    order.bitcoin_cost - SignedAmount::from(order.price * satisfied_quantity.0);
+                order.bitcoin_acquired =
+                    order.bitcoin_acquired + SignedAmount::from(order.price * satisfied_quantity.0);
             }
         }
 
