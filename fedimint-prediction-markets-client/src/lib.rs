@@ -165,7 +165,7 @@ pub trait PredictionMarketsClientExt {
         outcome: Outcome,
         candlestick_interval: Seconds,
         min_candlestick_timestamp: UnixTimestamp,
-        min_wait_between_requests_milliseconds: u64,
+        min_duration_between_requests_milliseconds: u64,
     ) -> BoxStream<'static, BTreeMap<UnixTimestamp, Candlestick>>;
 
     // Functions for interacting with client saved markets.
@@ -937,7 +937,7 @@ impl PredictionMarketsClientExt for Client {
         outcome: Outcome,
         candlestick_interval: Seconds,
         min_candlestick_timestamp: UnixTimestamp,
-        min_wait_between_requests_milliseconds: u64,
+        min_duration_between_requests_milliseconds: u64,
     ) -> BoxStream<'static, BTreeMap<UnixTimestamp, Candlestick>> {
         let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
 
@@ -973,7 +973,7 @@ impl PredictionMarketsClientExt for Client {
                 }
 
                 tokio::time::sleep(
-                    Duration::from_millis(min_wait_between_requests_milliseconds).saturating_sub(
+                    Duration::from_millis(min_duration_between_requests_milliseconds).saturating_sub(
                         Instant::now().duration_since(start_api_request)
                     )
                 ).await;
