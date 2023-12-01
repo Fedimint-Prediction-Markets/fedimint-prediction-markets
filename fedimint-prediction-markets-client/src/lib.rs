@@ -55,7 +55,7 @@ mod states;
 #[apply(async_trait_maybe_send!)]
 pub trait PredictionMarketsClientExt {
     /// Get payout control public key that client controls.
-    fn get_payout_control_public_key(&self) -> XOnlyPublicKey;
+    fn get_client_payout_control(&self) -> XOnlyPublicKey;
 
     /// Create new market
     async fn new_market(
@@ -74,12 +74,12 @@ pub trait PredictionMarketsClientExt {
         from_local_cache: bool,
     ) -> anyhow::Result<Option<Market>>;
 
-    /// Get all market [OutPoint]s that our payout control key has some sort of authority over.
+    /// Get all market [OutPoint]s that the client payout control has some sort of authority over.
     ///
     /// Returns (market creation time) to (market outpoint)
-    async fn get_payout_control_markets(
+    async fn get_client_payout_control_markets(
         &self,
-        sync_new_markets: bool,
+        from_local_cache: bool,
         markets_created_after_and_including: UnixTimestamp,
     ) -> anyhow::Result<BTreeMap<UnixTimestamp, OutPoint>>;
 
@@ -183,7 +183,7 @@ pub trait PredictionMarketsClientExt {
 
 #[apply(async_trait_maybe_send!)]
 impl PredictionMarketsClientExt for Client {
-    fn get_payout_control_public_key(&self) -> XOnlyPublicKey {
+    fn get_client_payout_control(&self) -> XOnlyPublicKey {
         let (prediction_markets, _) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
 
         let key = prediction_markets.get_payout_control_key_pair();
@@ -295,35 +295,30 @@ impl PredictionMarketsClientExt for Client {
         }
     }
 
-    async fn get_payout_control_markets(
+    async fn get_client_payout_control_markets(
         &self,
-        sync_new_markets: bool,
+        from_local_cache: bool,
         markets_created_after_and_including: UnixTimestamp,
     ) -> anyhow::Result<BTreeMap<UnixTimestamp, OutPoint>> {
-        let (prediction_markets, instance) =
-            self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+        let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
 
+        let payout_control = self.get_client_payout_control();
         let mut dbtx = instance.db.begin_transaction().await;
 
-        if sync_new_markets {
-            let payout_control =
-                XOnlyPublicKey::from_keypair(&prediction_markets.get_payout_control_key_pair()).0;
-            let markets_created_after_and_including = {
-                let mut stream = dbtx
-                    .find_by_prefix_sorted_descending(&db::PayoutControlMarketsPrefixAll)
-                    .await;
+        if !from_local_cache {
+            let newest_market_in_db = dbtx
+                .find_by_prefix_sorted_descending(&db::ClientPayoutControlMarketsPrefixAll)
+                .await
+                .next()
+                .await
+                .map(|(key, _)| key.market_created)
+                .unwrap_or(UnixTimestamp::ZERO);
 
-                stream
-                    .next()
-                    .await
-                    .map(|(key, _)| key.market_created)
-                    .unwrap_or(UnixTimestamp::ZERO)
-            };
             let get_payout_control_markets_result = instance
                 .api
                 .get_payout_control_markets(GetPayoutControlMarketsParams {
                     payout_control,
-                    markets_created_after_and_including,
+                    markets_created_after_and_including: newest_market_in_db,
                 })
                 .await?;
 
@@ -334,7 +329,7 @@ impl PredictionMarketsClientExt for Client {
                     .expect("should always produce market");
 
                 dbtx.insert_entry(
-                    &db::PayoutControlMarketsKey {
+                    &db::ClientPayoutControlMarketsKey {
                         market_created: market.created_consensus_timestamp,
                         market: market_out_point,
                     },
@@ -344,22 +339,17 @@ impl PredictionMarketsClientExt for Client {
             }
         }
 
-        let mut market_stream_newest_first = dbtx
-            .find_by_prefix_sorted_descending(&db::PayoutControlMarketsPrefixAll)
+        let payout_control_markets = dbtx
+            .find_by_prefix_sorted_descending(&db::ClientPayoutControlMarketsPrefixAll)
+            .await
+            .map(|(k, _)| (k.market_created, k.market))
+            .take_while(|(market_created, _)| {
+                let market_created = market_created.to_owned();
+                async move { market_created >= markets_created_after_and_including }
+            })
+            .collect::<BTreeMap<_, _>>()
             .await;
-        let mut payout_control_markets = BTreeMap::new();
-        loop {
-            let Some((key, _)) = market_stream_newest_first.next().await else {
-                break;
-            };
-            if key.market_created < markets_created_after_and_including {
-                break;
-            }
 
-            payout_control_markets.insert(key.market_created, key.market);
-        }
-
-        drop(market_stream_newest_first);
         dbtx.commit_tx().await;
 
         Ok(payout_control_markets)
@@ -1263,7 +1253,7 @@ impl ClientModule for PredictionMarketsClientModule {
         client: &Client,
         args: &[ffi::OsString],
     ) -> anyhow::Result<serde_json::Value> {
-        const SUPPORTED_COMMANDS: &str = "new-market, get-market, new-order, get-order, cancel-order, sync-orders, get-payout-control-public-key, get-candlesticks, recover-orders, withdraw-available-bitcoin, list-orders, propose-payout, get-market-payout-control-proposals, get-payout-control-markets";
+        const SUPPORTED_COMMANDS: &str = "new-market, get-market, new-order, get-order, cancel-order, sync-orders, get-client-payout-control, get-candlesticks, recover-orders, withdraw-available-bitcoin, list-orders, propose-payout, get-market-payout-control-proposals, get-client-payout-control-markets";
 
         if args.is_empty() {
             bail!("Expected to be called with at least 1 argument: <command> …")
@@ -1272,14 +1262,12 @@ impl ClientModule for PredictionMarketsClientModule {
         let command = args[0].to_string_lossy();
 
         match command.as_ref() {
-            "get-payout-control-public-key" => {
+            "get-client-payout-control" => {
                 if args.len() != 1 {
-                    bail!("`get-payout-control-public-key` expects 0 arguments")
+                    bail!("`get-client-payout-control` expects 0 arguments")
                 }
 
-                Ok(serde_json::to_value(
-                    client.get_payout_control_public_key(),
-                )?)
+                Ok(serde_json::to_value(client.get_client_payout_control())?)
             }
 
             "new-market" => {
@@ -1292,7 +1280,7 @@ impl ClientModule for PredictionMarketsClientModule {
                 let outcomes: Outcome = args[2].to_string_lossy().parse()?;
 
                 let mut payout_control_weights = BTreeMap::new();
-                payout_control_weights.insert(client.get_payout_control_public_key(), 1);
+                payout_control_weights.insert(client.get_client_payout_control(), 1);
 
                 let weight_required = 1;
 
@@ -1341,13 +1329,13 @@ impl ClientModule for PredictionMarketsClientModule {
                 )?)
             }
 
-            "get-payout-control-markets" => {
-                if args.len() != 1 && args.len() != 2 {
-                    bail!("`get-payout-control-markets` expects 0 arguments")
+            "get-client-payout-control-markets" => {
+                if args.len() != 1 {
+                    bail!("`get-client-payout-control-markets` expects 0 arguments")
                 }
 
                 let payout_control_markets = client
-                    .get_payout_control_markets(true, UnixTimestamp::ZERO)
+                    .get_client_payout_control_markets(false, UnixTimestamp::ZERO)
                     .await?
                     .into_iter()
                     .map(|(_, market)| market)

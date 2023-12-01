@@ -31,7 +31,7 @@ pub enum DbKeyPrefix {
     /// Markets that our payout control key has some portion of control over.
     ///
     /// (Market's creation time [UnixTimestamp], Market's [OutPoint]) to ()
-    PayoutControlMarkets = 0x20,
+    ClientPayoutControlMarkets = 0x20,
 
     /// Orders by market outcome
     ///
@@ -125,25 +125,25 @@ impl_db_lookup!(
     query_prefix = MarketPayoutControlProposalPrefix1
 );
 
-// PayoutControlMarkets
+// ClientPayoutControlMarkets
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash)]
-pub struct PayoutControlMarketsKey {
+pub struct ClientPayoutControlMarketsKey {
     pub market_created: UnixTimestamp,
     pub market: OutPoint,
 }
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct PayoutControlMarketsPrefixAll;
+pub struct ClientPayoutControlMarketsPrefixAll;
 
 impl_db_record!(
-    key = PayoutControlMarketsKey,
+    key = ClientPayoutControlMarketsKey,
     value = (),
-    db_prefix = DbKeyPrefix::PayoutControlMarkets,
+    db_prefix = DbKeyPrefix::ClientPayoutControlMarkets,
 );
 
 impl_db_lookup!(
-    key = PayoutControlMarketsKey,
-    query_prefix = PayoutControlMarketsPrefixAll
+    key = ClientPayoutControlMarketsKey,
+    query_prefix = ClientPayoutControlMarketsPrefixAll
 );
 
 // OrdersByMarketOutcome

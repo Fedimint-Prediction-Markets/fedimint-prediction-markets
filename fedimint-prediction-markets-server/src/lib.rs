@@ -924,7 +924,7 @@ impl PredictionMarkets {
             .await
             .map(|(k, _)| k)
             .take_while(|k| {
-                future::ready(k.market_created < params.markets_created_after_and_including)
+                future::ready(k.market_created >= params.markets_created_after_and_including)
             })
             .map(|k| k.market)
             .collect::<Vec<_>>()

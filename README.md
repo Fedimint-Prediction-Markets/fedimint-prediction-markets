@@ -109,6 +109,6 @@ bash-5.2$ fedimint-cli module --module prediction-markets list-orders
 ```bash
 bash-5.2$ fedimint-cli module --module prediction-markets help
 {
-  "supported_commands": "new-market, get-market, new-order, get-order, cancel-order, sync-orders, get-payout-control-public-key, get-candlesticks, recover-orders, withdraw-available-bitcoin, list-orders, propose-payout, get-market-payout-control-proposals, get-payout-control-markets"
+  "supported_commands": "new-market, get-market, new-order, get-order, cancel-order, sync-orders, get-client-payout-control, get-candlesticks, recover-orders, withdraw-available-bitcoin, list-orders, propose-payout, get-market-payout-control-proposals, get-client-payout-control-markets"
 }
 ```
