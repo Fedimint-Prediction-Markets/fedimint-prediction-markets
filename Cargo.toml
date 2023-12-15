@@ -28,9 +28,9 @@ fedimint-client = { git = "https://github.com/fedimint/fedimint", tag = "v0.1.4"
 fedimint-logging = { git = "https://github.com/fedimint/fedimint", tag = "v0.1.4" }
 fedimint-server = { git = "https://github.com/fedimint/fedimint", tag = "v0.1.4" }
 devimint = { git = "https://github.com/fedimint/fedimint", tag = "v0.1.4" }
-aead = { git = "https://github.com/fedimint/fedimint", tag = "v0.1.4" }
-fedimint-threshold-crypto = { git = "https://github.com/fedimint/threshold_crypto" }
-tbs = { git = "https://github.com/fedimint/fedimint", tag = "v0.1.4" }
+# aead = { git = "https://github.com/fedimint/fedimint", tag = "v0.1.4" }
+# fedimint-threshold-crypto = { git = "https://github.com/fedimint/threshold_crypto" }
+# tbs = { git = "https://github.com/fedimint/fedimint", tag = "v0.1.4" }
 
 # Comment above lines and uncomment these to work with local fedimint dependencies
 # fedimintd = { path = "../fedimint/fedimintd" }
