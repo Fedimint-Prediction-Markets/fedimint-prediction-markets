@@ -294,6 +294,16 @@ impl ServerModuleInit for PredictionMarketsGen {
                         "MarketOutcomeNewestCandlestick"
                     );
                 }
+                DbKeyPrefix::PayoutControlBalance => {
+                    push_db_pair_items!(
+                        dbtx,
+                        db::PayoutControlBalancePrefixAll,
+                        db::PayoutControlBalanceKey,
+                        Amount,
+                        items,
+                        "PayoutControlBalance"
+                    );
+                }
             }
         }
 
@@ -482,7 +492,7 @@ impl ServerModule for PredictionMarkets {
 
                 // set input meta
                 amount = amount_to_consume.to_owned();
-                fee = self.cfg.consensus.gc.consumer_order_bitcoin_balance_fee;
+                fee = self.cfg.consensus.gc.consume_order_bitcoin_balance_fee;
                 pub_keys = vec![order_owner.to_owned()];
 
                 // update order's bitcoin balance
@@ -591,31 +601,35 @@ impl ServerModule for PredictionMarkets {
                 )
                 .await;
 
-                let payout_triggered = {
-                    let payout_controls_with_proposal: Vec<_> = dbtx
-                        .find_by_prefix(&db::MarketOutcomePayoutsProposalsPrefix2 {
-                            market: market_out_point.to_owned(),
-                            outcome_payouts: outcome_payouts.to_owned(),
+                // get all payout controls that have proposed the same outcome payout
+                let payout_controls_with_equal_outcome_payouts: Vec<_> = dbtx
+                    .find_by_prefix(&db::MarketOutcomePayoutsProposalsPrefix2 {
+                        market: market_out_point.to_owned(),
+                        outcome_payouts: outcome_payouts.to_owned(),
+                    })
+                    .await
+                    .map(|(key, _)| key.payout_control)
+                    .collect()
+                    .await;
+
+                let sum_weight_of_equal_outcome_payouts: WeightRequiredForPayout =
+                    payout_controls_with_equal_outcome_payouts
+                        .iter()
+                        .map(|payout_control| {
+                            let weight = market
+                                .payout_controls_weights
+                                .get(&payout_control)
+                                .expect("should always find payout_control");
+
+                            WeightRequiredForPayout::from(weight.to_owned())
                         })
-                        .await
-                        .map(|(key, _)| key.payout_control)
-                        .collect()
-                        .await;
+                        .sum();
 
-                    let mut total_weight_of_votes: WeightRequiredForPayout = 0;
-                    for payout_control in payout_controls_with_proposal {
-                        let weight = market
-                            .payout_controls_weights
-                            .get(&payout_control)
-                            .expect("should always find payout_control");
-                        total_weight_of_votes += WeightRequiredForPayout::from(weight.to_owned())
-                    }
+                // if payout weight threshold has been met...
+                if sum_weight_of_equal_outcome_payouts >= market.weight_required_for_payout {
+                    // process order payouts
+                    let mut assert_test_total_orders_payout = Amount::ZERO;
 
-                    total_weight_of_votes >= market.weight_required_for_payout
-                };
-
-                if payout_triggered {
-                    // process payout
                     let market_orders: Vec<_> = dbtx
                         .find_by_prefix(&db::OrdersByMarketPrefix1 {
                             market: market_out_point.to_owned(),
@@ -625,7 +639,6 @@ impl ServerModule for PredictionMarkets {
                         .collect()
                         .await;
 
-                    let mut total_payout = Amount::ZERO;
                     for order_owner in market_orders {
                         let mut order = dbtx
                             .get_value(&db::OrderKey(order_owner))
@@ -637,21 +650,61 @@ impl ServerModule for PredictionMarkets {
                         let payout_per_contract_of_outcome = outcome_payouts
                             .get(usize::from(order.outcome))
                             .expect("should be some");
-                        let order_payout = payout_per_contract_of_outcome.to_owned()
+                        let payout = payout_per_contract_of_outcome.to_owned()
                             * order.contract_of_outcome_balance.0;
 
                         order.contract_of_outcome_balance = ContractOfOutcomeAmount::ZERO;
-                        order.bitcoin_balance = order.bitcoin_balance + order_payout;
-                        order.bitcoin_acquired = order.bitcoin_acquired + SignedAmount::from(order_payout);
+                        order.bitcoin_balance = order.bitcoin_balance + payout;
+                        order.bitcoin_acquired =
+                            order.bitcoin_acquired + SignedAmount::from(payout);
 
                         dbtx.insert_entry(&db::OrderKey(order_owner), &order).await;
 
-                        total_payout = total_payout + order_payout;
+                        assert_test_total_orders_payout += payout;
                     }
 
+                    // process payout control fee payout
+                    let mut assert_test_total_payout_control_fee_payout = Amount::ZERO;
+
+                    let total_payout_control_fee =
+                        market.payout_controls_fee_per_contract * market.open_contracts.0;
+                    let payout_per_weight_quotient = total_payout_control_fee
+                        / Amount::from_msats(sum_weight_of_equal_outcome_payouts.into());
+                    let mut payout_per_weight_remainder = total_payout_control_fee
+                        % Amount::from_msats(sum_weight_of_equal_outcome_payouts.into());
+
+                    for payout_control in payout_controls_with_equal_outcome_payouts {
+                        let weight = market
+                            .payout_controls_weights
+                            .get(&payout_control)
+                            .expect("should always find payout_control");
+
+                        let payout = {
+                            let from_quotient = Amount::from_msats(
+                                payout_per_weight_quotient * u64::from(weight.to_owned()),
+                            );
+
+                            let from_remainder = Amount::from_msats(
+                                u64::from(weight.to_owned()).min(payout_per_weight_remainder.msats),
+                            );
+                            payout_per_weight_remainder -= from_remainder;
+
+                            from_quotient + from_remainder
+                        };
+
+                        let db_key = db::PayoutControlBalanceKey { payout_control };
+                        let current_balance = dbtx.get_value(&db_key).await.unwrap_or(Amount::ZERO);
+                        let new_balance = current_balance + payout;
+                        dbtx.insert_entry(&db_key, &new_balance).await;
+
+                        assert_test_total_payout_control_fee_payout += payout;
+                    }
+
+                    // payout total assert
                     assert_eq!(
                         market.contract_price * market.open_contracts.0,
-                        total_payout
+                        assert_test_total_orders_payout
+                            + assert_test_total_payout_control_fee_payout
                     );
 
                     // save payout to market
@@ -663,6 +716,41 @@ impl ServerModule for PredictionMarkets {
                     dbtx.insert_new_entry(&db::MarketKey(market_out_point.to_owned()), &market)
                         .await;
                 }
+            }
+            PredictionMarketsInput::ConsumePayoutControlBitcoinBalance {
+                payout_control,
+                amount: amount_to_consume,
+            } => {
+                let mut balance = dbtx
+                    .get_value(&db::PayoutControlBalanceKey {
+                        payout_control: payout_control.to_owned(),
+                    })
+                    .await
+                    .unwrap_or(Amount::ZERO);
+
+                // check if order has sufficent balance
+                if &balance < amount_to_consume {
+                    return Err(PredictionMarketsError::NotEnoughFunds).into_module_error_other();
+                }
+
+                // set input meta
+                amount = amount_to_consume.to_owned();
+                fee = self
+                    .cfg
+                    .consensus
+                    .gc
+                    .consume_payout_control_bitcoin_balance_fee;
+                pub_keys = vec![payout_control.to_owned()];
+
+                // update order's bitcoin balance
+                balance = balance - amount_to_consume.to_owned();
+                dbtx.insert_entry(
+                    &db::PayoutControlBalanceKey {
+                        payout_control: payout_control.to_owned(),
+                    },
+                    &balance,
+                )
+                .await;
             }
         }
 
@@ -688,6 +776,7 @@ impl ServerModule for PredictionMarkets {
                 outcomes,
                 payout_control_weights,
                 weight_required_for_payout,
+                payout_controls_fee_per_contract,
                 information,
             } => {
                 // verify market params
@@ -698,6 +787,7 @@ impl ServerModule for PredictionMarkets {
                     contract_price,
                     outcomes,
                     payout_control_weights,
+                    payout_controls_fee_per_contract,
                     information,
                 ) {
                     return Err(PredictionMarketsError::MarketValidationFailed)
@@ -726,6 +816,8 @@ impl ServerModule for PredictionMarkets {
                         payout_controls_weights: payout_control_weights.to_owned(),
                         weight_required_for_payout: weight_required_for_payout.to_owned(),
                         information: information.to_owned(),
+                        payout_controls_fee_per_contract: payout_controls_fee_per_contract
+                            .to_owned(),
                         created_consensus_timestamp: consensus_timestamp,
 
                         open_contracts: ContractAmount::ZERO,
@@ -890,6 +982,12 @@ impl ServerModule for PredictionMarkets {
                     module.api_wait_market_outcome_candlesticks(context, params).await
                 }
             },
+            api_endpoint! {
+                "get_payout_control_balance",
+                async |module: &PredictionMarkets, context, payout_control: XOnlyPublicKey| -> Amount {
+                    module.api_get_payout_control_balance(&mut context.dbtx(), payout_control).await
+                }
+            },
         ]
     }
 }
@@ -1002,6 +1100,17 @@ impl PredictionMarkets {
             .await;
 
         Ok(WaitMarketOutcomeCandlesticksResult { candlesticks })
+    }
+
+    async fn api_get_payout_control_balance(
+        &self,
+        dbtx: &mut ModuleDatabaseTransaction<'_>,
+        payout_control: XOnlyPublicKey,
+    ) -> Result<Amount, ApiError> {
+        Ok(dbtx
+            .get_value(&db::PayoutControlBalanceKey { payout_control })
+            .await
+            .unwrap_or(Amount::ZERO))
     }
 }
 

@@ -51,6 +51,13 @@ pub enum PredictionMarketsStateMachine {
     },
     ConsumeOrderBitcoinBalanceAccepted(OperationId),
     ConsumeOrderBitcoinBalanceFailed(OperationId),
+
+    ConsumePayoutControlBitcoinBalance {
+        operation_id: OperationId,
+        tx_id: TransactionId,
+    },
+    ConsumePayoutControlBitcoinBalanceAccepted(OperationId),
+    ConsumePayoutControlBitcoinBalanceFailed(OperationId),
 }
 
 impl State for PredictionMarketsStateMachine {
@@ -199,6 +206,31 @@ impl State for PredictionMarketsStateMachine {
             }
             Self::ConsumeOrderBitcoinBalanceAccepted(_) => vec![],
             Self::ConsumeOrderBitcoinBalanceFailed(_) => vec![],
+
+            Self::ConsumePayoutControlBitcoinBalance {
+                operation_id,
+                tx_id,
+            } => {
+                vec![StateTransition::new(
+                    await_tx_accepted(global_context.clone(), operation_id, tx_id),
+                    move |_dbtx, res, _state: Self| match res {
+                        // tx accepted
+                        Ok(_) => Box::pin(async move {
+                            PredictionMarketsStateMachine::ConsumePayoutControlBitcoinBalanceAccepted(
+                                operation_id,
+                            )
+                        }),
+                        // tx rejected
+                        Err(_) => Box::pin(async move {
+                            PredictionMarketsStateMachine::ConsumePayoutControlBitcoinBalanceFailed(
+                                operation_id,
+                            )
+                        }),
+                    },
+                )]
+            }
+            Self::ConsumePayoutControlBitcoinBalanceAccepted(_) => vec![],
+            Self::ConsumePayoutControlBitcoinBalanceFailed(_) => vec![],
         }
     }
 
@@ -242,6 +274,13 @@ impl State for PredictionMarketsStateMachine {
             } => *operation_id,
             Self::ConsumeOrderBitcoinBalanceAccepted(operation_id) => *operation_id,
             Self::ConsumeOrderBitcoinBalanceFailed(operation_id) => *operation_id,
+
+            Self::ConsumePayoutControlBitcoinBalance {
+                operation_id,
+                tx_id: _,
+            } => *operation_id,
+            Self::ConsumePayoutControlBitcoinBalanceAccepted(operation_id) => *operation_id,
+            Self::ConsumePayoutControlBitcoinBalanceFailed(operation_id) => *operation_id,
         }
     }
 }

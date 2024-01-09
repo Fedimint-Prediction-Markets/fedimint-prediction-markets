@@ -64,6 +64,7 @@ pub trait PredictionMarketsClientExt {
         outcomes: Outcome,
         payout_control_weights: BTreeMap<XOnlyPublicKey, Weight>,
         weight_required_for_payout: WeightRequiredForPayout,
+        payout_controls_fee_per_contract: Amount,
         information: MarketInformation,
     ) -> anyhow::Result<OutPoint>;
 
@@ -174,11 +175,17 @@ pub trait PredictionMarketsClientExt {
     // return map: saved timestamp to market.
     async fn get_saved_markets(&self) -> BTreeMap<UnixTimestamp, OutPoint>;
 
-    // Functions for interacting with client named payout control keys
+    // Functions for interacting with client named payout controls
     async fn assign_name_to_payout_control(&self, payout_control: XOnlyPublicKey, name: String);
     async fn unassign_name_from_payout_control(&self, payout_control: XOnlyPublicKey);
     async fn get_payout_control_name(&self, payout_control: XOnlyPublicKey) -> Option<String>;
     async fn get_payout_control_name_map(&self) -> HashMap<XOnlyPublicKey, String>;
+
+    /// Spend all bitcoin balance of client payout control to primary module
+    ///
+    /// Returns how much bitcoin was sent
+    async fn send_payout_control_bitcoin_balance_to_primary_module(&self)
+        -> anyhow::Result<Amount>;
 }
 
 #[apply(async_trait_maybe_send!)]
@@ -197,6 +204,7 @@ impl PredictionMarketsClientExt for Client {
         outcomes: Outcome,
         payout_control_weights: BTreeMap<XOnlyPublicKey, Weight>,
         weight_required_for_payout: WeightRequiredForPayout,
+        payout_controls_fee_per_contract: Amount,
         information: MarketInformation,
     ) -> anyhow::Result<OutPoint> {
         let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
@@ -208,6 +216,7 @@ impl PredictionMarketsClientExt for Client {
                 outcomes,
                 payout_control_weights,
                 weight_required_for_payout,
+                payout_controls_fee_per_contract,
                 information,
             },
             state_machines: Arc::new(move |tx_id, _| {
@@ -1046,6 +1055,56 @@ impl PredictionMarketsClientExt for Client {
             .collect()
             .await
     }
+
+    async fn send_payout_control_bitcoin_balance_to_primary_module(
+        &self,
+    ) -> anyhow::Result<Amount> {
+        let (prediction_markets, instance) =
+            self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+        let operation_id = OperationId::new_random();
+
+        let payout_control_balance = instance
+            .api
+            .get_payout_control_balance(self.get_client_payout_control())
+            .await?;
+
+        if payout_control_balance == Amount::ZERO {
+            return Ok(payout_control_balance);
+        }
+
+        let mut tx = TransactionBuilder::new();
+        let input = ClientInput {
+            input: PredictionMarketsInput::ConsumePayoutControlBitcoinBalance {
+                payout_control: self.get_client_payout_control(),
+                amount: payout_control_balance,
+            },
+            state_machines: Arc::new(move |tx_id, _| {
+                vec![
+                    PredictionMarketsStateMachine::ConsumePayoutControlBitcoinBalance {
+                        operation_id,
+                        tx_id,
+                    },
+                ]
+            }),
+            keys: vec![prediction_markets.get_payout_control_key_pair()],
+        };
+        tx = tx.with_input(input.into_dyn(instance.id));
+
+        let outpoint = |txid, _| OutPoint { txid, out_idx: 0 };
+        let txid = self
+            .finalize_and_submit_transaction(
+                operation_id,
+                PredictionMarketsCommonGen::KIND.as_str(),
+                outpoint,
+                tx,
+            )
+            .await?;
+
+        let tx_subscription = self.transaction_updates(operation_id).await;
+        tx_subscription.await_tx_accepted(txid).await?;
+
+        Ok(payout_control_balance)
+    }
 }
 
 #[derive(Debug)]
@@ -1198,7 +1257,7 @@ impl ClientModule for PredictionMarketsClientModule {
                 amount: amount_to_free,
             } => {
                 amount = amount_to_free.to_owned();
-                fee = self.cfg.gc.consumer_order_bitcoin_balance_fee;
+                fee = self.cfg.gc.consume_order_bitcoin_balance_fee;
             }
             PredictionMarketsInput::NewSellOrder {
                 owner: _,
@@ -1209,6 +1268,13 @@ impl ClientModule for PredictionMarketsClientModule {
             } => {
                 amount = Amount::ZERO;
                 fee = self.cfg.gc.new_order_fee;
+            }
+            PredictionMarketsInput::ConsumePayoutControlBitcoinBalance {
+                payout_control: _,
+                amount: amount_to_free,
+            } => {
+                amount = amount_to_free.to_owned();
+                fee = self.cfg.gc.consume_payout_control_bitcoin_balance_fee;
             }
         }
 
@@ -1228,6 +1294,7 @@ impl ClientModule for PredictionMarketsClientModule {
                 outcomes: _,
                 payout_control_weights: _,
                 weight_required_for_payout: _,
+                payout_controls_fee_per_contract: _,
                 information: _,
             } => {
                 amount = Amount::ZERO;
@@ -1271,13 +1338,15 @@ impl ClientModule for PredictionMarketsClientModule {
             }
 
             "new-market" => {
-                if args.len() != 3 {
-                    bail!("`new-market` command expects 2 arguments: <contract_price_msats> <outcomes>")
+                if args.len() != 4 {
+                    bail!("`new-market` command expects 3 arguments: <outcomes> <contract_price_msats> <payout_controls_fee_per_contract_msats>")
                 }
 
+                let outcomes: Outcome = args[1].to_string_lossy().parse()?;
                 let contract_price =
-                    Amount::from_str_in(&args[1].to_string_lossy(), Denomination::MilliSatoshi)?;
-                let outcomes: Outcome = args[2].to_string_lossy().parse()?;
+                    Amount::from_str_in(&args[2].to_string_lossy(), Denomination::MilliSatoshi)?;
+                let payout_controls_fee_per_contract =
+                    Amount::from_str_in(&args[3].to_string_lossy(), Denomination::MilliSatoshi)?;
 
                 let mut payout_control_weights = BTreeMap::new();
                 payout_control_weights.insert(client.get_client_payout_control(), 1);
@@ -1290,6 +1359,7 @@ impl ClientModule for PredictionMarketsClientModule {
                         outcomes,
                         payout_control_weights,
                         weight_required,
+                        payout_controls_fee_per_contract,
                         MarketInformation {
                             title: "my market".to_owned(),
                             description: "this is my market".to_owned(),
@@ -1469,11 +1539,21 @@ impl ClientModule for PredictionMarketsClientModule {
                     bail!("`withdraw-available-bitcoin` command expects 0 arguments")
                 }
 
-                Ok(serde_json::to_value(
+                let mut m = HashMap::new();
+                m.insert(
+                    "withdrawed_from_orders",
                     client
                         .send_order_bitcoin_balance_to_primary_module()
                         .await?,
-                )?)
+                );
+                m.insert(
+                    "withdrawed_from_payout_control",
+                    client
+                        .send_payout_control_bitcoin_balance_to_primary_module()
+                        .await?,
+                );
+
+                Ok(serde_json::to_value(m)?)
             }
 
             "sync-orders" => {

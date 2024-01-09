@@ -22,7 +22,7 @@ use crate::{
 #[repr(u8)]
 #[derive(Clone, EnumIter, Debug)]
 pub enum DbKeyPrefix {
-    /// ----- 00-1f reserved for struct storage -----
+    /// ----- 00-1f reserved for general information storage -----
 
     /// [PredictionMarketsOutput] [OutPoint] to [PredictionMarketsOutputOutcome]
     Outcome = 0x00,
@@ -32,6 +32,9 @@ pub enum DbKeyPrefix {
 
     /// Owner's [XOnlyPublicKey] to [Order]
     Order = 0x02,
+
+    /// Payout Control's [XOnlyPublicKey] to [Amount]
+    PayoutControlBalance = 0x03,
 
     /// ----- 20-3f reserved for market operation -----
 
@@ -73,13 +76,13 @@ pub enum DbKeyPrefix {
     /// ([XOnlyPublicKey], [UnixTimestamp], Market's [OutPoint]) to ()
     PayoutControlMarkets = 0x40,
 
-    /// ----- 50-5f reserved for consensus items -----
+    /// ----- 60-6f reserved for consensus items -----
 
     /// Stores timestamps proposed by peers.
     /// Used to create consensus timestamps.
     ///
     /// [PeerId] to [UnixTimestamp]
-    PeersProposedTimestamp = 0x51,
+    PeersProposedTimestamp = 0x60,
 }
 
 impl std::fmt::Display for DbKeyPrefix {
@@ -392,6 +395,26 @@ impl_db_record!(
 impl_db_lookup!(
     key = MarketOutcomeNewestCandlestickVolumeKey,
     query_prefix = MarketOutcomeNewestCandlestickVolumePrefixAll
+);
+
+// PayoutControlBalance
+#[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
+pub struct PayoutControlBalanceKey {
+    pub payout_control: XOnlyPublicKey,
+}
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct PayoutControlBalancePrefixAll;
+
+impl_db_record!(
+    key = PayoutControlBalanceKey,
+    value = Amount,
+    db_prefix = DbKeyPrefix::PayoutControlBalance,
+);
+
+impl_db_lookup!(
+    key = PayoutControlBalanceKey,
+    query_prefix = PayoutControlBalancePrefixAll
 );
 
 // template

@@ -31,8 +31,9 @@ impl Default for PredictionMarketsGenParams {
                     // fees
                     new_market_fee: Amount::from_sats(25),
                     new_order_fee: Amount::from_msats(1000),
-                    consumer_order_bitcoin_balance_fee: Amount::from_msats(10),
+                    consume_order_bitcoin_balance_fee: Amount::from_msats(10),
                     payout_proposal_fee: Amount::from_msats(100),
+                    consume_payout_control_bitcoin_balance_fee: Amount::from_msats(10),
 
                     // markets
                     max_contract_price: Amount::from_sats(100_000_000),
@@ -112,8 +113,9 @@ pub struct GeneralConsensus {
     // fees
     pub new_market_fee: Amount,
     pub new_order_fee: Amount,
-    pub consumer_order_bitcoin_balance_fee: Amount,
+    pub consume_order_bitcoin_balance_fee: Amount,
     pub payout_proposal_fee: Amount,
+    pub consume_payout_control_bitcoin_balance_fee: Amount,
 
     // markets
     pub max_contract_price: Amount,

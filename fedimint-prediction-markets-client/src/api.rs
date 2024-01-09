@@ -37,6 +37,10 @@ pub trait PredictionMarketsFederationApi {
         &self,
         params: WaitMarketOutcomeCandlesticksParams,
     ) -> FederationResult<WaitMarketOutcomeCandlesticksResult>;
+    async fn get_payout_control_balance(
+        &self,
+        payout_control: XOnlyPublicKey,
+    ) -> FederationResult<Amount>;
 }
 
 #[apply(async_trait_maybe_send!)]
@@ -94,6 +98,17 @@ where
         self.request_current_consensus(
             "wait_market_outcome_candlesticks".to_string(),
             ApiRequestErased::new(params),
+        )
+        .await
+    }
+
+    async fn get_payout_control_balance(
+        &self,
+        payout_control: XOnlyPublicKey,
+    ) -> FederationResult<Amount> {
+        self.request_current_consensus(
+            "get_payout_control_balance".to_string(),
+            ApiRequestErased::new(payout_control),
         )
         .await
     }

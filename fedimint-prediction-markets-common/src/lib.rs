@@ -57,6 +57,10 @@ pub enum PredictionMarketsInput {
         payout_control: XOnlyPublicKey,
         outcome_payouts: Vec<Amount>,
     },
+    ConsumePayoutControlBitcoinBalance {
+        payout_control: XOnlyPublicKey,
+        amount: Amount,
+    }
 }
 
 /// Output for a fedimint transaction
@@ -67,6 +71,7 @@ pub enum PredictionMarketsOutput {
         outcomes: Outcome,
         payout_control_weights: BTreeMap<XOnlyPublicKey, Weight>,
         weight_required_for_payout: WeightRequiredForPayout,
+        payout_controls_fee_per_contract: Amount,
         information: MarketInformation,
     },
     NewBuyOrder {
@@ -176,13 +181,15 @@ impl fmt::Display for PredictionMarketsConsensusItem {
 /// Markets are identified by the OutPoint they were created in.
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct Market {
-    // static
+    // static user set parameters
     pub contract_price: Amount,
     pub outcomes: Outcome,
     pub payout_controls_weights: BTreeMap<XOnlyPublicKey, Weight>,
     pub weight_required_for_payout: WeightRequiredForPayout,
+    pub payout_controls_fee_per_contract: Amount,
     pub information: MarketInformation,
 
+    // set by guardians at creation time
     pub created_consensus_timestamp: UnixTimestamp,
 
     // mutated
@@ -198,6 +205,7 @@ impl Market {
         contract_price: &Amount,
         outcomes: &Outcome,
         payout_control_weights: &BTreeMap<XOnlyPublicKey, Weight>,
+        payout_controls_fee_per_contract: &Amount,
         information: &MarketInformation,
     ) -> Result<(), ()> {
         // verify market params
@@ -207,6 +215,7 @@ impl Market {
             || outcomes > consensus_max_market_outcomes
             || payout_control_weights.len() == 0
             || payout_control_weights.len() > usize::from(*consensus_max_payout_control_keys)
+            || payout_controls_fee_per_contract >= contract_price
         {
             return Err(());
         }
@@ -267,16 +276,18 @@ impl Payout {
         market: &Market,
         outcome_payouts: &Vec<Amount>,
     ) -> Result<(), ()> {
+        let payout_per_contract_after_fee = market.contract_price - market.payout_controls_fee_per_contract;
+
         let mut total_payout = Amount::ZERO;
         for outcome_payout in outcome_payouts {
-            if outcome_payout > &market.contract_price {
+            if outcome_payout > &payout_per_contract_after_fee {
                 return Err(());
             }
 
             total_payout += outcome_payout.to_owned();
         }
 
-        if total_payout != market.contract_price
+        if total_payout != payout_per_contract_after_fee
             || outcome_payouts.len() != usize::from(market.outcomes)
         {
             return Err(());
