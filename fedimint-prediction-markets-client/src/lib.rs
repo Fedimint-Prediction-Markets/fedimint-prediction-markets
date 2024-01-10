@@ -40,7 +40,7 @@ use fedimint_prediction_markets_common::{
 };
 
 use futures::stream::FuturesUnordered;
-use futures::StreamExt;
+use futures::{future, StreamExt};
 use secp256k1::{KeyPair, Secp256k1, XOnlyPublicKey};
 use states::PredictionMarketsStateMachine;
 use tokio::time::Instant;
@@ -82,7 +82,7 @@ pub trait PredictionMarketsClientExt {
         &self,
         from_local_cache: bool,
         markets_created_after_and_including: UnixTimestamp,
-    ) -> anyhow::Result<BTreeMap<UnixTimestamp, OutPoint>>;
+    ) -> anyhow::Result<BTreeMap<UnixTimestamp, Vec<OutPoint>>>;
 
     /// Propose payout
     async fn propose_payout(
@@ -308,7 +308,7 @@ impl PredictionMarketsClientExt for Client {
         &self,
         from_local_cache: bool,
         markets_created_after_and_including: UnixTimestamp,
-    ) -> anyhow::Result<BTreeMap<UnixTimestamp, OutPoint>> {
+    ) -> anyhow::Result<BTreeMap<UnixTimestamp, Vec<OutPoint>>> {
         let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
 
         let payout_control = self.get_client_payout_control();
@@ -348,16 +348,24 @@ impl PredictionMarketsClientExt for Client {
             }
         }
 
-        let payout_control_markets = dbtx
+        let mut payout_control_markets_stream = dbtx
             .find_by_prefix_sorted_descending(&db::ClientPayoutControlMarketsPrefixAll)
             .await
             .map(|(k, _)| (k.market_created, k.market))
             .take_while(|(market_created, _)| {
-                let market_created = market_created.to_owned();
-                async move { market_created >= markets_created_after_and_including }
-            })
-            .collect::<BTreeMap<_, _>>()
-            .await;
+                future::ready(market_created >= &markets_created_after_and_including)
+            });
+            
+        let mut payout_control_markets = BTreeMap::new();
+        while let Some((market_created, market)) = payout_control_markets_stream.next().await {
+            if !payout_control_markets.contains_key(&market_created) {
+                payout_control_markets.insert(market_created, Vec::new());
+            }
+
+            let v = payout_control_markets.get_mut(&market_created).unwrap();
+            v.push(market);
+        }
+        drop(payout_control_markets_stream);
 
         dbtx.commit_tx().await;
 
@@ -1406,10 +1414,7 @@ impl ClientModule for PredictionMarketsClientModule {
 
                 let payout_control_markets = client
                     .get_client_payout_control_markets(false, UnixTimestamp::ZERO)
-                    .await?
-                    .into_iter()
-                    .map(|(_, market)| market)
-                    .collect::<Vec<_>>();
+                    .await?;
 
                 Ok(serde_json::to_value(payout_control_markets)?)
             }

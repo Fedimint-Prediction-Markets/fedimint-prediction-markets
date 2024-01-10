@@ -1265,7 +1265,7 @@ impl PredictionMarkets {
                 let (own_price, own_quantity) = own.expect("should always be some");
                 let satisfied_quantity = order.quantity_waiting_for_match.min(own_quantity);
 
-                Self::process_quantity_on_outcome(
+                Self::process_quantity_on_order_in_highest_priority_order_cache(
                     dbtx,
                     &market,
                     &mut order_cache,
@@ -1313,7 +1313,7 @@ impl PredictionMarkets {
                         continue;
                     }
 
-                    Self::process_quantity_on_outcome(
+                    Self::process_quantity_on_order_in_highest_priority_order_cache(
                         dbtx,
                         &market,
                         &mut order_cache,
@@ -1497,8 +1497,8 @@ impl PredictionMarkets {
         Some((price, quantity))
     }
 
-    /// uses [HighestPriorityOrderCache] to find the order that quantity will be processed on.
-    async fn process_quantity_on_outcome(
+    /// uses highest_priority_order_cache to find the order that quantity will be processed on.
+    async fn process_quantity_on_order_in_highest_priority_order_cache(
         dbtx: &mut ModuleDatabaseTransaction<'_>,
         market: &Market,
         order_cache: &mut OrderCache,

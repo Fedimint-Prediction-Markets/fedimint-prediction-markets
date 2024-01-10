@@ -48,7 +48,7 @@ pub enum DbKeyPrefix {
     /// (Market's [OutPoint], Order's [OutPoint]) to ()
     OrdersByMarket = 0x21,
 
-    /// Used to implement orderbook. Only holds active orders.
+    /// Used to implement orderbook. Only holds orders with non-zero quantity_waiting_for_match.
     ///
     /// Amount is (contract_price - price of order) for buys
     /// Amount is (price of order) for sells
@@ -56,13 +56,15 @@ pub enum DbKeyPrefix {
     /// (Market's [OutPoint], [Outcome], [Side], [Amount], [TimeOrdering]) to (Order's [XOnlyPublicKey])
     OrderPriceTimePriority = 0x22,
 
-    /// These keys are used to implement threshold payouts.
+    /// Used to implement threshold payouts.
     ///
     /// (Market's [OutPoint], [XOnlyPublicKey]) to [Vec<Amount>]
     MarketPayoutControlProposal = 0x23,
     /// (Market's [OutPoint], [Vec<Amount>], [XOnlyPublicKey]) to ()
     MarketOutcomePayoutsProposals = 0x24,
 
+    /// Used to implement candlestick data
+    ///
     /// (Market's [OutPoint], [Outcome], candlestick interval [Seconds], Candle's [UnixTimestamp]) to [Candlestick]
     MarketOutcomeCandlesticks = 0x25,
     /// (Market's [OutPoint], [Outcome], candlestick interval [Seconds]) to (Candle's [UnixTimestamp], [ContractOfOutcomeAmount]) 
@@ -73,7 +75,7 @@ pub enum DbKeyPrefix {
     /// Indexes payout control keys to the markets they belong to
     /// Used by client for data recovery in case of data loss
     ///
-    /// ([XOnlyPublicKey], [UnixTimestamp], Market's [OutPoint]) to ()
+    /// ([XOnlyPublicKey], Market's consensus creation [UnixTimestamp], Market's [OutPoint]) to ()
     PayoutControlMarkets = 0x40,
 
     /// ----- 60-6f reserved for consensus items -----
