@@ -992,9 +992,9 @@ impl ServerModule for PredictionMarkets {
     }
 }
 
-// api endpoints
+/// api endpoints
 impl PredictionMarkets {
-    async fn api_get_market(
+async fn api_get_market(
         &self,
         dbtx: &mut ModuleDatabaseTransaction<'_>,
         market: OutPoint,
@@ -1114,7 +1114,7 @@ impl PredictionMarkets {
     }
 }
 
-// market operations
+/// market operations
 impl PredictionMarkets {
     async fn get_next_order_time_ordering(
         dbtx: &mut ModuleDatabaseTransaction<'_>,
@@ -1433,8 +1433,8 @@ impl PredictionMarkets {
         else {
             return None;
         };
-
         let highest_priority_order = order_cache.get(dbtx, &highest_priority_order_owner).await;
+
         highest_priority_order_cache.set(outcome.to_owned(), Some(highest_priority_order_owner));
 
         Some((
