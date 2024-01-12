@@ -984,7 +984,6 @@ dependencies = [
  "fedimint-wallet-client",
  "fedimintd",
  "futures",
- "ln-gateway",
  "nix",
  "rand",
  "serde",
@@ -1276,7 +1275,7 @@ version = "0.2.1"
 dependencies = [
  "anyhow",
  "fedimint-cli",
- "fedimint-dummy-client 0.2.1",
+ "fedimint-prediction-markets-client",
  "tokio",
 ]
 
@@ -1406,27 +1405,6 @@ dependencies = [
 [[package]]
 name = "fedimint-dummy-client"
 version = "0.2.1"
-dependencies = [
- "anyhow",
- "async-trait",
- "erased-serde",
- "fedimint-client",
- "fedimint-core",
- "fedimint-dummy-common 0.2.1",
- "futures",
- "rand",
- "secp256k1 0.24.3",
- "serde",
- "strum",
- "strum_macros",
- "thiserror",
- "threshold_crypto",
- "tracing",
-]
-
-[[package]]
-name = "fedimint-dummy-client"
-version = "0.2.1"
 source = "git+https://github.com/fedimint/fedimint?tag=v0.2.1#a8422b84102ab5fc768307215d5b20d807143f27"
 dependencies = [
  "anyhow",
@@ -1434,27 +1412,7 @@ dependencies = [
  "erased-serde",
  "fedimint-client",
  "fedimint-core",
- "fedimint-dummy-common 0.2.1 (git+https://github.com/fedimint/fedimint?tag=v0.2.1)",
- "fedimint-threshold-crypto",
- "futures",
- "rand",
- "secp256k1 0.24.3",
- "serde",
- "strum",
- "strum_macros",
- "thiserror",
- "tracing",
-]
-
-[[package]]
-name = "fedimint-dummy-common"
-version = "0.2.1"
-dependencies = [
- "anyhow",
- "async-trait",
- "bitcoin_hashes 0.11.0",
- "erased-serde",
- "fedimint-core",
+ "fedimint-dummy-common",
  "fedimint-threshold-crypto",
  "futures",
  "rand",
@@ -1481,48 +1439,9 @@ dependencies = [
  "rand",
  "secp256k1 0.24.3",
  "serde",
- "thiserror",
- "tracing",
-]
-
-[[package]]
-name = "fedimint-dummy-server"
-version = "0.2.1"
-dependencies = [
- "anyhow",
- "async-trait",
- "bitcoin_hashes 0.11.0",
- "erased-serde",
- "fedimint-core",
- "fedimint-dummy-common 0.2.1",
- "futures",
- "rand",
- "secp256k1 0.24.3",
- "serde",
  "strum",
  "strum_macros",
  "thiserror",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "fedimint-dummy-tests"
-version = "0.2.1"
-dependencies = [
- "anyhow",
- "fedimint-client",
- "fedimint-core",
- "fedimint-dummy-client 0.2.1",
- "fedimint-dummy-common 0.2.1",
- "fedimint-dummy-server",
- "fedimint-logging",
- "fedimint-server",
- "fedimint-testing",
- "rand",
- "secp256k1 0.24.3",
- "threshold_crypto",
- "tokio",
  "tracing",
 ]
 
@@ -1667,7 +1586,7 @@ dependencies = [
  "fedimint-client",
  "fedimint-cln-rpc",
  "fedimint-core",
- "fedimint-dummy-client 0.2.1 (git+https://github.com/fedimint/fedimint?tag=v0.2.1)",
+ "fedimint-dummy-client",
  "fedimint-ln-client",
  "fedimint-ln-common",
  "fedimint-logging",
@@ -1861,6 +1780,87 @@ dependencies = [
 ]
 
 [[package]]
+name = "fedimint-prediction-markets-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-stream",
+ "async-trait",
+ "bitcoin 0.29.2",
+ "erased-serde",
+ "fedimint-client",
+ "fedimint-core",
+ "fedimint-prediction-markets-common",
+ "futures",
+ "rand",
+ "secp256k1 0.24.3",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "fedimint-prediction-markets-common"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bitcoin_hashes 0.11.0",
+ "erased-serde",
+ "fedimint-core",
+ "futures",
+ "rand",
+ "secp256k1 0.24.3",
+ "serde",
+ "strum",
+ "strum_macros",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
+name = "fedimint-prediction-markets-server"
+version = "0.2.1"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bitcoin_hashes 0.11.0",
+ "erased-serde",
+ "fedimint-core",
+ "fedimint-prediction-markets-common",
+ "futures",
+ "rand",
+ "secp256k1 0.24.3",
+ "serde",
+ "strum",
+ "strum_macros",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "fedimint-prediction-markets-tests"
+version = "0.2.1"
+dependencies = [
+ "anyhow",
+ "fedimint-client",
+ "fedimint-core",
+ "fedimint-logging",
+ "fedimint-prediction-markets-client",
+ "fedimint-prediction-markets-common",
+ "fedimint-prediction-markets-server",
+ "fedimint-server",
+ "fedimint-testing",
+ "rand",
+ "secp256k1 0.24.3",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "fedimint-rocksdb"
 version = "0.2.1"
 source = "git+https://github.com/fedimint/fedimint?tag=v0.2.1#a8422b84102ab5fc768307215d5b20d807143f27"
@@ -1927,7 +1927,6 @@ dependencies = [
  "devimint",
  "fedimint-cli",
  "fedimint-core",
- "fedimint-dummy-client 0.2.1",
  "fedimint-logging",
  "fedimint-prediction-markets-client",
  "tokio",
@@ -2167,8 +2166,8 @@ name = "fedimintd-custom"
 version = "0.2.1"
 dependencies = [
  "anyhow",
- "fedimint-dummy-common 0.2.1",
- "fedimint-dummy-server",
+ "fedimint-prediction-markets-common",
+ "fedimint-prediction-markets-server",
  "fedimintd",
  "tokio",
 ]

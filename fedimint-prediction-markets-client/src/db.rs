@@ -4,7 +4,7 @@ use fedimint_core::{impl_db_lookup, impl_db_record, OutPoint, Amount};
 use fedimint_prediction_markets_common::{
     Market, Order, OrderIdClientSide, Outcome, UnixTimestamp,
 };
-use secp256k1::XOnlyPublicKey;
+use secp256k1::PublicKey;
 
 #[repr(u8)]
 #[derive(Clone, Debug)]
@@ -23,7 +23,7 @@ pub enum DbKeyPrefix {
 
     /// Cache for market payout control proposals
     /// 
-    /// (Market's [OutPoint], [XOnlyPublicKey]) to [Vec<Amount>]
+    /// (Market's [OutPoint], [PublicKey]) to [Vec<Amount>]
     MarketPayoutControlProposal = 0x02, 
 
     /// ----- 20-3f reserved for indexes -----
@@ -54,7 +54,7 @@ pub enum DbKeyPrefix {
     /// (Market's [OutPoint]) to (Saved to db [UnixTimestamp])
     ClientSavedMarkets = 0x41,
 
-    /// (Payout control [XOnlyPublicKey]) to (Name [String])
+    /// (Payout control [PublicKey]) to (Name [String])
     ClientNamedPayoutControls = 0x42,
 }
 
@@ -102,7 +102,7 @@ impl_db_lookup!(key = OrderKey, query_prefix = OrderPrefixAll);
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash)]
 pub struct MarketPayoutControlProposalKey {
     pub market: OutPoint,
-    pub payout_control: XOnlyPublicKey,
+    pub payout_control: PublicKey,
 }
 
 #[derive(Debug, Encodable, Decodable)]
@@ -259,7 +259,7 @@ impl_db_lookup!(
 // ClientSavedPayoutControls
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash)]
 pub struct ClientNamedPayoutControlsKey {
-    pub payout_control: XOnlyPublicKey,
+    pub payout_control: PublicKey,
 }
 
 #[derive(Debug, Encodable, Decodable)]

@@ -15,12 +15,12 @@ use fedimint_prediction_markets_common::{
     },
     Market, Order,
 };
-use secp256k1::XOnlyPublicKey;
+use secp256k1::PublicKey;
 
 #[apply(async_trait_maybe_send!)]
 pub trait PredictionMarketsFederationApi {
     async fn get_market(&self, market: OutPoint) -> FederationResult<Option<Market>>;
-    async fn get_order(&self, order: XOnlyPublicKey) -> FederationResult<Option<Order>>;
+    async fn get_order(&self, order: PublicKey) -> FederationResult<Option<Order>>;
     async fn get_payout_control_markets(
         &self,
         params: GetPayoutControlMarketsParams,
@@ -28,7 +28,7 @@ pub trait PredictionMarketsFederationApi {
     async fn get_market_payout_control_proposals(
         &self,
         market: OutPoint,
-    ) -> FederationResult<BTreeMap<XOnlyPublicKey, Vec<Amount>>>;
+    ) -> FederationResult<BTreeMap<PublicKey, Vec<Amount>>>;
     async fn get_market_outcome_candlesticks(
         &self,
         params: GetMarketOutcomeCandlesticksParams,
@@ -39,7 +39,7 @@ pub trait PredictionMarketsFederationApi {
     ) -> FederationResult<WaitMarketOutcomeCandlesticksResult>;
     async fn get_payout_control_balance(
         &self,
-        payout_control: XOnlyPublicKey,
+        payout_control: PublicKey,
     ) -> FederationResult<Amount>;
 }
 
@@ -53,7 +53,7 @@ where
             .await
     }
 
-    async fn get_order(&self, order: XOnlyPublicKey) -> FederationResult<Option<Order>> {
+    async fn get_order(&self, order: PublicKey) -> FederationResult<Option<Order>> {
         self.request_current_consensus("get_order".to_string(), ApiRequestErased::new(order))
             .await
     }
@@ -72,7 +72,7 @@ where
     async fn get_market_payout_control_proposals(
         &self,
         market: OutPoint,
-    ) -> FederationResult<BTreeMap<XOnlyPublicKey, Vec<Amount>>> {
+    ) -> FederationResult<BTreeMap<PublicKey, Vec<Amount>>> {
         self.request_current_consensus(
             "get_market_payout_control_proposals".to_string(),
             ApiRequestErased::new(market),
@@ -104,7 +104,7 @@ where
 
     async fn get_payout_control_balance(
         &self,
-        payout_control: XOnlyPublicKey,
+        payout_control: PublicKey,
     ) -> FederationResult<Amount> {
         self.request_current_consensus(
             "get_payout_control_balance".to_string(),

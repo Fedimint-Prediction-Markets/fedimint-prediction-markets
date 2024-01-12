@@ -17,6 +17,7 @@ fedimint-prediction-markets-common ={ path = "../fedimint-prediction-markets-com
 fedimint-client = { workspace = true }
 fedimint-core ={ workspace = true }
 futures = "0.3"
+erased-serde = "0.3"
 rand = "0.8.5"
 secp256k1 = "0.24.2"
 serde = {version = "1.0.149", features = [ "derive" ] }
@@ -26,4 +27,4 @@ thiserror = "1.0.39"
 bitcoin = "0.29.2"
 async-stream = "0.3.5"
 tokio = { version = "1.26.0", features = ["sync"] }
-threshold_crypto = { workspace = true }
+# threshold_crypto = { workspace = true }

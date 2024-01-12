@@ -1,29 +1,28 @@
 use std::collections::{BTreeMap, HashMap};
-
 use std::string::ToString;
-use std::time::Duration;
 
 use anyhow::bail;
 use async_trait::async_trait;
-
 use db::DbKeyPrefix;
 use fedimint_core::config::{
     ConfigGenModuleParams, DkgResult, ServerModuleConfig, ServerModuleConsensusConfig,
     TypedServerModuleConfig, TypedServerModuleConsensusConfig,
 };
-use fedimint_core::db::{DatabaseVersion, MigrationMap, ModuleDatabaseTransaction};
-
+use fedimint_core::core::ModuleInstanceId;
+use fedimint_core::db::{
+     DatabaseTransaction, DatabaseVersion, IDatabaseTransactionOpsCoreTyped, MigrationMap, Committable,
+};
 use fedimint_core::module::audit::Audit;
 use fedimint_core::module::{
-    api_endpoint, ApiEndpoint, ApiEndpointContext, ApiError, ConsensusProposal,
-    CoreConsensusVersion, ExtendsCommonModuleInit, InputMeta, IntoModuleError,
-    ModuleConsensusVersion, ModuleError, PeerHandle, ServerModuleInit, ServerModuleInitArgs,
+    api_endpoint, ApiEndpoint, ApiEndpointContext, ApiError, CoreConsensusVersion, InputMeta,
+    ModuleConsensusVersion, ModuleInit, PeerHandle, ServerModuleInit, ServerModuleInitArgs,
     SupportedModuleApiVersions, TransactionItemAmount,
 };
 use fedimint_core::server::DynServerModule;
-
 use fedimint_core::{push_db_pair_items, Amount, OutPoint, PeerId, ServerModule};
 use fedimint_prediction_markets_common::api::{
+    GetMarketOutcomeCandlesticksParams, GetMarketOutcomeCandlesticksResult,
+    GetPayoutControlMarketsParams, GetPayoutControlMarketsResult,
     WaitMarketOutcomeCandlesticksParams, WaitMarketOutcomeCandlesticksResult,
 };
 pub use fedimint_prediction_markets_common::config::{
@@ -31,38 +30,184 @@ pub use fedimint_prediction_markets_common::config::{
     PredictionMarketsConfigLocal, PredictionMarketsConfigPrivate, PredictionMarketsGenParams,
 };
 use fedimint_prediction_markets_common::{
-    api::{
-        GetMarketOutcomeCandlesticksParams, GetMarketOutcomeCandlesticksResult,
-        GetPayoutControlMarketsParams, GetPayoutControlMarketsResult,
-    },
-    Candlestick, ContractAmount, ContractOfOutcomeAmount, Market, Order, Outcome, Payout, Seconds,
-    Side, SignedAmount, TimeOrdering, UnixTimestamp, WeightRequiredForPayout,
+    Candlestick, ContractAmount, ContractOfOutcomeAmount, Market, Order, Outcome, Payout,
+    PredictionMarketsInputError, PredictionMarketsOutputError, Seconds, Side, SignedAmount,
+    TimeOrdering, UnixTimestamp, WeightRequiredForPayout,
 };
 pub use fedimint_prediction_markets_common::{
-    PredictionMarketsCommonGen, PredictionMarketsConsensusItem, PredictionMarketsError,
-    PredictionMarketsInput, PredictionMarketsModuleTypes, PredictionMarketsOutput,
-    PredictionMarketsOutputOutcome, CONSENSUS_VERSION, KIND,
+    PredictionMarketsCommonInit, PredictionMarketsConsensusItem, PredictionMarketsInput,
+    PredictionMarketsModuleTypes, PredictionMarketsOutput, PredictionMarketsOutputOutcome,
+    CONSENSUS_VERSION, KIND,
 };
 use futures::{future, StreamExt};
-
-use secp256k1::XOnlyPublicKey;
-
+use secp256k1::PublicKey;
 use strum::IntoEnumIterator;
 
 mod db;
 
 /// Generates the module
 #[derive(Debug, Clone)]
-pub struct PredictionMarketsGen;
+pub struct PredictionMarketsInit;
 
 // TODO: Boilerplate-code
-impl ExtendsCommonModuleInit for PredictionMarketsGen {
-    type Common = PredictionMarketsCommonGen;
+#[async_trait]
+impl ModuleInit for PredictionMarketsInit {
+    type Common = PredictionMarketsCommonInit;
+
+    /// Dumps all database items for debugging
+    async fn dump_database(
+        &self,
+        dbtx: &mut DatabaseTransaction<'_>,
+        prefix_names: Vec<String>,
+    ) -> Box<dyn Iterator<Item = (String, Box<dyn erased_serde::Serialize + Send>)> + '_> {
+        // TODO: Boilerplate-code
+        let mut items: BTreeMap<String, Box<dyn erased_serde::Serialize + Send>> = BTreeMap::new();
+        let filtered_prefixes = db::DbKeyPrefix::iter().filter(|f| {
+            prefix_names.is_empty() || prefix_names.contains(&f.to_string().to_lowercase())
+        });
+
+        for table in filtered_prefixes {
+            match table {
+                DbKeyPrefix::Outcome => {
+                    push_db_pair_items!(
+                        dbtx,
+                        db::OutcomePrefixAll,
+                        db::OutcomeKey,
+                        PredictionMarketsOutputOutcome,
+                        items,
+                        "Output Outcome"
+                    );
+                }
+                DbKeyPrefix::Market => {
+                    push_db_pair_items!(
+                        dbtx,
+                        db::MarketPrefixAll,
+                        db::MarketKey,
+                        Market,
+                        items,
+                        "Market"
+                    );
+                }
+                DbKeyPrefix::Order => {
+                    push_db_pair_items!(
+                        dbtx,
+                        db::OrderPrefixAll,
+                        db::OrderKey,
+                        Order,
+                        items,
+                        "Order"
+                    );
+                }
+                DbKeyPrefix::NextOrderTimeOrdering => {
+                    push_db_pair_items!(
+                        dbtx,
+                        db::NextOrderTimeOrderingPrefixAll,
+                        db::NextOrderTimePriorityKey,
+                        TimeOrdering,
+                        items,
+                        "NextOrderTimePriority"
+                    );
+                }
+                DbKeyPrefix::OrdersByMarket => {
+                    push_db_pair_items!(
+                        dbtx,
+                        db::OrdersByMarketPrefixAll,
+                        db::OrdersByMarketKey,
+                        (),
+                        items,
+                        "OrdersByMarket"
+                    );
+                }
+                DbKeyPrefix::OrderPriceTimePriority => {
+                    push_db_pair_items!(
+                        dbtx,
+                        db::OrderPriceTimePriorityPrefixAll,
+                        db::OrderPriceTimePriorityKey,
+                        PublicKey,
+                        items,
+                        "OrderPriceTimePriority"
+                    );
+                }
+                DbKeyPrefix::MarketPayoutControlProposal => {
+                    push_db_pair_items!(
+                        dbtx,
+                        db::MarketPayoutControlProposalPrefixAll,
+                        db::MarketPayoutControlVoteKey,
+                        Vec<Amount>,
+                        items,
+                        "MarketPayoutControlVote"
+                    );
+                }
+                DbKeyPrefix::MarketOutcomePayoutsProposals => {
+                    push_db_pair_items!(
+                        dbtx,
+                        db::MarketOutcomePayoutsProposalsPrefixAll,
+                        db::MarketOutcomePayoutsVotesKey,
+                        (),
+                        items,
+                        "MarketOutcomePayoutsProposals"
+                    );
+                }
+                DbKeyPrefix::MarketOutcomeCandlesticks => {
+                    push_db_pair_items!(
+                        dbtx,
+                        db::MarketOutcomeCandlesticksPrefixAll,
+                        db::MarketOutcomeCandlesticksKey,
+                        Candlestick,
+                        items,
+                        "MarketOutcomeCandleSticks"
+                    );
+                }
+                DbKeyPrefix::PayoutControlMarkets => {
+                    push_db_pair_items!(
+                        dbtx,
+                        db::PayoutControlMarketsPrefixAll,
+                        db::PayoutControlMarketsKey,
+                        (),
+                        items,
+                        "PayoutControlMarkets"
+                    );
+                }
+                DbKeyPrefix::PeersProposedTimestamp => {
+                    push_db_pair_items!(
+                        dbtx,
+                        db::PeersProposedTimestampPrefixAll,
+                        db::PeersProposedTimestampKey,
+                        UnixTimestamp,
+                        items,
+                        "PeersProposedTimestamp"
+                    );
+                }
+                DbKeyPrefix::MarketOutcomeNewestCandlestickVolume => {
+                    push_db_pair_items!(
+                        dbtx,
+                        db::MarketOutcomeNewestCandlestickVolumePrefixAll,
+                        db::MarketOutcomeNewestCandlestickKey,
+                        (UnixTimestamp, ContractOfOutcomeAmount),
+                        items,
+                        "MarketOutcomeNewestCandlestick"
+                    );
+                }
+                DbKeyPrefix::PayoutControlBalance => {
+                    push_db_pair_items!(
+                        dbtx,
+                        db::PayoutControlBalancePrefixAll,
+                        db::PayoutControlBalanceKey,
+                        Amount,
+                        items,
+                        "PayoutControlBalance"
+                    );
+                }
+            }
+        }
+
+        Box::new(items.into_iter())
+    }
 }
 
 /// Implementation of server module non-consensus functions
 #[async_trait]
-impl ServerModuleInit for PredictionMarketsGen {
+impl ServerModuleInit for PredictionMarketsInit {
     type Params = PredictionMarketsGenParams;
     const DATABASE_VERSION: DatabaseVersion = DatabaseVersion(0);
 
@@ -72,7 +217,7 @@ impl ServerModuleInit for PredictionMarketsGen {
     }
 
     fn supported_api_versions(&self) -> SupportedModuleApiVersions {
-        SupportedModuleApiVersions::from_raw(1, 0, &[(0, 0)])
+        SupportedModuleApiVersions::from_raw((u32::MAX, 0), (0, 0), &[(0, 0)])
     }
 
     /// Initialize the module
@@ -159,156 +304,6 @@ impl ServerModuleInit for PredictionMarketsGen {
 
         Ok(())
     }
-
-    /// Dumps all database items for debugging
-    async fn dump_database(
-        &self,
-        dbtx: &mut ModuleDatabaseTransaction<'_>,
-        prefix_names: Vec<String>,
-    ) -> Box<dyn Iterator<Item = (String, Box<dyn erased_serde::Serialize + Send>)> + '_> {
-        // TODO: Boilerplate-code
-        let mut items: BTreeMap<String, Box<dyn erased_serde::Serialize + Send>> = BTreeMap::new();
-        let filtered_prefixes = db::DbKeyPrefix::iter().filter(|f| {
-            prefix_names.is_empty() || prefix_names.contains(&f.to_string().to_lowercase())
-        });
-
-        for table in filtered_prefixes {
-            match table {
-                DbKeyPrefix::Outcome => {
-                    push_db_pair_items!(
-                        dbtx,
-                        db::OutcomePrefixAll,
-                        db::OutcomeKey,
-                        PredictionMarketsOutputOutcome,
-                        items,
-                        "Output Outcome"
-                    );
-                }
-                DbKeyPrefix::Market => {
-                    push_db_pair_items!(
-                        dbtx,
-                        db::MarketPrefixAll,
-                        db::MarketKey,
-                        Market,
-                        items,
-                        "Market"
-                    );
-                }
-                DbKeyPrefix::Order => {
-                    push_db_pair_items!(
-                        dbtx,
-                        db::OrderPrefixAll,
-                        db::OrderKey,
-                        Order,
-                        items,
-                        "Order"
-                    );
-                }
-                DbKeyPrefix::NextOrderTimeOrdering => {
-                    push_db_pair_items!(
-                        dbtx,
-                        db::NextOrderTimeOrderingPrefixAll,
-                        db::NextOrderTimePriorityKey,
-                        TimeOrdering,
-                        items,
-                        "NextOrderTimePriority"
-                    );
-                }
-                DbKeyPrefix::OrdersByMarket => {
-                    push_db_pair_items!(
-                        dbtx,
-                        db::OrdersByMarketPrefixAll,
-                        db::OrdersByMarketKey,
-                        (),
-                        items,
-                        "OrdersByMarket"
-                    );
-                }
-                DbKeyPrefix::OrderPriceTimePriority => {
-                    push_db_pair_items!(
-                        dbtx,
-                        db::OrderPriceTimePriorityPrefixAll,
-                        db::OrderPriceTimePriorityKey,
-                        XOnlyPublicKey,
-                        items,
-                        "OrderPriceTimePriority"
-                    );
-                }
-                DbKeyPrefix::MarketPayoutControlProposal => {
-                    push_db_pair_items!(
-                        dbtx,
-                        db::MarketPayoutControlProposalPrefixAll,
-                        db::MarketPayoutControlVoteKey,
-                        Vec<Amount>,
-                        items,
-                        "MarketPayoutControlVote"
-                    );
-                }
-                DbKeyPrefix::MarketOutcomePayoutsProposals => {
-                    push_db_pair_items!(
-                        dbtx,
-                        db::MarketOutcomePayoutsProposalsPrefixAll,
-                        db::MarketOutcomePayoutsVotesKey,
-                        (),
-                        items,
-                        "MarketOutcomePayoutsProposals"
-                    );
-                }
-                DbKeyPrefix::MarketOutcomeCandlesticks => {
-                    push_db_pair_items!(
-                        dbtx,
-                        db::MarketOutcomeCandlesticksPrefixAll,
-                        db::MarketOutcomeCandlesticksKey,
-                        Candlestick,
-                        items,
-                        "MarketOutcomeCandleSticks"
-                    );
-                }
-                DbKeyPrefix::PayoutControlMarkets => {
-                    push_db_pair_items!(
-                        dbtx,
-                        db::PayoutControlMarketsPrefixAll,
-                        db::PayoutControlMarketsKey,
-                        (),
-                        items,
-                        "PayoutControlMarkets"
-                    );
-                }
-                DbKeyPrefix::PeersProposedTimestamp => {
-                    push_db_pair_items!(
-                        dbtx,
-                        db::PeersProposedTimestampPrefixAll,
-                        db::PeersProposedTimestampKey,
-                        UnixTimestamp,
-                        items,
-                        "PeersProposedTimestamp"
-                    );
-                }
-                DbKeyPrefix::MarketOutcomeNewestCandlestickVolume => {
-                    push_db_pair_items!(
-                        dbtx,
-                        db::MarketOutcomeNewestCandlestickVolumePrefixAll,
-                        db::MarketOutcomeNewestCandlestickKey,
-                        (UnixTimestamp, ContractOfOutcomeAmount),
-                        items,
-                        "MarketOutcomeNewestCandlestick"
-                    );
-                }
-                DbKeyPrefix::PayoutControlBalance => {
-                    push_db_pair_items!(
-                        dbtx,
-                        db::PayoutControlBalancePrefixAll,
-                        db::PayoutControlBalanceKey,
-                        Amount,
-                        items,
-                        "PayoutControlBalance"
-                    );
-                }
-            }
-        }
-
-        Box::new(items.into_iter())
-    }
 }
 
 /// Dummy module
@@ -322,85 +317,62 @@ pub struct PredictionMarkets {
 impl ServerModule for PredictionMarkets {
     /// Define the consensus types
     type Common = PredictionMarketsModuleTypes;
-    type Gen = PredictionMarketsGen;
-    type VerificationCache = PredictionMarketsCache;
-
-    async fn await_consensus_proposal(&self, dbtx: &mut ModuleDatabaseTransaction<'_>) {
-        tokio::time::sleep(Duration::from_millis(350)).await;
-
-        let next_consensus_timestamp = {
-            let mut current = self.get_consensus_timestamp(dbtx).await;
-            current.0 += self.cfg.consensus.gc.timestamp_interval;
-            current
-        };
-
-        tokio::time::sleep(next_consensus_timestamp.duration_till()).await;
-    }
+    type Init = PredictionMarketsInit;
 
     async fn consensus_proposal(
         &self,
-        dbtx: &mut ModuleDatabaseTransaction<'_>,
-    ) -> ConsensusProposal<PredictionMarketsConsensusItem> {
+        _dbtx: &mut DatabaseTransaction<'_>,
+    ) -> Vec<PredictionMarketsConsensusItem> {
         let mut items = vec![];
 
         let timestamp_to_propose =
             UnixTimestamp::now().round_down(self.cfg.consensus.gc.timestamp_interval);
-        let consensus_timestamp = self.get_consensus_timestamp(dbtx).await;
+        items.push(PredictionMarketsConsensusItem::TimestampProposal(
+            timestamp_to_propose,
+        ));
 
-        if timestamp_to_propose > consensus_timestamp {
-            items.push(PredictionMarketsConsensusItem::TimestampProposal(
-                timestamp_to_propose,
-            ));
-        }
-
-        ConsensusProposal::new_auto_trigger(items)
+        items
     }
 
     async fn process_consensus_item<'a, 'b>(
         &'a self,
-        dbtx: &mut ModuleDatabaseTransaction<'b>,
+        dbtx: &mut DatabaseTransaction<'b>,
         consensus_item: PredictionMarketsConsensusItem,
         peer_id: PeerId,
     ) -> anyhow::Result<()> {
         match consensus_item {
-            PredictionMarketsConsensusItem::TimestampProposal(new) => {
-                if !new.divisible(self.cfg.consensus.gc.timestamp_interval) {
+            PredictionMarketsConsensusItem::TimestampProposal(new_peer_timestamp) => {
+                // checks
+                if !new_peer_timestamp.divisible(self.cfg.consensus.gc.timestamp_interval) {
                     bail!("new unix timestamp is not divisible by timestamp interval");
                 }
-
-                match dbtx
-                    .insert_entry(&db::PeersProposedTimestampKey { peer_id }, &new)
+                let current_peer_timestamp = dbtx
+                    .get_value(&db::PeersProposedTimestampKey { peer_id })
                     .await
-                {
-                    Some(current) => {
-                        if new <= current {
-                            bail!("new unix timestamp is not after current unix timestamp")
-                        } else {
-                            Ok(())
-                        }
-                    }
-                    None => Ok(()),
+                    .unwrap_or(UnixTimestamp::ZERO);
+                if current_peer_timestamp == new_peer_timestamp {
+                    bail!("duplicate timestamp")
                 }
+
+                // insert
+                dbtx.insert_entry(
+                    &db::PeersProposedTimestampKey { peer_id },
+                    &new_peer_timestamp,
+                )
+                .await;
+                Ok(())
             }
         }
     }
 
-    fn build_verification_cache<'a>(
-        &'a self,
-        _inputs: impl Iterator<Item = &'a PredictionMarketsInput> + Send,
-    ) -> Self::VerificationCache {
-        PredictionMarketsCache
-    }
-
     async fn process_input<'a, 'b, 'c>(
         &'a self,
-        dbtx: &mut ModuleDatabaseTransaction<'c>,
+        dbtx: &mut DatabaseTransaction<'c>,
         input: &'b PredictionMarketsInput,
-        _cache: &Self::VerificationCache,
-    ) -> Result<InputMeta, ModuleError> {
+    ) -> Result<InputMeta, PredictionMarketsInputError> {
         let amount;
         let fee;
-        let pub_keys;
+        let pub_key;
 
         match input {
             PredictionMarketsInput::NewSellOrder {
@@ -412,8 +384,7 @@ impl ServerModule for PredictionMarkets {
             } => {
                 // check that order does not already exists for owner
                 if let Some(_) = dbtx.get_value(&db::OrderKey(owner.to_owned())).await {
-                    return Err(PredictionMarketsError::OrderAlreadyExists)
-                        .into_module_error_other();
+                    return Err(PredictionMarketsInputError::OrderAlreadyExists);
                 }
 
                 // get market
@@ -421,18 +392,17 @@ impl ServerModule for PredictionMarkets {
                     .get_value(&db::MarketKey(market_out_point.to_owned()))
                     .await
                 else {
-                    return Err(PredictionMarketsError::MarketDoesNotExist)
-                        .into_module_error_other();
+                    return Err(PredictionMarketsInputError::MarketDoesNotExist);
                 };
 
                 // check if payout has already occurred
                 if market.payout.is_some() {
-                    return Err(PredictionMarketsError::MarketFinished).into_module_error_other();
+                    return Err(PredictionMarketsInputError::MarketFinished);
                 }
 
                 // get quantity from sources, verifying public keys of sources
-                let Ok((quantity, source_order_public_keys)) =
-                    Self::process_contract_of_outcome_sources(
+                let Ok((quantity, source_order_public_keys_combined)) =
+                    Self::verify_and_process_contract_of_outcome_sources(
                         dbtx,
                         sources,
                         market_out_point,
@@ -440,8 +410,7 @@ impl ServerModule for PredictionMarkets {
                     )
                     .await
                 else {
-                    return Err(PredictionMarketsError::OrderValidationFailed)
-                        .into_module_error_other();
+                    return Err(PredictionMarketsInputError::OrderValidationFailed);
                 };
 
                 // verify order params
@@ -452,14 +421,13 @@ impl ServerModule for PredictionMarkets {
                     price,
                     &quantity,
                 ) {
-                    return Err(PredictionMarketsError::OrderValidationFailed)
-                        .into_module_error_other();
+                    return Err(PredictionMarketsInputError::OrderValidationFailed);
                 }
 
                 // set input meta
                 amount = Amount::ZERO;
                 fee = self.cfg.consensus.gc.new_order_fee;
-                pub_keys = source_order_public_keys;
+                pub_key = source_order_public_keys_combined;
 
                 // process order
                 self.process_new_order(
@@ -481,19 +449,18 @@ impl ServerModule for PredictionMarkets {
                 // get order
                 let Some(mut order) = dbtx.get_value(&db::OrderKey(order_owner.to_owned())).await
                 else {
-                    return Err(PredictionMarketsError::OrderDoesNotExist)
-                        .into_module_error_other();
+                    return Err(PredictionMarketsInputError::OrderDoesNotExist);
                 };
 
                 // check if order has sufficent balance
                 if &order.bitcoin_balance < amount_to_consume {
-                    return Err(PredictionMarketsError::NotEnoughFunds).into_module_error_other();
+                    return Err(PredictionMarketsInputError::NotEnoughFunds);
                 }
 
                 // set input meta
                 amount = amount_to_consume.to_owned();
                 fee = self.cfg.consensus.gc.consume_order_bitcoin_balance_fee;
-                pub_keys = vec![order_owner.to_owned()];
+                pub_key = order_owner.to_owned();
 
                 // update order's bitcoin balance
                 order.bitcoin_balance = order.bitcoin_balance - amount_to_consume.to_owned();
@@ -504,20 +471,18 @@ impl ServerModule for PredictionMarkets {
                 // get order
                 let Some(mut order) = dbtx.get_value(&db::OrderKey(order_owner.to_owned())).await
                 else {
-                    return Err(PredictionMarketsError::OrderDoesNotExist)
-                        .into_module_error_other();
+                    return Err(PredictionMarketsInputError::OrderDoesNotExist);
                 };
 
                 // check if order already finished
                 if order.quantity_waiting_for_match == ContractOfOutcomeAmount::ZERO {
-                    return Err(PredictionMarketsError::OrderAlreadyFinished)
-                        .into_module_error_other();
+                    return Err(PredictionMarketsInputError::OrderAlreadyFinished);
                 }
 
                 // set input meta
                 amount = Amount::ZERO;
                 fee = Amount::ZERO;
-                pub_keys = vec![order_owner.to_owned()];
+                pub_key = order_owner.to_owned();
 
                 // cancel order
                 let market = dbtx
@@ -536,32 +501,28 @@ impl ServerModule for PredictionMarkets {
                     .get_value(&db::MarketKey(market_out_point.to_owned()))
                     .await
                 else {
-                    return Err(PredictionMarketsError::MarketDoesNotExist)
-                        .into_module_error_other();
+                    return Err(PredictionMarketsInputError::MarketDoesNotExist);
                 };
 
                 // check if payout already exists
                 if market.payout.is_some() {
-                    return Err(PredictionMarketsError::PayoutAlreadyExists)
-                        .into_module_error_other();
+                    return Err(PredictionMarketsInputError::PayoutAlreadyExists);
                 }
 
                 // Check that payout control exist on market
                 if let None = market.payout_controls_weights.get(payout_control) {
-                    return Err(PredictionMarketsError::PayoutValidationFailed)
-                        .into_module_error_other();
+                    return Err(PredictionMarketsInputError::PayoutValidationFailed);
                 }
 
                 // validate payout params
                 if let Err(_) = Payout::validate_payout_params(&market, outcome_payouts) {
-                    return Err(PredictionMarketsError::PayoutValidationFailed)
-                        .into_module_error_other();
+                    return Err(PredictionMarketsInputError::PayoutValidationFailed);
                 }
 
                 // set input meta
                 amount = Amount::ZERO;
                 fee = self.cfg.consensus.gc.payout_proposal_fee;
-                pub_keys = vec![payout_control.to_owned()];
+                pub_key = payout_control.to_owned();
 
                 let consensus_timestamp = self.get_consensus_timestamp(dbtx).await;
 
@@ -730,7 +691,7 @@ impl ServerModule for PredictionMarkets {
 
                 // check if order has sufficent balance
                 if &balance < amount_to_consume {
-                    return Err(PredictionMarketsError::NotEnoughFunds).into_module_error_other();
+                    return Err(PredictionMarketsInputError::NotEnoughFunds);
                 }
 
                 // set input meta
@@ -740,7 +701,7 @@ impl ServerModule for PredictionMarkets {
                     .consensus
                     .gc
                     .consume_payout_control_bitcoin_balance_fee;
-                pub_keys = vec![payout_control.to_owned()];
+                pub_key = payout_control.to_owned();
 
                 // update order's bitcoin balance
                 balance = balance - amount_to_consume.to_owned();
@@ -757,16 +718,16 @@ impl ServerModule for PredictionMarkets {
         Ok(InputMeta {
             amount: TransactionItemAmount { amount, fee },
             // IMPORTANT: include the pubkey to validate the user signed this tx
-            pub_keys,
+            pub_key,
         })
     }
 
     async fn process_output<'a, 'b>(
         &'a self,
-        dbtx: &mut ModuleDatabaseTransaction<'b>,
+        dbtx: &mut DatabaseTransaction<'b>,
         output: &'a PredictionMarketsOutput,
         out_point: OutPoint,
-    ) -> Result<TransactionItemAmount, ModuleError> {
+    ) -> Result<TransactionItemAmount, PredictionMarketsOutputError> {
         let amount;
         let fee;
 
@@ -790,8 +751,7 @@ impl ServerModule for PredictionMarkets {
                     payout_controls_fee_per_contract,
                     information,
                 ) {
-                    return Err(PredictionMarketsError::MarketValidationFailed)
-                        .into_module_error_other();
+                    return Err(PredictionMarketsOutputError::MarketValidationFailed);
                 }
 
                 // set output meta
@@ -855,8 +815,7 @@ impl ServerModule for PredictionMarkets {
             } => {
                 // check that order does not already exists for owner
                 if let Some(_) = dbtx.get_value(&db::OrderKey(owner.to_owned())).await {
-                    return Err(PredictionMarketsError::OrderAlreadyExists)
-                        .into_module_error_other();
+                    return Err(PredictionMarketsOutputError::OrderAlreadyExists);
                 }
 
                 // get market
@@ -864,13 +823,12 @@ impl ServerModule for PredictionMarkets {
                     .get_value(&db::MarketKey(market_out_point.to_owned()))
                     .await
                 else {
-                    return Err(PredictionMarketsError::MarketDoesNotExist)
-                        .into_module_error_other();
+                    return Err(PredictionMarketsOutputError::MarketDoesNotExist);
                 };
 
                 // check if payout has already occurred
                 if market.payout.is_some() {
-                    return Err(PredictionMarketsError::MarketFinished).into_module_error_other();
+                    return Err(PredictionMarketsOutputError::MarketFinished);
                 }
 
                 // verify order params
@@ -881,8 +839,7 @@ impl ServerModule for PredictionMarkets {
                     price,
                     quantity,
                 ) {
-                    return Err(PredictionMarketsError::OrderValidationFailed)
-                        .into_module_error_other();
+                    return Err(PredictionMarketsOutputError::OrderValidationFailed);
                 }
 
                 // set output meta
@@ -916,23 +873,29 @@ impl ServerModule for PredictionMarkets {
 
     async fn output_status(
         &self,
-        dbtx: &mut ModuleDatabaseTransaction<'_>,
+        dbtx: &mut DatabaseTransaction<'_>,
         out_point: OutPoint,
     ) -> Option<PredictionMarketsOutputOutcome> {
         dbtx.get_value(&db::OutcomeKey(out_point)).await
     }
 
-    async fn audit(&self, dbtx: &mut ModuleDatabaseTransaction<'_>, audit: &mut Audit) {
+    async fn audit(
+        &self,
+        dbtx: &mut DatabaseTransaction<'_>,
+        audit: &mut Audit,
+        module_instance_id: ModuleInstanceId,
+    ) {
         // bitcoin owed for open contracts across markets
         audit
-            .add_items(dbtx, KIND.as_str(), &db::MarketPrefixAll, |_, market| {
+            .add_items(dbtx, module_instance_id, &db::MarketPrefixAll, |_, market| {
                 -((market.contract_price * market.open_contracts.0).msats as i64)
             })
             .await;
 
-        // bitcoin owed for collateral held for buy orders and in field bitcoin_balance on orders
+        // bitcoin owed for collateral held for buy orders and in field bitcoin_balance
+        // on orders
         audit
-            .add_items(dbtx, KIND.as_str(), &db::OrderPrefixAll, |_, order| {
+            .add_items(dbtx, module_instance_id, &db::OrderPrefixAll, |_, order| {
                 let mut milli_sat = 0i64;
                 if let Side::Buy = order.side {
                     milli_sat -= (order.price * order.quantity_waiting_for_match.0).msats as i64
@@ -954,7 +917,7 @@ impl ServerModule for PredictionMarkets {
             },
             api_endpoint! {
                 "get_order",
-                async |module: &PredictionMarkets, context, order: XOnlyPublicKey| -> Option<Order> {
+                async |module: &PredictionMarkets, context, order: PublicKey| -> Option<Order> {
                     module.api_get_order(&mut context.dbtx(), order).await
                 }
             },
@@ -966,7 +929,7 @@ impl ServerModule for PredictionMarkets {
             },
             api_endpoint! {
                 "get_market_payout_control_proposals",
-                async |module: &PredictionMarkets, context, market: OutPoint| -> BTreeMap<XOnlyPublicKey,Vec<Amount>> {
+                async |module: &PredictionMarkets, context, market: OutPoint| -> BTreeMap<PublicKey,Vec<Amount>> {
                     module.api_get_market_payout_control_proposals(&mut context.dbtx(), market).await
                 }
             },
@@ -984,7 +947,7 @@ impl ServerModule for PredictionMarkets {
             },
             api_endpoint! {
                 "get_payout_control_balance",
-                async |module: &PredictionMarkets, context, payout_control: XOnlyPublicKey| -> Amount {
+                async |module: &PredictionMarkets, context, payout_control: PublicKey| -> Amount {
                     module.api_get_payout_control_balance(&mut context.dbtx(), payout_control).await
                 }
             },
@@ -994,9 +957,9 @@ impl ServerModule for PredictionMarkets {
 
 /// api endpoints
 impl PredictionMarkets {
-async fn api_get_market(
+    async fn api_get_market(
         &self,
-        dbtx: &mut ModuleDatabaseTransaction<'_>,
+        dbtx: &mut DatabaseTransaction<'_, Committable>,
         market: OutPoint,
     ) -> Result<Option<Market>, ApiError> {
         Ok(dbtx.get_value(&db::MarketKey(market)).await)
@@ -1004,15 +967,15 @@ async fn api_get_market(
 
     async fn api_get_order(
         &self,
-        dbtx: &mut ModuleDatabaseTransaction<'_>,
-        order: XOnlyPublicKey,
+        dbtx: &mut DatabaseTransaction<'_, Committable>,
+        order: PublicKey,
     ) -> Result<Option<Order>, ApiError> {
         Ok(dbtx.get_value(&db::OrderKey(order)).await)
     }
 
     async fn api_get_payout_control_markets(
         &self,
-        dbtx: &mut ModuleDatabaseTransaction<'_>,
+        dbtx: &mut DatabaseTransaction<'_, Committable>,
         params: GetPayoutControlMarketsParams,
     ) -> Result<GetPayoutControlMarketsResult, ApiError> {
         let markets = dbtx
@@ -1033,9 +996,9 @@ async fn api_get_market(
 
     async fn api_get_market_payout_control_proposals(
         &self,
-        dbtx: &mut ModuleDatabaseTransaction<'_>,
+        dbtx: &mut DatabaseTransaction<'_, Committable>,
         market: OutPoint,
-    ) -> Result<BTreeMap<XOnlyPublicKey, Vec<Amount>>, ApiError> {
+    ) -> Result<BTreeMap<PublicKey, Vec<Amount>>, ApiError> {
         Ok(dbtx
             .find_by_prefix(&db::MarketPayoutControlProposalPrefix1 { market })
             .await
@@ -1046,7 +1009,7 @@ async fn api_get_market(
 
     async fn api_get_market_outcome_candlesticks(
         &self,
-        dbtx: &mut ModuleDatabaseTransaction<'_>,
+        dbtx: &mut DatabaseTransaction<'_, Committable>,
         params: GetMarketOutcomeCandlesticksParams,
     ) -> Result<GetMarketOutcomeCandlesticksResult, ApiError> {
         let candlesticks = dbtx
@@ -1104,8 +1067,8 @@ async fn api_get_market(
 
     async fn api_get_payout_control_balance(
         &self,
-        dbtx: &mut ModuleDatabaseTransaction<'_>,
-        payout_control: XOnlyPublicKey,
+        dbtx: &mut DatabaseTransaction<'_, Committable>,
+        payout_control: PublicKey,
     ) -> Result<Amount, ApiError> {
         Ok(dbtx
             .get_value(&db::PayoutControlBalanceKey { payout_control })
@@ -1117,7 +1080,7 @@ async fn api_get_market(
 /// market operations
 impl PredictionMarkets {
     async fn get_next_order_time_ordering(
-        dbtx: &mut ModuleDatabaseTransaction<'_>,
+        dbtx: &mut DatabaseTransaction<'_>,
         market: OutPoint,
     ) -> TimeOrdering {
         let time_ordering = dbtx
@@ -1135,14 +1098,19 @@ impl PredictionMarkets {
         time_ordering
     }
 
-    async fn process_contract_of_outcome_sources(
-        dbtx: &mut ModuleDatabaseTransaction<'_>,
-        sources: &BTreeMap<XOnlyPublicKey, ContractOfOutcomeAmount>,
+    async fn verify_and_process_contract_of_outcome_sources(
+        dbtx: &mut DatabaseTransaction<'_>,
+        sources: &BTreeMap<PublicKey, ContractOfOutcomeAmount>,
         market: &OutPoint,
         outcome: &Outcome,
-    ) -> Result<(ContractOfOutcomeAmount, Vec<XOnlyPublicKey>), ()> {
+    ) -> Result<(ContractOfOutcomeAmount, PublicKey), ()> {
+        // check that sources is not empty
+        if sources.len() == 0 {
+            return Err(());
+        }
+
         let mut total_amount = ContractOfOutcomeAmount::ZERO;
-        let mut source_order_public_keys = Vec::new();
+        let mut source_order_public_keys_combined: Option<PublicKey> = None;
 
         for (order_owner, quantity) in sources {
             let Some(mut order) = dbtx.get_value(&db::OrderKey(order_owner.to_owned())).await
@@ -1162,19 +1130,27 @@ impl PredictionMarkets {
                 order.contract_of_outcome_balance - quantity.to_owned();
             dbtx.insert_entry(&db::OrderKey(order_owner.to_owned()), &order)
                 .await;
-
             total_amount = total_amount + quantity.to_owned();
-            source_order_public_keys.push(order_owner.to_owned());
+
+            if let Some(p1) = source_order_public_keys_combined.as_mut() {
+                let Ok(p2) = p1.combine(order_owner) else {
+                    return Err(());
+                };
+
+                *p1 = p2;
+            } else {
+                source_order_public_keys_combined = Some(order_owner.to_owned());
+            }
         }
 
-        Ok((total_amount, source_order_public_keys))
+        Ok((total_amount, source_order_public_keys_combined.unwrap()))
     }
 
     async fn process_new_order(
         &self,
-        dbtx: &mut ModuleDatabaseTransaction<'_>,
+        dbtx: &mut DatabaseTransaction<'_>,
         mut market: Market,
-        order_owner: XOnlyPublicKey,
+        order_owner: PublicKey,
         market_out_point: OutPoint,
         outcome: Outcome,
         side: Side,
@@ -1407,7 +1383,7 @@ impl PredictionMarkets {
     }
 
     async fn get_outcome_side_highest_priority_order_price_quantity(
-        dbtx: &mut ModuleDatabaseTransaction<'_>,
+        dbtx: &mut DatabaseTransaction<'_>,
         order_cache: &mut OrderCache,
         highest_priority_order_cache: &mut HighestPriorityOrderCache,
         market: &OutPoint,
@@ -1444,7 +1420,7 @@ impl PredictionMarkets {
     }
 
     async fn get_own_outcome_price_quantity(
-        dbtx: &mut ModuleDatabaseTransaction<'_>,
+        dbtx: &mut DatabaseTransaction<'_>,
         order_cache: &mut OrderCache,
         highest_priority_order_cache: &mut HighestPriorityOrderCache,
         market: &OutPoint,
@@ -1463,7 +1439,7 @@ impl PredictionMarkets {
     }
 
     async fn get_other_outcomes_price_quantity(
-        dbtx: &mut ModuleDatabaseTransaction<'_>,
+        dbtx: &mut DatabaseTransaction<'_>,
         order_cache: &mut OrderCache,
         highest_priority_order_cache: &mut HighestPriorityOrderCache,
         market_out_point: &OutPoint,
@@ -1497,9 +1473,10 @@ impl PredictionMarkets {
         Some((price, quantity))
     }
 
-    /// uses highest_priority_order_cache to find the order that quantity will be processed on.
+    /// uses highest_priority_order_cache to find the order that quantity will
+    /// be processed on.
     async fn process_quantity_on_order_in_highest_priority_order_cache(
-        dbtx: &mut ModuleDatabaseTransaction<'_>,
+        dbtx: &mut DatabaseTransaction<'_>,
         market: &Market,
         order_cache: &mut OrderCache,
         highest_priority_order_cache: &mut HighestPriorityOrderCache,
@@ -1549,9 +1526,9 @@ impl PredictionMarkets {
     }
 
     async fn cancel_order(
-        dbtx: &mut ModuleDatabaseTransaction<'_>,
+        dbtx: &mut DatabaseTransaction<'_>,
         market: &Market,
-        order_owner: XOnlyPublicKey,
+        order_owner: PublicKey,
         order: &mut Order,
     ) {
         if order.quantity_waiting_for_match != ContractOfOutcomeAmount::ZERO {
@@ -1578,10 +1555,7 @@ impl PredictionMarkets {
         }
     }
 
-    async fn get_consensus_timestamp(
-        &self,
-        dbtx: &mut ModuleDatabaseTransaction<'_>,
-    ) -> UnixTimestamp {
+    async fn get_consensus_timestamp(&self, dbtx: &mut DatabaseTransaction<'_>) -> UnixTimestamp {
         let mut peers_proposed_unix_timestamps: Vec<_> = dbtx
             .find_by_prefix(&db::PeersProposedTimestampPrefixAll)
             .await
@@ -1605,12 +1579,6 @@ impl PredictionMarkets {
     }
 }
 
-/// An in-memory cache we could use for faster validation
-#[derive(Debug, Clone)]
-pub struct PredictionMarketsCache;
-
-impl fedimint_core::server::VerificationCache for PredictionMarketsCache {}
-
 impl PredictionMarkets {
     /// Create new module instance
     pub fn new(cfg: PredictionMarketsConfig) -> PredictionMarkets {
@@ -1619,8 +1587,8 @@ impl PredictionMarkets {
 }
 
 pub struct OrderCache {
-    m: HashMap<XOnlyPublicKey, Order>,
-    mut_orders: HashMap<XOnlyPublicKey, ()>,
+    m: HashMap<PublicKey, Order>,
+    mut_orders: HashMap<PublicKey, ()>,
 }
 
 impl OrderCache {
@@ -1633,8 +1601,8 @@ impl OrderCache {
 
     async fn get<'a>(
         &'a mut self,
-        dbtx: &mut ModuleDatabaseTransaction<'_>,
-        order_owner: &XOnlyPublicKey,
+        dbtx: &mut DatabaseTransaction<'_>,
+        order_owner: &PublicKey,
     ) -> &'a Order {
         if !self.m.contains_key(order_owner) {
             let order = dbtx
@@ -1651,8 +1619,8 @@ impl OrderCache {
 
     async fn get_mut<'a>(
         &'a mut self,
-        dbtx: &mut ModuleDatabaseTransaction<'_>,
-        order_owner: &XOnlyPublicKey,
+        dbtx: &mut DatabaseTransaction<'_>,
+        order_owner: &PublicKey,
     ) -> &'a mut Order {
         if !self.m.contains_key(order_owner) {
             let order = dbtx
@@ -1669,7 +1637,7 @@ impl OrderCache {
             .expect("should always produce order")
     }
 
-    async fn save(self, dbtx: &mut ModuleDatabaseTransaction<'_>) {
+    async fn save(self, dbtx: &mut DatabaseTransaction<'_>) {
         for (order_owner, _) in self.mut_orders {
             let order = self
                 .m
@@ -1681,7 +1649,7 @@ impl OrderCache {
 }
 
 pub struct HighestPriorityOrderCache {
-    v: Vec<Option<XOnlyPublicKey>>,
+    v: Vec<Option<PublicKey>>,
 }
 
 impl HighestPriorityOrderCache {
@@ -1691,7 +1659,7 @@ impl HighestPriorityOrderCache {
         }
     }
 
-    fn set(&mut self, outcome: Outcome, order_owner: Option<XOnlyPublicKey>) {
+    fn set(&mut self, outcome: Outcome, order_owner: Option<PublicKey>) {
         let v = self
             .v
             .get_mut::<usize>(outcome.into())
@@ -1699,7 +1667,7 @@ impl HighestPriorityOrderCache {
         *v = order_owner;
     }
 
-    fn get<'a>(&'a self, outcome: Outcome) -> &'a Option<XOnlyPublicKey> {
+    fn get<'a>(&'a self, outcome: Outcome) -> &'a Option<PublicKey> {
         self.v
             .get::<usize>(outcome.into())
             .expect("vec's length is number of outcomes")
@@ -1746,7 +1714,7 @@ impl CandlestickDataCreator {
 
     async fn add(
         &mut self,
-        dbtx: &mut ModuleDatabaseTransaction<'_>,
+        dbtx: &mut DatabaseTransaction<'_>,
         outcome: Outcome,
         price: Amount,
         volume: ContractOfOutcomeAmount,
@@ -1792,7 +1760,7 @@ impl CandlestickDataCreator {
         }
     }
 
-    async fn save(mut self, dbtx: &mut ModuleDatabaseTransaction<'_>) {
+    async fn save(mut self, dbtx: &mut DatabaseTransaction<'_>) {
         self.remove_old_candlesticks(dbtx).await;
 
         for (candlestick_interval, candlesticks_by_outcome) in self.candlestick_intervals {
@@ -1829,7 +1797,7 @@ impl CandlestickDataCreator {
         }
     }
 
-    async fn remove_old_candlesticks(&mut self, dbtx: &mut ModuleDatabaseTransaction<'_>) {
+    async fn remove_old_candlesticks(&mut self, dbtx: &mut DatabaseTransaction<'_>) {
         for (candlestick_interval, candlesticks_by_outcome) in self.candlestick_intervals.iter() {
             let candlestick_timestamp = self
                 .consensus_timestamp

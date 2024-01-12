@@ -4,44 +4,38 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::bail;
+use anyhow::{anyhow, bail};
 use async_stream::stream;
 use bitcoin::Denomination;
 use db::OrderIdSlot;
 use fedimint_client::derivable_secret::{ChildId, DerivableSecret};
 use fedimint_client::module::init::{ClientModuleInit, ClientModuleInitArgs};
+use fedimint_client::module::recovery::NoModuleBackup;
 use fedimint_client::module::{ClientModule, IClientModule};
-use fedimint_client::sm::{Context, Executor, ModuleNotifier, OperationId};
+use fedimint_client::sm::{Context, Executor, ModuleNotifier};
 use fedimint_client::transaction::{ClientInput, ClientOutput, TransactionBuilder};
 use fedimint_client::{Client, DynGlobalClientContext};
 use fedimint_core::api::DynGlobalApi;
-use fedimint_core::core::{Decoder, IntoDynInstance, ModuleInstanceId};
-use fedimint_core::db::{DatabaseTransaction, ModuleDatabaseTransaction};
+use fedimint_core::core::{Decoder, IntoDynInstance, ModuleInstanceId, OperationId};
+use fedimint_core::db::{DatabaseTransaction, IDatabaseTransactionOpsCoreTyped};
 use fedimint_core::module::{
-    ApiVersion, CommonModuleInit, ExtendsCommonModuleInit, ModuleCommon, MultiApiVersion,
-    TransactionItemAmount,
+    ApiVersion, CommonModuleInit, ModuleCommon, ModuleInit, MultiApiVersion, TransactionItemAmount,
 };
 use fedimint_core::util::BoxStream;
-use fedimint_prediction_markets_common::api::WaitMarketOutcomeCandlesticksParams;
-use fedimint_prediction_markets_common::{
-    api::{
-        GetMarketOutcomeCandlesticksParams, GetMarketOutcomeCandlesticksResult,
-        GetPayoutControlMarketsParams,
-    },
-    Candlestick, ContractOfOutcomeAmount, Market, MarketInformation, Order, OrderIdClientSide,
-    Outcome, Seconds, Side, UnixTimestamp, Weight, WeightRequiredForPayout,
-};
-
 use fedimint_core::{apply, async_trait_maybe_send, Amount, OutPoint, TransactionId};
+use fedimint_prediction_markets_common::api::{
+    GetMarketOutcomeCandlesticksParams, GetMarketOutcomeCandlesticksResult,
+    GetPayoutControlMarketsParams, WaitMarketOutcomeCandlesticksParams,
+};
 use fedimint_prediction_markets_common::config::PredictionMarketsClientConfig;
 use fedimint_prediction_markets_common::{
-    PredictionMarketsCommonGen, PredictionMarketsInput, PredictionMarketsModuleTypes,
-    PredictionMarketsOutput, KIND,
+    Candlestick, ContractOfOutcomeAmount, Market, MarketInformation, Order, OrderIdClientSide,
+    Outcome, PredictionMarketsCommonInit, PredictionMarketsInput, PredictionMarketsModuleTypes,
+    PredictionMarketsOutput, Seconds, Side, UnixTimestamp, Weight, WeightRequiredForPayout, KIND,
 };
-
 use futures::stream::FuturesUnordered;
 use futures::{future, StreamExt};
-use secp256k1::{KeyPair, Secp256k1, XOnlyPublicKey};
+use secp256k1::{KeyPair, PublicKey, Secp256k1};
 use states::PredictionMarketsStateMachine;
 use tokio::time::Instant;
 
@@ -55,14 +49,14 @@ mod states;
 #[apply(async_trait_maybe_send!)]
 pub trait PredictionMarketsClientExt {
     /// Get payout control public key that client controls.
-    fn get_client_payout_control(&self) -> XOnlyPublicKey;
+    fn get_client_payout_control(&self) -> PublicKey;
 
     /// Create new market
     async fn new_market(
         &self,
         contract_price: Amount,
         outcomes: Outcome,
-        payout_control_weights: BTreeMap<XOnlyPublicKey, Weight>,
+        payout_control_weights: BTreeMap<PublicKey, Weight>,
         weight_required_for_payout: WeightRequiredForPayout,
         payout_controls_fee_per_contract: Amount,
         information: MarketInformation,
@@ -75,7 +69,8 @@ pub trait PredictionMarketsClientExt {
         from_local_cache: bool,
     ) -> anyhow::Result<Option<Market>>;
 
-    /// Get all market [OutPoint]s that the client payout control has some sort of authority over.
+    /// Get all market [OutPoint]s that the client payout control has some sort
+    /// of authority over.
     ///
     /// Returns (market creation time) to (market outpoint)
     async fn get_client_payout_control_markets(
@@ -97,7 +92,7 @@ pub trait PredictionMarketsClientExt {
         &self,
         market: OutPoint,
         from_local_cache: bool,
-    ) -> anyhow::Result<BTreeMap<XOnlyPublicKey, Vec<Amount>>>;
+    ) -> anyhow::Result<BTreeMap<PublicKey, Vec<Amount>>>;
 
     /// Create new order
     async fn new_order(
@@ -124,15 +119,20 @@ pub trait PredictionMarketsClientExt {
     /// Returns how much bitcoin was sent
     async fn send_order_bitcoin_balance_to_primary_module(&self) -> anyhow::Result<Amount>;
 
-    /// Update all orders in db that could possibly be unsynced between federation and local order cache because
-    /// of an order match or because of an operation the client has performed.
+    /// Update all orders in db that could possibly be unsynced between
+    /// federation and local order cache because of an order match or
+    /// because of an operation the client has performed.
     ///
-    /// Setting sync_possible_payouts to true also syncs orders that could have changed because of a market payout.
+    /// Setting sync_possible_payouts to true also syncs orders that could have
+    /// changed because of a market payout.
     ///
-    /// Optionally provide a market (and outcome) to update only orders belonging to that market (and outcome).
-    /// This option does not effect updating orders that have changed because of an operation the client has performed.
+    /// Optionally provide a market (and outcome) to update only orders
+    /// belonging to that market (and outcome). This option does not effect
+    /// updating orders that have changed because of an operation the client has
+    /// performed.
     ///
-    /// Returns orders that recieved mutating update. Returned orders are filtered by market and outcome.
+    /// Returns orders that recieved mutating update. Returned orders are
+    /// filtered by market and outcome.
     async fn sync_orders(
         &self,
         sync_possible_payouts: bool,
@@ -141,7 +141,8 @@ pub trait PredictionMarketsClientExt {
     ) -> anyhow::Result<BTreeMap<OrderIdClientSide, Order>>;
 
     /// Get all orders in the db.
-    /// Optionally provide a market (and outcome) to get only orders belonging to that market (and outcome)
+    /// Optionally provide a market (and outcome) to get only orders belonging
+    /// to that market (and outcome)
     async fn get_orders_from_db(
         &self,
         market: Option<OutPoint>,
@@ -176,10 +177,10 @@ pub trait PredictionMarketsClientExt {
     async fn get_saved_markets(&self) -> BTreeMap<UnixTimestamp, OutPoint>;
 
     // Functions for interacting with client named payout controls
-    async fn assign_name_to_payout_control(&self, payout_control: XOnlyPublicKey, name: String);
-    async fn unassign_name_from_payout_control(&self, payout_control: XOnlyPublicKey);
-    async fn get_payout_control_name(&self, payout_control: XOnlyPublicKey) -> Option<String>;
-    async fn get_payout_control_name_map(&self) -> HashMap<XOnlyPublicKey, String>;
+    async fn assign_name_to_payout_control(&self, payout_control: PublicKey, name: String);
+    async fn unassign_name_from_payout_control(&self, payout_control: PublicKey);
+    async fn get_payout_control_name(&self, payout_control: PublicKey) -> Option<String>;
+    async fn get_payout_control_name_map(&self) -> HashMap<PublicKey, String>;
 
     /// Spend all bitcoin balance of client payout control to primary module
     ///
@@ -190,24 +191,24 @@ pub trait PredictionMarketsClientExt {
 
 #[apply(async_trait_maybe_send!)]
 impl PredictionMarketsClientExt for Client {
-    fn get_client_payout_control(&self) -> XOnlyPublicKey {
-        let (prediction_markets, _) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+    fn get_client_payout_control(&self) -> PublicKey {
+        let instance = self.get_first_module::<PredictionMarketsClientModule>();
 
-        let key = prediction_markets.get_payout_control_key_pair();
+        let key = instance.get_payout_control_key_pair();
 
-        XOnlyPublicKey::from_keypair(&key).0
+        PublicKey::from_keypair(&key)
     }
 
     async fn new_market(
         &self,
         contract_price: Amount,
         outcomes: Outcome,
-        payout_control_weights: BTreeMap<XOnlyPublicKey, Weight>,
+        payout_control_weights: BTreeMap<PublicKey, Weight>,
         weight_required_for_payout: WeightRequiredForPayout,
         payout_controls_fee_per_contract: Amount,
         information: MarketInformation,
     ) -> anyhow::Result<OutPoint> {
-        let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+        let instance = self.get_first_module::<PredictionMarketsClientModule>();
         let operation_id = OperationId::new_random();
 
         let output = ClientOutput {
@@ -229,17 +230,20 @@ impl PredictionMarketsClientExt for Client {
 
         let tx = TransactionBuilder::new().with_output(output.into_dyn(instance.id));
         let out_point = |txid, _| OutPoint { txid, out_idx: 0 };
-        let tx_id = self
+        let (tx_id, _) = self
             .finalize_and_submit_transaction(
                 operation_id,
-                PredictionMarketsCommonGen::KIND.as_str(),
+                PredictionMarketsCommonInit::KIND.as_str(),
                 out_point,
                 tx,
             )
             .await?;
 
         let tx_subscription = self.transaction_updates(operation_id).await;
-        tx_subscription.await_tx_accepted(tx_id).await?;
+        tx_subscription
+            .await_tx_accepted(tx_id)
+            .await
+            .map_err(|e| anyhow!(e))?;
 
         Ok(OutPoint {
             txid: tx_id,
@@ -252,7 +256,7 @@ impl PredictionMarketsClientExt for Client {
         market_out_point: OutPoint,
         from_local_cache: bool,
     ) -> anyhow::Result<Option<Market>> {
-        let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+        let instance = self.get_first_module::<PredictionMarketsClientModule>();
         let mut dbtx = instance.db.begin_transaction().await;
 
         match from_local_cache {
@@ -281,8 +285,9 @@ impl PredictionMarketsClientExt for Client {
 
                 if let Some(market) = market_option.as_ref() {
                     // if this is the first time we have recieved this market with a payout, refresh
-                    // market payout control proposals so that Self::get_market_payout_control_proposals
-                    // can always use local db if market in local db has payout.
+                    // market payout control proposals so that
+                    // Self::get_market_payout_control_proposals can always use
+                    // local db if market in local db has payout.
                     if market.payout.is_some() {
                         _ = self
                             .get_market_payout_control_proposals(market_out_point, false)
@@ -309,7 +314,7 @@ impl PredictionMarketsClientExt for Client {
         from_local_cache: bool,
         markets_created_after_and_including: UnixTimestamp,
     ) -> anyhow::Result<BTreeMap<UnixTimestamp, Vec<OutPoint>>> {
-        let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+        let instance = self.get_first_module::<PredictionMarketsClientModule>();
 
         let payout_control = self.get_client_payout_control();
         let mut dbtx = instance.db.begin_transaction().await;
@@ -355,7 +360,7 @@ impl PredictionMarketsClientExt for Client {
             .take_while(|(market_created, _)| {
                 future::ready(market_created >= &markets_created_after_and_including)
             });
-            
+
         let mut payout_control_markets = BTreeMap::new();
         while let Some((market_created, market)) = payout_control_markets_stream.next().await {
             if !payout_control_markets.contains_key(&market_created) {
@@ -376,8 +381,8 @@ impl PredictionMarketsClientExt for Client {
         &self,
         market: OutPoint,
         from_local_cache: bool,
-    ) -> anyhow::Result<BTreeMap<XOnlyPublicKey, Vec<Amount>>> {
-        let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+    ) -> anyhow::Result<BTreeMap<PublicKey, Vec<Amount>>> {
+        let instance = self.get_first_module::<PredictionMarketsClientModule>();
         let mut dbtx = instance.db.begin_transaction().await;
 
         match from_local_cache {
@@ -389,7 +394,8 @@ impl PredictionMarketsClientExt for Client {
                 .await),
 
             false => {
-                // if market has payout in local db, Self::get_market has called Self::get_market_payout_control_proposals to
+                // if market has payout in local db, Self::get_market has called
+                // Self::get_market_payout_control_proposals to
                 // get final version of market payout control proposals.
                 if let Some(market_db) = self.get_market(market, true).await? {
                     if market_db.payout.is_some() {
@@ -426,16 +432,15 @@ impl PredictionMarketsClientExt for Client {
         market_out_point: OutPoint,
         outcome_payouts: Vec<Amount>,
     ) -> anyhow::Result<()> {
-        let (prediction_markets, instance) =
-            self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+        let instance = self.get_first_module::<PredictionMarketsClientModule>();
         let operation_id = OperationId::new_random();
 
-        let payout_control_key = prediction_markets.get_payout_control_key_pair();
+        let payout_control_key = instance.get_payout_control_key_pair();
 
         let input = ClientInput {
             input: PredictionMarketsInput::PayoutProposal {
                 market: market_out_point,
-                payout_control: XOnlyPublicKey::from_keypair(&payout_control_key).0,
+                payout_control: PublicKey::from_keypair(&payout_control_key),
                 outcome_payouts,
             },
             state_machines: Arc::new(move |tx_id, _| {
@@ -449,17 +454,20 @@ impl PredictionMarketsClientExt for Client {
 
         let tx = TransactionBuilder::new().with_input(input.into_dyn(instance.id));
         let out_point = |txid, _| OutPoint { txid, out_idx: 0 };
-        let txid = self
+        let (txid, _) = self
             .finalize_and_submit_transaction(
                 operation_id,
-                PredictionMarketsCommonGen::KIND.as_str(),
+                PredictionMarketsCommonInit::KIND.as_str(),
                 out_point,
                 tx,
             )
             .await?;
 
         let tx_subscription = self.transaction_updates(operation_id).await;
-        tx_subscription.await_tx_accepted(txid).await?;
+        tx_subscription
+            .await_tx_accepted(txid)
+            .await
+            .map_err(|e| anyhow!(e))?;
 
         Ok(())
     }
@@ -472,8 +480,7 @@ impl PredictionMarketsClientExt for Client {
         price: Amount,
         quantity: ContractOfOutcomeAmount,
     ) -> anyhow::Result<OrderIdClientSide> {
-        let (prediction_markets, instance) =
-            self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+        let instance = self.get_first_module::<PredictionMarketsClientModule>();
         let operation_id = OperationId::new_random();
         let mut dbtx = instance.db.begin_transaction().await;
 
@@ -490,8 +497,8 @@ impl PredictionMarketsClientExt for Client {
             }
         };
 
-        let order_key = prediction_markets.order_id_to_key_pair(order_id);
-        let (owner, _) = XOnlyPublicKey::from_keypair(&order_key);
+        let order_key = instance.order_id_to_key_pair(order_id);
+        let owner = PublicKey::from_keypair(&order_key);
 
         let mut tx = TransactionBuilder::new();
         match side {
@@ -540,13 +547,13 @@ impl PredictionMarketsClientExt for Client {
                         continue;
                     }
 
-                    let order_key = prediction_markets.order_id_to_key_pair(order_id);
+                    let order_key = instance.order_id_to_key_pair(order_id);
                     let quantity_sourced_from_order = order
                         .contract_of_outcome_balance
                         .min(quantity - sourced_quantity);
 
                     sources_for_input.insert(
-                        XOnlyPublicKey::from_keypair(&order_key).0,
+                        PublicKey::from_keypair(&order_key),
                         quantity_sourced_from_order,
                     );
                     sources_for_state_machine.push(order_id);
@@ -585,21 +592,24 @@ impl PredictionMarketsClientExt for Client {
             }
         }
 
-        PredictionMarketsClientModule::new_order(dbtx.get_isolated(), order_id).await;
+        PredictionMarketsClientModule::new_order(dbtx.into_nc(), order_id).await;
         dbtx.commit_tx().await;
 
         let outpoint = |txid, _| OutPoint { txid, out_idx: 0 };
-        let txid = self
+        let (txid, _) = self
             .finalize_and_submit_transaction(
                 operation_id,
-                PredictionMarketsCommonGen::KIND.as_str(),
+                PredictionMarketsCommonInit::KIND.as_str(),
                 outpoint,
                 tx,
             )
             .await?;
 
         let tx_subscription = self.transaction_updates(operation_id).await;
-        tx_subscription.await_tx_accepted(txid).await?;
+        tx_subscription
+            .await_tx_accepted(txid)
+            .await
+            .map_err(|e| anyhow!(e))?;
 
         Ok(order_id)
     }
@@ -609,12 +619,11 @@ impl PredictionMarketsClientExt for Client {
         id: OrderIdClientSide,
         from_local_cache: bool,
     ) -> anyhow::Result<Option<Order>> {
-        let (prediction_markets, instance) =
-            self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+        let instance = self.get_first_module::<PredictionMarketsClientModule>();
         let mut dbtx = instance.db.begin_transaction().await;
 
-        let order_key = prediction_markets.order_id_to_key_pair(id);
-        let (order_owner, _) = XOnlyPublicKey::from_keypair(&order_key);
+        let order_key = instance.order_id_to_key_pair(id);
+        let order_owner = PublicKey::from_keypair(&order_key);
 
         match from_local_cache {
             true => Ok(match dbtx.get_value(&db::OrderKey { id }).await {
@@ -630,12 +639,8 @@ impl PredictionMarketsClientExt for Client {
                 let order_option = instance.api.get_order(order_owner).await?;
 
                 if let Some(order) = order_option.as_ref() {
-                    PredictionMarketsClientModule::save_order_to_db(
-                        &mut dbtx.get_isolated(),
-                        id,
-                        order,
-                    )
-                    .await;
+                    PredictionMarketsClientModule::save_order_to_db(&mut dbtx.into_nc(), id, order)
+                        .await;
 
                     dbtx.commit_tx().await;
                 }
@@ -646,15 +651,14 @@ impl PredictionMarketsClientExt for Client {
     }
 
     async fn cancel_order(&self, id: OrderIdClientSide) -> anyhow::Result<()> {
-        let (prediction_markets, instance) =
-            self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+        let instance = self.get_first_module::<PredictionMarketsClientModule>();
         let operation_id = OperationId::new_random();
 
-        let order_key = prediction_markets.order_id_to_key_pair(id);
+        let order_key = instance.order_id_to_key_pair(id);
 
         let input = ClientInput {
             input: PredictionMarketsInput::CancelOrder {
-                order: XOnlyPublicKey::from_keypair(&order_key).0,
+                order: PublicKey::from_keypair(&order_key),
             },
             state_machines: Arc::new(move |tx_id, _| {
                 vec![PredictionMarketsStateMachine::CancelOrder {
@@ -668,24 +672,26 @@ impl PredictionMarketsClientExt for Client {
 
         let tx = TransactionBuilder::new().with_input(input.into_dyn(instance.id));
         let outpoint = |txid, _| OutPoint { txid, out_idx: 0 };
-        let txid = self
+        let (txid, _) = self
             .finalize_and_submit_transaction(
                 operation_id,
-                PredictionMarketsCommonGen::KIND.as_str(),
+                PredictionMarketsCommonInit::KIND.as_str(),
                 outpoint,
                 tx,
             )
             .await?;
 
         let tx_subscription = self.transaction_updates(operation_id).await;
-        tx_subscription.await_tx_accepted(txid).await?;
+        tx_subscription
+            .await_tx_accepted(txid)
+            .await
+            .map_err(|e| anyhow!(e))?;
 
         Ok(())
     }
 
     async fn send_order_bitcoin_balance_to_primary_module(&self) -> anyhow::Result<Amount> {
-        let (prediction_markets, instance) =
-            self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+        let instance = self.get_first_module::<PredictionMarketsClientModule>();
         let operation_id = OperationId::new_random();
 
         let mut dbtx = instance.db.begin_transaction().await;
@@ -716,11 +722,11 @@ impl PredictionMarketsClientExt for Client {
         let mut total_amount = Amount::ZERO;
         let mut tx = TransactionBuilder::new();
         for (order_id, order) in orders_with_non_zero_bitcoin_balance {
-            let order_key = prediction_markets.order_id_to_key_pair(order_id);
+            let order_key = instance.order_id_to_key_pair(order_id);
 
             let input = ClientInput {
                 input: PredictionMarketsInput::ConsumeOrderBitcoinBalance {
-                    order: XOnlyPublicKey::from_keypair(&order_key).0,
+                    order: PublicKey::from_keypair(&order_key),
                     amount: order.bitcoin_balance,
                 },
                 state_machines: Arc::new(move |tx_id, _| {
@@ -739,17 +745,20 @@ impl PredictionMarketsClientExt for Client {
         }
 
         let outpoint = |txid, _| OutPoint { txid, out_idx: 0 };
-        let txid = self
+        let (txid, _) = self
             .finalize_and_submit_transaction(
                 operation_id,
-                PredictionMarketsCommonGen::KIND.as_str(),
+                PredictionMarketsCommonInit::KIND.as_str(),
                 outpoint,
                 tx,
             )
             .await?;
 
         let tx_subscription = self.transaction_updates(operation_id).await;
-        tx_subscription.await_tx_accepted(txid).await?;
+        tx_subscription
+            .await_tx_accepted(txid)
+            .await
+            .map_err(|e| anyhow!(e))?;
 
         Ok(total_amount)
     }
@@ -760,7 +769,7 @@ impl PredictionMarketsClientExt for Client {
         market: Option<OutPoint>,
         outcome: Option<Outcome>,
     ) -> anyhow::Result<BTreeMap<OrderIdClientSide, Order>> {
-        let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+        let instance = self.get_first_module::<PredictionMarketsClientModule>();
         let mut dbtx = instance.db.begin_transaction().await;
 
         let mut orders_to_update = HashMap::new();
@@ -863,7 +872,7 @@ impl PredictionMarketsClientExt for Client {
         market: Option<OutPoint>,
         outcome: Option<Outcome>,
     ) -> BTreeMap<OrderIdClientSide, Order> {
-        let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+        let instance = self.get_first_module::<PredictionMarketsClientModule>();
         let mut dbtx = instance.db.begin_transaction().await;
 
         let orders_by_market_outcome_result: Vec<_> = match market {
@@ -931,7 +940,7 @@ impl PredictionMarketsClientExt for Client {
         candlestick_interval: Seconds,
         min_candlestick_timestamp: UnixTimestamp,
     ) -> anyhow::Result<BTreeMap<UnixTimestamp, Candlestick>> {
-        let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+        let instance = self.get_first_module::<PredictionMarketsClientModule>();
 
         let GetMarketOutcomeCandlesticksResult { candlesticks } = instance
             .api
@@ -956,7 +965,7 @@ impl PredictionMarketsClientExt for Client {
         min_candlestick_timestamp: UnixTimestamp,
         min_duration_between_requests_milliseconds: u64,
     ) -> BoxStream<'static, BTreeMap<UnixTimestamp, Candlestick>> {
-        let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+        let instance = self.get_first_module::<PredictionMarketsClientModule>();
 
         let mut current_candlestick_timestamp = min_candlestick_timestamp;
         let mut current_candlestick_volume = ContractOfOutcomeAmount::ZERO;
@@ -999,7 +1008,7 @@ impl PredictionMarketsClientExt for Client {
     }
 
     async fn save_market(&self, market: OutPoint) {
-        let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+        let instance = self.get_first_module::<PredictionMarketsClientModule>();
         let mut dbtx = instance.db.begin_transaction().await;
 
         dbtx.insert_entry(&db::ClientSavedMarketsKey { market }, &UnixTimestamp::now())
@@ -1008,7 +1017,7 @@ impl PredictionMarketsClientExt for Client {
     }
 
     async fn unsave_market(&self, market: OutPoint) {
-        let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+        let instance = self.get_first_module::<PredictionMarketsClientModule>();
         let mut dbtx = instance.db.begin_transaction().await;
 
         dbtx.remove_entry(&db::ClientSavedMarketsKey { market })
@@ -1017,7 +1026,7 @@ impl PredictionMarketsClientExt for Client {
     }
 
     async fn get_saved_markets(&self) -> BTreeMap<UnixTimestamp, OutPoint> {
-        let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+        let instance = self.get_first_module::<PredictionMarketsClientModule>();
         let mut dbtx = instance.db.begin_transaction().await;
 
         dbtx.find_by_prefix(&db::ClientSavedMarketsPrefixAll)
@@ -1027,8 +1036,8 @@ impl PredictionMarketsClientExt for Client {
             .await
     }
 
-    async fn assign_name_to_payout_control(&self, payout_control: XOnlyPublicKey, name: String) {
-        let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+    async fn assign_name_to_payout_control(&self, payout_control: PublicKey, name: String) {
+        let instance = self.get_first_module::<PredictionMarketsClientModule>();
         let mut dbtx = instance.db.begin_transaction().await;
 
         dbtx.insert_entry(&db::ClientNamedPayoutControlsKey { payout_control }, &name)
@@ -1036,8 +1045,8 @@ impl PredictionMarketsClientExt for Client {
         dbtx.commit_tx().await;
     }
 
-    async fn unassign_name_from_payout_control(&self, payout_control: XOnlyPublicKey) {
-        let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+    async fn unassign_name_from_payout_control(&self, payout_control: PublicKey) {
+        let instance = self.get_first_module::<PredictionMarketsClientModule>();
         let mut dbtx = instance.db.begin_transaction().await;
 
         dbtx.remove_entry(&db::ClientNamedPayoutControlsKey { payout_control })
@@ -1045,16 +1054,16 @@ impl PredictionMarketsClientExt for Client {
         dbtx.commit_tx().await;
     }
 
-    async fn get_payout_control_name(&self, payout_control: XOnlyPublicKey) -> Option<String> {
-        let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+    async fn get_payout_control_name(&self, payout_control: PublicKey) -> Option<String> {
+        let instance = self.get_first_module::<PredictionMarketsClientModule>();
         let mut dbtx = instance.db.begin_transaction().await;
 
         dbtx.get_value(&db::ClientNamedPayoutControlsKey { payout_control })
             .await
     }
 
-    async fn get_payout_control_name_map(&self) -> HashMap<XOnlyPublicKey, String> {
-        let (_, instance) = self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+    async fn get_payout_control_name_map(&self) -> HashMap<PublicKey, String> {
+        let instance = self.get_first_module::<PredictionMarketsClientModule>();
         let mut dbtx = instance.db.begin_transaction().await;
 
         dbtx.find_by_prefix(&db::ClientNamedPayoutControlsPrefixAll)
@@ -1067,8 +1076,7 @@ impl PredictionMarketsClientExt for Client {
     async fn send_payout_control_bitcoin_balance_to_primary_module(
         &self,
     ) -> anyhow::Result<Amount> {
-        let (prediction_markets, instance) =
-            self.get_first_module::<PredictionMarketsClientModule>(&KIND);
+        let instance = self.get_first_module::<PredictionMarketsClientModule>();
         let operation_id = OperationId::new_random();
 
         let payout_control_balance = instance
@@ -1094,22 +1102,25 @@ impl PredictionMarketsClientExt for Client {
                     },
                 ]
             }),
-            keys: vec![prediction_markets.get_payout_control_key_pair()],
+            keys: vec![instance.get_payout_control_key_pair()],
         };
         tx = tx.with_input(input.into_dyn(instance.id));
 
         let outpoint = |txid, _| OutPoint { txid, out_idx: 0 };
-        let txid = self
+        let (txid, _) = self
             .finalize_and_submit_transaction(
                 operation_id,
-                PredictionMarketsCommonGen::KIND.as_str(),
+                PredictionMarketsCommonInit::KIND.as_str(),
                 outpoint,
                 tx,
             )
             .await?;
 
         let tx_subscription = self.transaction_updates(operation_id).await;
-        tx_subscription.await_tx_accepted(txid).await?;
+        tx_subscription
+            .await_tx_accepted(txid)
+            .await
+            .map_err(|e| anyhow!(e))?;
 
         Ok(payout_control_balance)
     }
@@ -1140,7 +1151,7 @@ impl PredictionMarketsClientModule {
     }
 
     async fn save_order_to_db(
-        dbtx: &mut ModuleDatabaseTransaction<'_>,
+        dbtx: &mut DatabaseTransaction<'_>,
         id: OrderIdClientSide,
         order: &Order,
     ) {
@@ -1183,13 +1194,13 @@ impl PredictionMarketsClientModule {
             .await;
     }
 
-    async fn new_order(mut dbtx: ModuleDatabaseTransaction<'_>, order: OrderIdClientSide) {
+    async fn new_order(mut dbtx: DatabaseTransaction<'_>, order: OrderIdClientSide) {
         dbtx.insert_entry(&db::OrderKey { id: order }, &OrderIdSlot::Reserved)
             .await;
     }
 
     async fn new_order_accepted(
-        mut dbtx: ModuleDatabaseTransaction<'_>,
+        mut dbtx: DatabaseTransaction<'_>,
         order: OrderIdClientSide,
         sources: Vec<OrderIdClientSide>,
     ) {
@@ -1201,20 +1212,17 @@ impl PredictionMarketsClientModule {
         }
     }
 
-    async fn new_order_failed(mut dbtx: ModuleDatabaseTransaction<'_>, order: OrderIdClientSide) {
+    async fn new_order_failed(mut dbtx: DatabaseTransaction<'_>, order: OrderIdClientSide) {
         dbtx.remove_entry(&db::OrderKey { id: order }).await;
     }
 
-    async fn cancel_order_accepted(
-        mut dbtx: ModuleDatabaseTransaction<'_>,
-        order: OrderIdClientSide,
-    ) {
+    async fn cancel_order_accepted(mut dbtx: DatabaseTransaction<'_>, order: OrderIdClientSide) {
         dbtx.insert_entry(&db::OrderNeedsUpdateKey { order }, &())
             .await;
     }
 
     async fn consume_order_bitcoin_balance_accepted(
-        mut dbtx: ModuleDatabaseTransaction<'_>,
+        mut dbtx: DatabaseTransaction<'_>,
         order: OrderIdClientSide,
     ) {
         dbtx.insert_entry(&db::OrderNeedsUpdateKey { order }, &())
@@ -1233,7 +1241,9 @@ impl Context for PredictionMarketsClientContext {}
 
 #[apply(async_trait_maybe_send!)]
 impl ClientModule for PredictionMarketsClientModule {
+    type Init = PredictionMarketsClientInit;
     type Common = PredictionMarketsModuleTypes;
+    type Backup = NoModuleBackup;
     type ModuleStateMachineContext = PredictionMarketsClientContext;
     type States = PredictionMarketsStateMachine;
 
@@ -1243,7 +1253,7 @@ impl ClientModule for PredictionMarketsClientModule {
         }
     }
 
-    fn input_amount(&self, input: &<Self::Common as ModuleCommon>::Input) -> TransactionItemAmount {
+    fn input_amount(&self, input: &<Self::Common as ModuleCommon>::Input) -> Option<TransactionItemAmount> {
         let amount;
         let fee;
 
@@ -1286,13 +1296,13 @@ impl ClientModule for PredictionMarketsClientModule {
             }
         }
 
-        TransactionItemAmount { amount, fee }
+        Some(TransactionItemAmount { amount, fee })
     }
 
     fn output_amount(
         &self,
         output: &<Self::Common as ModuleCommon>::Output,
-    ) -> TransactionItemAmount {
+    ) -> Option<TransactionItemAmount> {
         let amount;
         let fee;
 
@@ -1320,12 +1330,11 @@ impl ClientModule for PredictionMarketsClientModule {
             }
         }
 
-        TransactionItemAmount { amount, fee }
+        Some(TransactionItemAmount { amount, fee })
     }
 
     async fn handle_cli_command(
         &self,
-        client: &Client,
         args: &[ffi::OsString],
     ) -> anyhow::Result<serde_json::Value> {
         const SUPPORTED_COMMANDS: &str = "new-market, get-market, new-order, get-order, cancel-order, sync-orders, get-client-payout-control, get-candlesticks, recover-orders, withdraw-available-bitcoin, list-orders, propose-payout, get-market-payout-control-proposals, get-client-payout-control-markets";
@@ -1651,41 +1660,27 @@ impl ClientModule for PredictionMarketsClientModule {
     fn supports_backup(&self) -> bool {
         false
     }
-
-    async fn backup(
-        &self,
-        _dbtx: &mut ModuleDatabaseTransaction<'_>,
-        _executor: Executor<DynGlobalClientContext>,
-        _api: DynGlobalApi,
-        _module_instance_id: ModuleInstanceId,
-    ) -> anyhow::Result<Vec<u8>> {
-        anyhow::bail!("Backup not supported");
-    }
-
-    async fn restore(
-        &self,
-        // _dbtx: &mut ModuleDatabaseTransaction<'_>,
-        _dbtx: &mut DatabaseTransaction<'_>,
-        _module_instance_id: ModuleInstanceId,
-        _executor: Executor<DynGlobalClientContext>,
-        _api: DynGlobalApi,
-        _snapshot: Option<&[u8]>,
-    ) -> anyhow::Result<()> {
-        anyhow::bail!("Backup not supported");
-    }
 }
 
 #[derive(Debug, Clone)]
-pub struct PredictionMarketsClientGen;
+pub struct PredictionMarketsClientInit;
 
-// TODO: Boilerplate-code
-impl ExtendsCommonModuleInit for PredictionMarketsClientGen {
-    type Common = PredictionMarketsCommonGen;
+#[apply(async_trait_maybe_send!)]
+impl ModuleInit for PredictionMarketsClientInit {
+    type Common = PredictionMarketsCommonInit;
+
+    async fn dump_database(
+        &self,
+        dbtx: &mut DatabaseTransaction<'_>,
+        prefix_names: Vec<String>,
+    ) -> Box<dyn Iterator<Item = (String, Box<dyn erased_serde::Serialize + Send>)> + '_> {
+        unimplemented!();
+    }
 }
 
 /// Generates the client module
 #[apply(async_trait_maybe_send!)]
-impl ClientModuleInit for PredictionMarketsClientGen {
+impl ClientModuleInit for PredictionMarketsClientInit {
     type Module = PredictionMarketsClientModule;
 
     fn supported_api_versions(&self) -> MultiApiVersion {

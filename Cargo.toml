@@ -5,12 +5,12 @@ members = [
     "fedimint-prediction-markets-common",
     "fedimint-prediction-markets-client",
     "fedimint-prediction-markets-server",
-    "fedimint-dummy-tests",
+    "fedimint-prediction-markets-tests",
     "tests",
 ]
 resolver = "2"
 
-[workspace.metadata]
+[workspace.metadata] 
 authors = ["The Fedimint Developers"]
 edition = "2021"
 description = "Fedimint compiled with custom module set"

@@ -8,7 +8,7 @@ use fedimint_prediction_markets_common::{
     UnixTimestamp, ContractOfOutcomeAmount
 };
 
-use secp256k1::XOnlyPublicKey;
+use secp256k1::PublicKey;
 use serde::Serialize;
 use strum_macros::EnumIter;
 
@@ -30,10 +30,10 @@ pub enum DbKeyPrefix {
     /// [NewMarket] [OutPoint] to [Market]
     Market = 0x01,
 
-    /// Owner's [XOnlyPublicKey] to [Order]
+    /// Owner's [PublicKey] to [Order]
     Order = 0x02,
 
-    /// Payout Control's [XOnlyPublicKey] to [Amount]
+    /// Payout Control's [PublicKey] to [Amount]
     PayoutControlBalance = 0x03,
 
     /// ----- 20-3f reserved for market operation -----
@@ -53,14 +53,14 @@ pub enum DbKeyPrefix {
     /// Amount is (contract_price - price of order) for buys
     /// Amount is (price of order) for sells
     ///
-    /// (Market's [OutPoint], [Outcome], [Side], [Amount], [TimeOrdering]) to (Order's [XOnlyPublicKey])
+    /// (Market's [OutPoint], [Outcome], [Side], [Amount], [TimeOrdering]) to (Order's [PublicKey])
     OrderPriceTimePriority = 0x22,
 
     /// Used to implement threshold payouts.
     ///
-    /// (Market's [OutPoint], [XOnlyPublicKey]) to [Vec<Amount>]
+    /// (Market's [OutPoint], [PublicKey]) to [Vec<Amount>]
     MarketPayoutControlProposal = 0x23,
-    /// (Market's [OutPoint], [Vec<Amount>], [XOnlyPublicKey]) to ()
+    /// (Market's [OutPoint], [Vec<Amount>], [PublicKey]) to ()
     MarketOutcomePayoutsProposals = 0x24,
 
     /// Used to implement candlestick data
@@ -75,7 +75,7 @@ pub enum DbKeyPrefix {
     /// Indexes payout control keys to the markets they belong to
     /// Used by client for data recovery in case of data loss
     ///
-    /// ([XOnlyPublicKey], Market's consensus creation [UnixTimestamp], Market's [OutPoint]) to ()
+    /// ([PublicKey], Market's consensus creation [UnixTimestamp], Market's [OutPoint]) to ()
     PayoutControlMarkets = 0x40,
 
     /// ----- 60-6f reserved for consensus items -----
@@ -125,7 +125,7 @@ impl_db_lookup!(key = MarketKey, query_prefix = MarketPrefixAll);
 
 /// Order
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
-pub struct OrderKey(pub XOnlyPublicKey);
+pub struct OrderKey(pub PublicKey);
 
 #[derive(Debug, Encodable, Decodable)]
 pub struct OrderPrefixAll;
@@ -162,7 +162,7 @@ impl_db_lookup!(
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
 pub struct OrdersByMarketKey {
     pub market: OutPoint,
-    pub order: XOnlyPublicKey,
+    pub order: PublicKey,
 }
 
 #[derive(Debug, Encodable, Decodable)]
@@ -224,7 +224,7 @@ pub struct OrderPriceTimePriorityPrefixAll;
 
 impl_db_record!(
     key = OrderPriceTimePriorityKey,
-    value = XOnlyPublicKey,
+    value = PublicKey,
     db_prefix = DbKeyPrefix::OrderPriceTimePriority,
 );
 
@@ -237,7 +237,7 @@ impl_db_lookup!(
 /// PayoutControlMarkets
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
 pub struct PayoutControlMarketsKey {
-    pub payout_control: XOnlyPublicKey,
+    pub payout_control: PublicKey,
     pub market_created: UnixTimestamp,
     pub market: OutPoint,
 }
@@ -247,12 +247,12 @@ pub struct PayoutControlMarketsPrefixAll;
 
 #[derive(Debug, Encodable, Decodable)]
 pub struct PayoutControlMarketsPrefix1 {
-    pub payout_control: XOnlyPublicKey,
+    pub payout_control: PublicKey,
 }
 
 #[derive(Debug, Encodable, Decodable)]
 pub struct PayoutControlMarketsPrefix2 {
-    pub payout_control: XOnlyPublicKey,
+    pub payout_control: PublicKey,
     pub market_created: UnixTimestamp,
 }
 
@@ -293,7 +293,7 @@ impl_db_lookup!(
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
 pub struct MarketPayoutControlProposalKey {
     pub market: OutPoint,
-    pub payout_control: XOnlyPublicKey,
+    pub payout_control: PublicKey,
 }
 
 #[derive(Debug, Encodable, Decodable)]
@@ -321,7 +321,7 @@ impl_db_lookup!(
 pub struct MarketOutcomePayoutsProposalsKey {
     pub market: OutPoint,
     pub outcome_payouts: Vec<Amount>,
-    pub payout_control: XOnlyPublicKey,
+    pub payout_control: PublicKey,
 }
 
 #[derive(Debug, Encodable, Decodable)]
@@ -402,7 +402,7 @@ impl_db_lookup!(
 // PayoutControlBalance
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
 pub struct PayoutControlBalanceKey {
-    pub payout_control: XOnlyPublicKey,
+    pub payout_control: PublicKey,
 }
 
 #[derive(Debug, Encodable, Decodable)]

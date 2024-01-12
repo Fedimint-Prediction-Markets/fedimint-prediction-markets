@@ -1,5 +1,5 @@
 [package]
-name = "fedimint-dummy-tests"
+name = "fedimint-prediction-markets-tests"
 version = "0.2.1"
 authors = ["The Fedimint Developers"]
 edition = "2021"
@@ -8,16 +8,16 @@ license = "MIT"
 publish = false
 
 [[test]]
-name = "fedimint_dummy_tests"
+name = "fedimint_prediction_markets_tests"
 path = "tests/tests.rs"
 
 [dependencies]
 anyhow = "1.0.66"
 fedimint-client = { workspace = true }
 fedimint-core = { workspace = true }
-fedimint-dummy-client = { path = "../fedimint-dummy-client" }
-fedimint-dummy-common = { path = "../fedimint-dummy-common" }
-fedimint-dummy-server = { path = "../fedimint-dummy-server" }
+fedimint-prediction-markets-client = { path = "../fedimint-prediction-markets-client" }
+fedimint-prediction-markets-common = { path = "../fedimint-prediction-markets-common" }
+fedimint-prediction-markets-server = { path = "../fedimint-prediction-markets-server" }
 fedimint-logging = { workspace = true }
 fedimint-server = { workspace = true }
 fedimint-testing = { workspace = true }
@@ -27,4 +27,4 @@ tokio = { version = "1.26.0", features = ["sync"] }
 tracing = "0.1.37"
 
 [dev-dependencies]
-threshold_crypto = { workspace = true }
+# threshold_crypto = { workspace = true }
