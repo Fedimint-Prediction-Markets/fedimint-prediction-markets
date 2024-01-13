@@ -7,8 +7,8 @@ async fn main() -> anyhow::Result<()> {
         .with_module(fedimint_prediction_markets_server::PredictionMarketsInit)
         .with_extra_module_inits_params(
             3,
-            fedimint_prediction_markets_server::KIND,
-            fedimint_prediction_markets_server::config::PredictionMarketsGenParams::default(),
+            fedimint_prediction_markets_common::KIND,
+            fedimint_prediction_markets_common::config::PredictionMarketsGenParams::default(),
         )
         .run()
         .await

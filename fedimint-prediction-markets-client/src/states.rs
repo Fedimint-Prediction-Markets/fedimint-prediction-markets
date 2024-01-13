@@ -1,16 +1,19 @@
-use fedimint_client::sm::{DynState, OperationId, State, StateTransition};
-use fedimint_client::transaction::TxSubmissionError;
+use std::time::Duration;
+
+use fedimint_client::sm::{DynState, State, StateTransition};
 use fedimint_client::DynGlobalClientContext;
-use fedimint_core::core::{IntoDynInstance, ModuleInstanceId};
+use fedimint_core::core::{IntoDynInstance, ModuleInstanceId, OperationId};
 use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::TransactionId;
 use fedimint_prediction_markets_common::OrderIdClientSide;
+
 // use serde::{Deserialize, Serialize};
 // use thiserror::Error;
-
 use crate::{PredictionMarketsClientContext, PredictionMarketsClientModule};
 
-/// Tracks a transaction. Not being used currently for prediction markets
+const RETRY_DELAY: Duration = Duration::from_secs(1);
+
+/// Tracks a transaction.
 #[derive(Debug, Clone, Eq, PartialEq, Decodable, Encodable)]
 pub enum PredictionMarketsStateMachine {
     NewMarket {
@@ -290,7 +293,7 @@ async fn await_tx_accepted(
     context: DynGlobalClientContext,
     id: OperationId,
     txid: TransactionId,
-) -> Result<(), TxSubmissionError> {
+) -> Result<(), String> {
     context.await_tx_accepted(id, txid).await
 }
 
