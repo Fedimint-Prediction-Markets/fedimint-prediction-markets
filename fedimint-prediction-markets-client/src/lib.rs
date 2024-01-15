@@ -12,11 +12,11 @@ use fedimint_client::derivable_secret::{ChildId, DerivableSecret};
 use fedimint_client::module::init::{ClientModuleInit, ClientModuleInitArgs};
 use fedimint_client::module::recovery::NoModuleBackup;
 use fedimint_client::module::{ClientContext, ClientModule, IClientModule};
-use fedimint_client::sm::{Context, Executor, ModuleNotifier};
+use fedimint_client::sm::{Context, ModuleNotifier};
 use fedimint_client::transaction::{ClientInput, ClientOutput, TransactionBuilder};
-use fedimint_client::{Client, DynGlobalClientContext};
-use fedimint_core::api::{DynGlobalApi, DynModuleApi};
-use fedimint_core::core::{Decoder, IntoDynInstance, ModuleInstanceId, OperationId};
+use fedimint_client::DynGlobalClientContext;
+use fedimint_core::api::DynModuleApi;
+use fedimint_core::core::{Decoder, OperationId};
 use fedimint_core::db::{
     Committable, Database, DatabaseTransaction, IDatabaseTransactionOpsCoreTyped,
 };
@@ -33,7 +33,7 @@ use fedimint_prediction_markets_common::config::PredictionMarketsClientConfig;
 use fedimint_prediction_markets_common::{
     Candlestick, ContractOfOutcomeAmount, Market, MarketInformation, Order, OrderIdClientSide,
     Outcome, PredictionMarketsCommonInit, PredictionMarketsInput, PredictionMarketsModuleTypes,
-    PredictionMarketsOutput, Seconds, Side, UnixTimestamp, Weight, WeightRequiredForPayout, KIND,
+    PredictionMarketsOutput, Seconds, Side, UnixTimestamp, Weight, WeightRequiredForPayout,
 };
 use futures::stream::FuturesUnordered;
 use futures::{future, StreamExt};
@@ -215,13 +215,13 @@ impl Context for PredictionMarketsClientContext {}
 // }
 
 impl PredictionMarketsClientModule {
-    fn get_client_payout_control(&self) -> PublicKey {
+    pub fn get_client_payout_control(&self) -> PublicKey {
         let key = self.get_payout_control_key_pair();
 
         PublicKey::from_keypair(&key)
     }
 
-    async fn new_market(
+    pub async fn new_market(
         &self,
         contract_price: Amount,
         outcomes: Outcome,
@@ -273,7 +273,7 @@ impl PredictionMarketsClientModule {
         })
     }
 
-    async fn get_market(
+    pub async fn get_market(
         &self,
         market_out_point: OutPoint,
         from_local_cache: bool,
@@ -317,7 +317,7 @@ impl PredictionMarketsClientModule {
         }
     }
 
-    async fn get_client_payout_control_markets(
+    pub async fn get_client_payout_control_markets(
         &self,
         from_local_cache: bool,
         markets_created_after_and_including: UnixTimestamp,
@@ -383,7 +383,7 @@ impl PredictionMarketsClientModule {
         Ok(payout_control_markets)
     }
 
-    async fn get_market_payout_control_proposals(
+    pub async fn get_market_payout_control_proposals(
         &self,
         market: OutPoint,
         from_local_cache: bool,
@@ -423,7 +423,7 @@ impl PredictionMarketsClientModule {
         }
     }
 
-    async fn propose_payout(
+    pub async fn propose_payout(
         &self,
         market_out_point: OutPoint,
         outcome_payouts: Vec<Amount>,
@@ -468,7 +468,7 @@ impl PredictionMarketsClientModule {
         Ok(())
     }
 
-    async fn new_order(
+    pub async fn new_order(
         &self,
         market: OutPoint,
         outcome: Outcome,
@@ -587,7 +587,7 @@ impl PredictionMarketsClientModule {
             }
         }
 
-        PredictionMarketsClientModule::db_new_order(&mut dbtx, order_id).await;
+        PredictionMarketsClientModule::reserve_order_id_slot(&mut dbtx, order_id).await;
         dbtx.commit_tx().await;
 
         let outpoint = |txid, _| OutPoint { txid, out_idx: 0 };
@@ -610,7 +610,7 @@ impl PredictionMarketsClientModule {
         Ok(order_id)
     }
 
-    async fn get_order(
+    pub async fn get_order(
         &self,
         id: OrderIdClientSide,
         from_local_cache: bool,
@@ -645,7 +645,7 @@ impl PredictionMarketsClientModule {
         }
     }
 
-    async fn cancel_order(&self, id: OrderIdClientSide) -> anyhow::Result<()> {
+    pub async fn cancel_order(&self, id: OrderIdClientSide) -> anyhow::Result<()> {
         let operation_id = OperationId::new_random();
 
         let order_key = self.order_id_to_key_pair(id);
@@ -684,7 +684,7 @@ impl PredictionMarketsClientModule {
         Ok(())
     }
 
-    async fn send_order_bitcoin_balance_to_primary_module(&self) -> anyhow::Result<Amount> {
+    pub async fn send_order_bitcoin_balance_to_primary_module(&self) -> anyhow::Result<Amount> {
         let operation_id = OperationId::new_random();
 
         let mut dbtx = self.db.begin_transaction().await;
@@ -756,7 +756,7 @@ impl PredictionMarketsClientModule {
         Ok(total_amount)
     }
 
-    async fn sync_orders(
+    pub async fn sync_orders(
         &self,
         sync_possible_payouts: bool,
         market: Option<OutPoint>,
@@ -859,7 +859,7 @@ impl PredictionMarketsClientModule {
         Ok(changed_orders)
     }
 
-    async fn get_orders_from_db(
+    pub async fn get_orders_from_db(
         &self,
         market: Option<OutPoint>,
         outcome: Option<Outcome>,
@@ -905,7 +905,7 @@ impl PredictionMarketsClientModule {
         orders
     }
 
-    async fn recover_orders(&self, gap_size_to_check: u16) -> anyhow::Result<()> {
+    pub async fn recover_orders(&self, gap_size_to_check: u16) -> anyhow::Result<()> {
         let mut order_id = OrderIdClientSide(0);
         let mut slots_without_order = 0u16;
         loop {
@@ -924,7 +924,7 @@ impl PredictionMarketsClientModule {
         Ok(())
     }
 
-    async fn get_candlesticks(
+    pub async fn get_candlesticks(
         &self,
         market: OutPoint,
         outcome: Outcome,
@@ -946,55 +946,55 @@ impl PredictionMarketsClientModule {
         Ok(candlesticks)
     }
 
-    // async fn stream_candlesticks(
-    //     &self,
-    //     market: OutPoint,
-    //     outcome: Outcome,
-    //     candlestick_interval: Seconds,
-    //     min_candlestick_timestamp: UnixTimestamp,
-    //     min_duration_between_requests_milliseconds: u64,
-    // ) -> BoxStream<'static, BTreeMap<UnixTimestamp, Candlestick>> {
-    //     let mut current_candlestick_timestamp = min_candlestick_timestamp;
-    //     let mut current_candlestick_volume = ContractOfOutcomeAmount::ZERO;
-    //     Box::pin(stream! {
-    //         loop {
-    //             let start_api_request = Instant::now();
-    //             let api_result = self.module_api.wait_market_outcome_candlesticks(WaitMarketOutcomeCandlesticksParams {
-    //                 market,
-    //                 outcome,
-    //                 candlestick_interval,
-    //                 candlestick_timestamp: current_candlestick_timestamp,
-    //                 candlestick_volume: current_candlestick_volume,
-    //             }).await;
+    pub async fn stream_candlesticks<'a>(
+        &'a self,
+        market: OutPoint,
+        outcome: Outcome,
+        candlestick_interval: Seconds,
+        min_candlestick_timestamp: UnixTimestamp,
+        min_duration_between_requests_milliseconds: u64,
+    ) -> BoxStream<'a, BTreeMap<UnixTimestamp, Candlestick>> {
+        let mut current_candlestick_timestamp = min_candlestick_timestamp;
+        let mut current_candlestick_volume = ContractOfOutcomeAmount::ZERO;
+        Box::pin(stream! {
+            loop {
+                let start_api_request = Instant::now();
+                let api_result = self.module_api.wait_market_outcome_candlesticks(WaitMarketOutcomeCandlesticksParams {
+                    market,
+                    outcome,
+                    candlestick_interval,
+                    candlestick_timestamp: current_candlestick_timestamp,
+                    candlestick_volume: current_candlestick_volume,
+                }).await;
 
-    //             match api_result {
-    //                 Ok(r) => {
-    //                     let b = r.candlesticks.into_iter().collect::<BTreeMap<_, _>>();
-    //                     if b.len() != 0 {
-    //                         let (newest_candlestick_timestamp, newest_candlestick) = b.last_key_value().expect("should always be some");
+                match api_result {
+                    Ok(r) => {
+                        let b = r.candlesticks.into_iter().collect::<BTreeMap<_, _>>();
+                        if b.len() != 0 {
+                            let (newest_candlestick_timestamp, newest_candlestick) = b.last_key_value().expect("should always be some");
 
-    //                         current_candlestick_timestamp = newest_candlestick_timestamp.to_owned();
-    //                         current_candlestick_volume = newest_candlestick.volume;
+                            current_candlestick_timestamp = newest_candlestick_timestamp.to_owned();
+                            current_candlestick_volume = newest_candlestick.volume;
 
-    //                         yield b;
-    //                     }
-    //                 }
-    //                 Err(_) => {
-    //                     // wait some time on error
-    //                     tokio::time::sleep(Duration::from_secs(5)).await;
-    //                 }
-    //             }
+                            yield b;
+                        }
+                    }
+                    Err(_) => {
+                        // wait some time on error
+                        tokio::time::sleep(Duration::from_secs(5)).await;
+                    }
+                }
 
-    //             tokio::time::sleep(
-    //                 Duration::from_millis(min_duration_between_requests_milliseconds).saturating_sub(
-    //                     Instant::now().duration_since(start_api_request)
-    //                 )
-    //             ).await;
-    //         }
-    //     })
-    // }
+                tokio::time::sleep(
+                    Duration::from_millis(min_duration_between_requests_milliseconds).saturating_sub(
+                        Instant::now().duration_since(start_api_request)
+                    )
+                ).await;
+            }
+        })
+    }
 
-    async fn save_market(&self, market: OutPoint) {
+    pub async fn save_market(&self, market: OutPoint) {
         let mut dbtx = self.db.begin_transaction().await;
 
         dbtx.insert_entry(&db::ClientSavedMarketsKey { market }, &UnixTimestamp::now())
@@ -1002,7 +1002,7 @@ impl PredictionMarketsClientModule {
         dbtx.commit_tx().await;
     }
 
-    async fn unsave_market(&self, market: OutPoint) {
+    pub async fn unsave_market(&self, market: OutPoint) {
         let mut dbtx = self.db.begin_transaction().await;
 
         dbtx.remove_entry(&db::ClientSavedMarketsKey { market })
@@ -1010,7 +1010,7 @@ impl PredictionMarketsClientModule {
         dbtx.commit_tx().await;
     }
 
-    async fn get_saved_markets(&self) -> BTreeMap<UnixTimestamp, OutPoint> {
+    pub async fn get_saved_markets(&self) -> BTreeMap<UnixTimestamp, OutPoint> {
         let mut dbtx = self.db.begin_transaction().await;
 
         dbtx.find_by_prefix(&db::ClientSavedMarketsPrefixAll)
@@ -1020,7 +1020,7 @@ impl PredictionMarketsClientModule {
             .await
     }
 
-    async fn assign_name_to_payout_control(&self, payout_control: PublicKey, name: String) {
+    pub async fn assign_name_to_payout_control(&self, payout_control: PublicKey, name: String) {
         let mut dbtx = self.db.begin_transaction().await;
 
         dbtx.insert_entry(&db::ClientNamedPayoutControlsKey { payout_control }, &name)
@@ -1028,7 +1028,7 @@ impl PredictionMarketsClientModule {
         dbtx.commit_tx().await;
     }
 
-    async fn unassign_name_from_payout_control(&self, payout_control: PublicKey) {
+    pub async fn unassign_name_from_payout_control(&self, payout_control: PublicKey) {
         let mut dbtx = self.db.begin_transaction().await;
 
         dbtx.remove_entry(&db::ClientNamedPayoutControlsKey { payout_control })
@@ -1036,14 +1036,14 @@ impl PredictionMarketsClientModule {
         dbtx.commit_tx().await;
     }
 
-    async fn get_payout_control_name(&self, payout_control: PublicKey) -> Option<String> {
+    pub async fn get_payout_control_name(&self, payout_control: PublicKey) -> Option<String> {
         let mut dbtx = self.db.begin_transaction().await;
 
         dbtx.get_value(&db::ClientNamedPayoutControlsKey { payout_control })
             .await
     }
 
-    async fn get_payout_control_name_map(&self) -> HashMap<PublicKey, String> {
+    pub async fn get_payout_control_name_map(&self) -> HashMap<PublicKey, String> {
         let mut dbtx = self.db.begin_transaction().await;
 
         dbtx.find_by_prefix(&db::ClientNamedPayoutControlsPrefixAll)
@@ -1053,7 +1053,7 @@ impl PredictionMarketsClientModule {
             .await
     }
 
-    async fn send_payout_control_bitcoin_balance_to_primary_module(
+    pub async fn send_payout_control_bitcoin_balance_to_primary_module(
         &self,
     ) -> anyhow::Result<Amount> {
         let operation_id = OperationId::new_random();
@@ -1166,42 +1166,26 @@ impl PredictionMarketsClientModule {
             .await;
     }
 
-    async fn db_new_order(
+    async fn reserve_order_id_slot(
         dbtx: &mut DatabaseTransaction<'_, Committable>,
         order: OrderIdClientSide,
     ) {
         dbtx.insert_entry(&db::OrderKey { id: order }, &OrderIdSlot::Reserved)
             .await;
     }
-
-    async fn new_order_accepted(
-        mut dbtx: DatabaseTransaction<'_>,
-        order: OrderIdClientSide,
-        sources: Vec<OrderIdClientSide>,
-    ) {
-        dbtx.insert_entry(&db::OrderNeedsUpdateKey { order }, &())
-            .await;
-        for source in sources {
-            dbtx.insert_entry(&db::OrderNeedsUpdateKey { order: source }, &())
-                .await;
-        }
-    }
-
-    async fn new_order_failed(mut dbtx: DatabaseTransaction<'_>, order: OrderIdClientSide) {
+    
+    async fn unreserve_order_id_slot(mut dbtx: DatabaseTransaction<'_>, order: OrderIdClientSide) {
         dbtx.remove_entry(&db::OrderKey { id: order }).await;
     }
 
-    async fn cancel_order_accepted(mut dbtx: DatabaseTransaction<'_>, order: OrderIdClientSide) {
-        dbtx.insert_entry(&db::OrderNeedsUpdateKey { order }, &())
-            .await;
-    }
-
-    async fn consume_order_bitcoin_balance_accepted(
+    async fn set_order_needs_update(
         mut dbtx: DatabaseTransaction<'_>,
-        order: OrderIdClientSide,
-    ) {
-        dbtx.insert_entry(&db::OrderNeedsUpdateKey { order }, &())
-            .await;
+        orders: Vec<OrderIdClientSide>,
+    ) { 
+        for order in orders {
+            dbtx.insert_entry(&db::OrderNeedsUpdateKey { order }, &())
+                .await;
+        }
     }
 }
 
@@ -1634,8 +1618,8 @@ impl ModuleInit for PredictionMarketsClientInit {
 
     async fn dump_database(
         &self,
-        dbtx: &mut DatabaseTransaction<'_>,
-        prefix_names: Vec<String>,
+        _dbtx: &mut DatabaseTransaction<'_>,
+        _prefix_names: Vec<String>,
     ) -> Box<dyn Iterator<Item = (String, Box<dyn erased_serde::Serialize + Send>)> + '_> {
         unimplemented!();
     }
