@@ -3,7 +3,7 @@ use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::{plugin_types_trait_impl_config, Amount};
 use serde::{Deserialize, Serialize};
 
-use crate::{ContractOfOutcomeAmount, Outcome, PredictionMarketsCommonGen, Seconds};
+use crate::{ContractOfOutcomeAmount, Outcome, PredictionMarketsCommonInit, Seconds};
 
 /// Parameters necessary to generate this module's configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,7 +97,7 @@ pub struct PredictionMarketsConfigPrivate {
 
 // Wire together the configs for this module
 plugin_types_trait_impl_config!(
-    PredictionMarketsCommonGen,
+    PredictionMarketsCommonInit,
     PredictionMarketsGenParams,
     PredictionMarketsGenParamsLocal,
     PredictionMarketsGenParamsConsensus,

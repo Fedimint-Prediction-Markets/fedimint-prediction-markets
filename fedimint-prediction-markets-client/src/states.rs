@@ -1,16 +1,15 @@
-use fedimint_client::sm::{DynState, OperationId, State, StateTransition};
-use fedimint_client::transaction::TxSubmissionError;
+use fedimint_client::sm::{DynState, State, StateTransition};
 use fedimint_client::DynGlobalClientContext;
-use fedimint_core::core::{IntoDynInstance, ModuleInstanceId};
+use fedimint_core::core::{IntoDynInstance, ModuleInstanceId, OperationId};
 use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::TransactionId;
 use fedimint_prediction_markets_common::OrderIdClientSide;
+
 // use serde::{Deserialize, Serialize};
 // use thiserror::Error;
-
 use crate::{PredictionMarketsClientContext, PredictionMarketsClientModule};
 
-/// Tracks a transaction. Not being used currently for prediction markets
+/// Tracks a transaction.
 #[derive(Debug, Clone, Eq, PartialEq, Decodable, Encodable)]
 pub enum PredictionMarketsStateMachine {
     NewMarket {
@@ -123,12 +122,14 @@ impl State for PredictionMarketsStateMachine {
                     move |dbtx, res, _state: Self| match res {
                         // tx accepted
                         Ok(_) => {
-                            let sources = sources.clone();
+                            let mut changed_orders = Vec::new();
+                            changed_orders.push(order);
+                            changed_orders.append(&mut sources.clone());
+
                             Box::pin(async move {
-                                PredictionMarketsClientModule::new_order_accepted(
+                                PredictionMarketsClientModule::set_order_needs_update(
                                     dbtx.module_tx(),
-                                    order,
-                                    sources,
+                                    changed_orders,
                                 )
                                 .await;
                                 PredictionMarketsStateMachine::NewOrderAccepted(operation_id)
@@ -136,7 +137,7 @@ impl State for PredictionMarketsStateMachine {
                         }
                         // tx rejected
                         Err(_) => Box::pin(async move {
-                            PredictionMarketsClientModule::new_order_failed(
+                            PredictionMarketsClientModule::unreserve_order_id_slot(
                                 dbtx.module_tx(),
                                 order,
                             )
@@ -159,9 +160,9 @@ impl State for PredictionMarketsStateMachine {
                     move |dbtx, res, _state: Self| match res {
                         // tx accepted
                         Ok(_) => Box::pin(async move {
-                            PredictionMarketsClientModule::cancel_order_accepted(
+                            PredictionMarketsClientModule::set_order_needs_update(
                                 dbtx.module_tx(),
-                                order,
+                                vec![order],
                             )
                             .await;
                             PredictionMarketsStateMachine::CancelOrderAccepted(operation_id)
@@ -186,9 +187,9 @@ impl State for PredictionMarketsStateMachine {
                     move |dbtx, res, _state: Self| match res {
                         // tx accepted
                         Ok(_) => Box::pin(async move {
-                            PredictionMarketsClientModule::consume_order_bitcoin_balance_accepted(
+                            PredictionMarketsClientModule::set_order_needs_update(
                                 dbtx.module_tx(),
-                                order,
+                                vec![order],
                             )
                             .await;
                             PredictionMarketsStateMachine::ConsumeOrderBitcoinBalanceAccepted(
@@ -290,7 +291,7 @@ async fn await_tx_accepted(
     context: DynGlobalClientContext,
     id: OperationId,
     txid: TransactionId,
-) -> Result<(), TxSubmissionError> {
+) -> Result<(), String> {
     context.await_tx_accepted(id, txid).await
 }
 

@@ -1,5 +1,5 @@
 use fedimint_core::encoding::{Decodable, Encodable};
-use secp256k1::XOnlyPublicKey;
+use secp256k1::PublicKey;
 use serde::{Deserialize, Serialize};
 use fedimint_core::OutPoint;
 
@@ -7,7 +7,7 @@ use crate::{Candlestick, Outcome, Seconds, UnixTimestamp, ContractOfOutcomeAmoun
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct GetPayoutControlMarketsParams {
-    pub payout_control: XOnlyPublicKey,
+    pub payout_control: PublicKey,
     pub markets_created_after_and_including: UnixTimestamp,
 }
 

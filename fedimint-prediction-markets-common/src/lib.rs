@@ -11,7 +11,7 @@ use fedimint_core::core::{Decoder, ModuleInstanceId, ModuleKind};
 use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::module::{CommonModuleInit, ModuleCommon, ModuleConsensusVersion};
 use fedimint_core::{plugin_types_trait_impl_common, Amount, OutPoint};
-use secp256k1::XOnlyPublicKey;
+use secp256k1::PublicKey;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -27,7 +27,7 @@ pub mod api;
 pub const KIND: ModuleKind = ModuleKind::from_static_str("prediction-markets");
 
 /// Modules are non-compatible with older versions
-pub const CONSENSUS_VERSION: ModuleConsensusVersion = ModuleConsensusVersion(0);
+pub const CONSENSUS_VERSION: ModuleConsensusVersion = ModuleConsensusVersion { major: 2, minor: 0 };
 
 /// Non-transaction items that will be submitted to consensus
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize, Encodable, Decodable)]
@@ -39,28 +39,28 @@ pub enum PredictionMarketsConsensusItem {
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Deserialize, Serialize, Encodable, Decodable)]
 pub enum PredictionMarketsInput {
     NewSellOrder {
-        owner: XOnlyPublicKey,
+        owner: PublicKey,
         market: OutPoint,
         outcome: Outcome,
         price: Amount,
-        sources: BTreeMap<XOnlyPublicKey, ContractOfOutcomeAmount>,
+        sources: BTreeMap<PublicKey, ContractOfOutcomeAmount>,
     },
     ConsumeOrderBitcoinBalance {
-        order: XOnlyPublicKey,
+        order: PublicKey,
         amount: Amount,
     },
     CancelOrder {
-        order: XOnlyPublicKey,
+        order: PublicKey,
     },
     PayoutProposal {
         market: OutPoint,
-        payout_control: XOnlyPublicKey,
+        payout_control: PublicKey,
         outcome_payouts: Vec<Amount>,
     },
     ConsumePayoutControlBitcoinBalance {
-        payout_control: XOnlyPublicKey,
+        payout_control: PublicKey,
         amount: Amount,
-    }
+    },
 }
 
 /// Output for a fedimint transaction
@@ -69,13 +69,13 @@ pub enum PredictionMarketsOutput {
     NewMarket {
         contract_price: Amount,
         outcomes: Outcome,
-        payout_control_weights: BTreeMap<XOnlyPublicKey, Weight>,
+        payout_control_weights: BTreeMap<PublicKey, Weight>,
         weight_required_for_payout: WeightRequiredForPayout,
         payout_controls_fee_per_contract: Amount,
         information: MarketInformation,
     },
     NewBuyOrder {
-        owner: XOnlyPublicKey,
+        owner: PublicKey,
         market: OutPoint,
         outcome: Outcome,
         price: Amount,
@@ -91,8 +91,8 @@ pub enum PredictionMarketsOutputOutcome {
 }
 
 /// Errors that might be returned by the server
-#[derive(Debug, Clone, Eq, PartialEq, Hash, Error)]
-pub enum PredictionMarketsError {
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Error, Encodable, Decodable)]
+pub enum PredictionMarketsInputError {
     // general
     #[error("Not enough funds")]
     NotEnoughFunds,
@@ -110,7 +110,38 @@ pub enum PredictionMarketsError {
     OrderValidationFailed,
     #[error("Order does not exist")]
     OrderDoesNotExist,
-    #[error("Order with owner XOnlyPublicKey already exists. Each XOnlyPublicKey can only control 1 order.")]
+    #[error("Order with owner PublicKey already exists. Each PublicKey can only control 1 order.")]
+    OrderAlreadyExists,
+    #[error("Order's quantity waiting for match is already 0")]
+    OrderAlreadyFinished,
+
+    // payouts
+    #[error("Payout validation failed")]
+    PayoutValidationFailed,
+    #[error("A payout already exists for market")]
+    PayoutAlreadyExists,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Error, Encodable, Decodable)]
+pub enum PredictionMarketsOutputError {
+    // general
+    #[error("Not enough funds")]
+    NotEnoughFunds,
+
+    // markets
+    #[error("New market does not pass server validation")]
+    MarketValidationFailed,
+    #[error("Market does not exist")]
+    MarketDoesNotExist,
+    #[error("The market has already finished. A payout has occured")]
+    MarketFinished,
+
+    // orders
+    #[error("New order does not pass server validation")]
+    OrderValidationFailed,
+    #[error("Order does not exist")]
+    OrderDoesNotExist,
+    #[error("Order with owner PublicKey already exists. Each PublicKey can only control 1 order.")]
     OrderAlreadyExists,
     #[error("Order's quantity waiting for match is already 0")]
     OrderAlreadyFinished,
@@ -132,13 +163,15 @@ plugin_types_trait_impl_common!(
     PredictionMarketsInput,
     PredictionMarketsOutput,
     PredictionMarketsOutputOutcome,
-    PredictionMarketsConsensusItem
+    PredictionMarketsConsensusItem,
+    PredictionMarketsInputError,
+    PredictionMarketsOutputError
 );
 
 #[derive(Debug)]
-pub struct PredictionMarketsCommonGen;
+pub struct PredictionMarketsCommonInit;
 
-impl CommonModuleInit for PredictionMarketsCommonGen {
+impl CommonModuleInit for PredictionMarketsCommonInit {
     const CONSENSUS_VERSION: ModuleConsensusVersion = CONSENSUS_VERSION;
     const KIND: ModuleKind = KIND;
 
@@ -184,7 +217,7 @@ pub struct Market {
     // static user set parameters
     pub contract_price: Amount,
     pub outcomes: Outcome,
-    pub payout_controls_weights: BTreeMap<XOnlyPublicKey, Weight>,
+    pub payout_controls_weights: BTreeMap<PublicKey, Weight>,
     pub weight_required_for_payout: WeightRequiredForPayout,
     pub payout_controls_fee_per_contract: Amount,
     pub information: MarketInformation,
@@ -204,7 +237,7 @@ impl Market {
         consensus_max_payout_control_keys: &u16,
         contract_price: &Amount,
         outcomes: &Outcome,
-        payout_control_weights: &BTreeMap<XOnlyPublicKey, Weight>,
+        payout_control_weights: &BTreeMap<PublicKey, Weight>,
         payout_controls_fee_per_contract: &Amount,
         information: &MarketInformation,
     ) -> Result<(), ()> {
@@ -276,7 +309,8 @@ impl Payout {
         market: &Market,
         outcome_payouts: &Vec<Amount>,
     ) -> Result<(), ()> {
-        let payout_per_contract_after_fee = market.contract_price - market.payout_controls_fee_per_contract;
+        let payout_per_contract_after_fee =
+            market.contract_price - market.payout_controls_fee_per_contract;
 
         let mut total_payout = Amount::ZERO;
         for outcome_payout in outcome_payouts {
@@ -297,8 +331,8 @@ impl Payout {
     }
 }
 
-/// On the server side, Orders are identified by the [XOnlyPublicKey] that controls them. Each [XOnlyPublicKey]
-/// can only control a single order.
+/// On the server side, Orders are identified by the [PublicKey] that
+/// controls them. Each [PublicKey] can only control a single order.
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct Order {
     /// ----- static -----
