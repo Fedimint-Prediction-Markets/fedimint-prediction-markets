@@ -65,162 +65,54 @@ pub struct PredictionMarketsClientContext {
 
 impl Context for PredictionMarketsClientContext {}
 
-/// Exposed API calls for client apps
+#[derive(Debug, Clone)]
+pub struct PredictionMarketsClientInit;
 
-// #[apply(async_trait_maybe_send!)]
-// pub trait PredictionMarketsClientExt {
-//     /// Get payout control public key that client controls.
-//     fn get_client_payout_control(&self) -> PublicKey;
+#[apply(async_trait_maybe_send!)]
+impl ModuleInit for PredictionMarketsClientInit {
+    type Common = PredictionMarketsCommonInit;
 
-//     /// Create new market
-//     async fn new_market(
-//         &self,
-//         contract_price: Amount,
-//         outcomes: Outcome,
-//         payout_control_weights: BTreeMap<PublicKey, Weight>,
-//         weight_required_for_payout: WeightRequiredForPayout,
-//         payout_controls_fee_per_contract: Amount,
-//         information: MarketInformation,
-//     ) -> anyhow::Result<OutPoint>;
+    async fn dump_database(
+        &self,
+        _dbtx: &mut DatabaseTransaction<'_>,
+        _prefix_names: Vec<String>,
+    ) -> Box<dyn Iterator<Item = (String, Box<dyn erased_serde::Serialize + Send>)> + '_> {
+        unimplemented!();
+    }
+}
 
-//     /// Get Market
-//     async fn get_market(
-//         &self,
-//         market: OutPoint,
-//         from_local_cache: bool,
-//     ) -> anyhow::Result<Option<Market>>;
+/// Generates the client module
+#[apply(async_trait_maybe_send!)]
+impl ClientModuleInit for PredictionMarketsClientInit {
+    type Module = PredictionMarketsClientModule;
 
-//     /// Get all market [OutPoint]s that the client payout control has some
-// sort     /// of authority over.
-//     ///
-//     /// Returns (market creation time) to (market outpoint)
-//     async fn get_client_payout_control_markets(
-//         &self,
-//         from_local_cache: bool,
-//         markets_created_after_and_including: UnixTimestamp,
-//     ) -> anyhow::Result<BTreeMap<UnixTimestamp, Vec<OutPoint>>>;
+    fn supported_api_versions(&self) -> MultiApiVersion {
+        MultiApiVersion::try_from_iter([ApiVersion { major: 0, minor: 0 }])
+            .expect("no version conflicts")
+    }
 
-//     /// Propose payout
-//     async fn propose_payout(
-//         &self,
-//         market: OutPoint,
-//         outcome_payouts: Vec<Amount>,
-//     ) -> anyhow::Result<()>;
+    async fn init(&self, args: &ClientModuleInitArgs<Self>) -> anyhow::Result<Self::Module> {
+        Ok(PredictionMarketsClientModule {
+            cfg: args.cfg().to_owned(),
+            root_secret: args.module_root_secret().to_owned(),
+            _notifier: args.notifier().to_owned(),
+            ctx: args.context(),
+            db: args.db().to_owned(),
+            module_api: args.module_api().to_owned(),
+        })
+    }
+}
 
-//     /// Get market payout control proposals
-//     /// payout control to proposed payout
-//     async fn get_market_payout_control_proposals(
-//         &self,
-//         market: OutPoint,
-//         from_local_cache: bool,
-//     ) -> anyhow::Result<BTreeMap<PublicKey, Vec<Amount>>>;
-
-//     /// Create new order
-//     async fn new_order(
-//         &self,
-//         market: OutPoint,
-//         outcome: Outcome,
-//         side: Side,
-//         price: Amount,
-//         quantity: ContractOfOutcomeAmount,
-//     ) -> anyhow::Result<OrderIdClientSide>;
-
-//     /// Get order
-//     async fn get_order(
-//         &self,
-//         id: OrderIdClientSide,
-//         from_local_cache: bool,
-//     ) -> anyhow::Result<Option<Order>>;
-
-//     /// Cancel order
-//     async fn cancel_order(&self, id: OrderIdClientSide) ->
-// anyhow::Result<()>;
-
-//     /// Spend all bitcoin balance on orders to primary module
-//     ///
-//     /// Returns how much bitcoin was sent
-//     async fn send_order_bitcoin_balance_to_primary_module(&self) ->
-// anyhow::Result<Amount>;
-
-//     /// Update all orders in db that could possibly be unsynced between
-//     /// federation and local order cache because of an order match or
-//     /// because of an operation the client has performed.
-//     ///
-//     /// Setting sync_possible_payouts to true also syncs orders that could
-// have     /// changed because of a market payout.
-//     ///
-//     /// Optionally provide a market (and outcome) to update only orders
-//     /// belonging to that market (and outcome). This option does not effect
-//     /// updating orders that have changed because of an operation the client
-// has     /// performed.
-//     ///
-//     /// Returns orders that recieved mutating update. Returned orders are
-//     /// filtered by market and outcome.
-//     async fn sync_orders(
-//         &self,
-//         sync_possible_payouts: bool,
-//         market: Option<OutPoint>,
-//         outcome: Option<Outcome>,
-//     ) -> anyhow::Result<BTreeMap<OrderIdClientSide, Order>>;
-
-//     /// Get all orders in the db.
-//     /// Optionally provide a market (and outcome) to get only orders
-// belonging     /// to that market (and outcome)
-//     async fn get_orders_from_db(
-//         &self,
-//         market: Option<OutPoint>,
-//         outcome: Option<Outcome>,
-//     ) -> BTreeMap<OrderIdClientSide, Order>;
-
-//     /// Used to recover orders in case of recovery from seed
-//     async fn recover_orders(&self, gap_size_to_check: u16) ->
-// anyhow::Result<()>;
-
-//     /// get most recent candlesticks
-//     async fn get_candlesticks(
-//         &self,
-//         market: OutPoint,
-//         outcome: Outcome,
-//         candlestick_interval: Seconds,
-//         min_candlestick_timestamp: UnixTimestamp,
-//     ) -> anyhow::Result<BTreeMap<UnixTimestamp, Candlestick>>;
-
-//     async fn stream_candlesticks(
-//         &self,
-//         market: OutPoint,
-//         outcome: Outcome,
-//         candlestick_interval: Seconds,
-//         min_candlestick_timestamp: UnixTimestamp,
-//         min_duration_between_requests_milliseconds: u64,
-//     ) -> BoxStream<'static, BTreeMap<UnixTimestamp, Candlestick>>;
-
-//     // Functions for interacting with client saved markets.
-//     async fn save_market(&self, market: OutPoint);
-//     async fn unsave_market(&self, market: OutPoint);
-//     // return map: saved timestamp to market.
-//     async fn get_saved_markets(&self) -> BTreeMap<UnixTimestamp, OutPoint>;
-
-//     // Functions for interacting with client named payout controls
-//     async fn assign_name_to_payout_control(&self, payout_control: PublicKey,
-// name: String);     async fn unassign_name_from_payout_control(&self,
-// payout_control: PublicKey);     async fn get_payout_control_name(&self,
-// payout_control: PublicKey) -> Option<String>;     async fn
-// get_payout_control_name_map(&self) -> HashMap<PublicKey, String>;
-
-//     /// Spend all bitcoin balance of client payout control to primary module
-//     ///
-//     /// Returns how much bitcoin was sent
-//     async fn send_payout_control_bitcoin_balance_to_primary_module(&self)
-//         -> anyhow::Result<Amount>;
-// }
-
+/// Public api 
 impl PredictionMarketsClientModule {
+    /// Get payout control public key that client controls.
     pub fn get_client_payout_control(&self) -> PublicKey {
         let key = self.get_payout_control_key_pair();
 
         PublicKey::from_keypair(&key)
     }
 
+    /// Create new market
     pub async fn new_market(
         &self,
         contract_price: Amount,
@@ -273,6 +165,7 @@ impl PredictionMarketsClientModule {
         })
     }
 
+    /// Get market
     pub async fn get_market(
         &self,
         market_out_point: OutPoint,
@@ -317,6 +210,7 @@ impl PredictionMarketsClientModule {
         }
     }
 
+    /// Get client payout controls markets.
     pub async fn get_client_payout_control_markets(
         &self,
         from_local_cache: bool,
@@ -383,6 +277,7 @@ impl PredictionMarketsClientModule {
         Ok(payout_control_markets)
     }
 
+    /// get market's payout control proposals.
     pub async fn get_market_payout_control_proposals(
         &self,
         market: OutPoint,
@@ -423,6 +318,7 @@ impl PredictionMarketsClientModule {
         }
     }
 
+    /// propose payout using client's payout control.
     pub async fn propose_payout(
         &self,
         market_out_point: OutPoint,
@@ -468,6 +364,7 @@ impl PredictionMarketsClientModule {
         Ok(())
     }
 
+    /// Create new order
     pub async fn new_order(
         &self,
         market: OutPoint,
@@ -610,6 +507,7 @@ impl PredictionMarketsClientModule {
         Ok(order_id)
     }
 
+    /// Get order
     pub async fn get_order(
         &self,
         id: OrderIdClientSide,
@@ -634,8 +532,7 @@ impl PredictionMarketsClientModule {
                 let order_option = self.module_api.get_order(order_owner).await?;
 
                 if let Some(order) = order_option.as_ref() {
-                    PredictionMarketsClientModule::save_order_to_db(&mut dbtx, id, order)
-                        .await;
+                    PredictionMarketsClientModule::save_order_to_db(&mut dbtx, id, order).await;
 
                     dbtx.commit_tx().await;
                 }
@@ -645,6 +542,7 @@ impl PredictionMarketsClientModule {
         }
     }
 
+    /// Cancel order
     pub async fn cancel_order(&self, id: OrderIdClientSide) -> anyhow::Result<()> {
         let operation_id = OperationId::new_random();
 
@@ -666,7 +564,8 @@ impl PredictionMarketsClientModule {
 
         let tx = TransactionBuilder::new().with_input(self.ctx.make_client_input(input));
         let outpoint = |txid, _| OutPoint { txid, out_idx: 0 };
-        let (txid, _) = self.ctx
+        let (txid, _) = self
+            .ctx
             .finalize_and_submit_transaction(
                 operation_id,
                 PredictionMarketsCommonInit::KIND.as_str(),
@@ -684,6 +583,7 @@ impl PredictionMarketsClientModule {
         Ok(())
     }
 
+    /// send all bitcoin balance from orders to primary module
     pub async fn send_order_bitcoin_balance_to_primary_module(&self) -> anyhow::Result<Amount> {
         let operation_id = OperationId::new_random();
 
@@ -738,7 +638,8 @@ impl PredictionMarketsClientModule {
         }
 
         let outpoint = |txid, _| OutPoint { txid, out_idx: 0 };
-        let (txid, _) = self.ctx
+        let (txid, _) = self
+            .ctx
             .finalize_and_submit_transaction(
                 operation_id,
                 PredictionMarketsCommonInit::KIND.as_str(),
@@ -756,6 +657,20 @@ impl PredictionMarketsClientModule {
         Ok(total_amount)
     }
 
+    /// Update all orders in db that could possibly be unsynced between
+    /// federation and local order cache because of an order match or
+    /// because of an operation the client has performed.
+    ///
+    /// Setting sync_possible_payouts to true also syncs orders that could have
+    /// changed because of a market payout.
+    ///
+    /// Optionally provide a market (and outcome) to update only orders
+    /// belonging to that market (and outcome). This option does not effect
+    /// updating orders that have changed because of an operation the client has
+    /// performed.
+    ///
+    /// Returns orders that recieved mutating update. Returned orders are
+    /// filtered by market and outcome.
     pub async fn sync_orders(
         &self,
         sync_possible_payouts: bool,
@@ -859,6 +774,9 @@ impl PredictionMarketsClientModule {
         Ok(changed_orders)
     }
 
+    /// Get all orders in the db.
+    /// Optionally provide a market (and outcome) to get only orders belonging
+    /// to that market (and outcome)
     pub async fn get_orders_from_db(
         &self,
         market: Option<OutPoint>,
@@ -905,7 +823,8 @@ impl PredictionMarketsClientModule {
         orders
     }
 
-    pub async fn recover_orders(&self, gap_size_to_check: u16) -> anyhow::Result<()> {
+    /// Scans for all orders that the client owns.
+    pub async fn resync_order_slots(&self, gap_size_to_check: u16) -> anyhow::Result<()> {
         let mut order_id = OrderIdClientSide(0);
         let mut slots_without_order = 0u16;
         loop {
@@ -924,6 +843,7 @@ impl PredictionMarketsClientModule {
         Ok(())
     }
 
+    /// get most recent candlesticks
     pub async fn get_candlesticks(
         &self,
         market: OutPoint,
@@ -946,6 +866,7 @@ impl PredictionMarketsClientModule {
         Ok(candlesticks)
     }
 
+    /// create stream of candlesticks
     pub async fn stream_candlesticks<'a>(
         &'a self,
         market: OutPoint,
@@ -994,6 +915,7 @@ impl PredictionMarketsClientModule {
         })
     }
 
+    /// Interacts with client saved markets.
     pub async fn save_market(&self, market: OutPoint) {
         let mut dbtx = self.db.begin_transaction().await;
 
@@ -1002,6 +924,7 @@ impl PredictionMarketsClientModule {
         dbtx.commit_tx().await;
     }
 
+    /// Interacts with client saved markets.
     pub async fn unsave_market(&self, market: OutPoint) {
         let mut dbtx = self.db.begin_transaction().await;
 
@@ -1010,6 +933,9 @@ impl PredictionMarketsClientModule {
         dbtx.commit_tx().await;
     }
 
+    /// Interacts with client saved markets.
+    ///
+    /// return map is saved timestamp to market.
     pub async fn get_saved_markets(&self) -> BTreeMap<UnixTimestamp, OutPoint> {
         let mut dbtx = self.db.begin_transaction().await;
 
@@ -1020,6 +946,7 @@ impl PredictionMarketsClientModule {
             .await
     }
 
+    /// Interacts with client named payout control public keys
     pub async fn assign_name_to_payout_control(&self, payout_control: PublicKey, name: String) {
         let mut dbtx = self.db.begin_transaction().await;
 
@@ -1028,6 +955,7 @@ impl PredictionMarketsClientModule {
         dbtx.commit_tx().await;
     }
 
+    /// Interacts with client named payout control public keys
     pub async fn unassign_name_from_payout_control(&self, payout_control: PublicKey) {
         let mut dbtx = self.db.begin_transaction().await;
 
@@ -1036,6 +964,7 @@ impl PredictionMarketsClientModule {
         dbtx.commit_tx().await;
     }
 
+    /// Interacts with client named payout control public keys
     pub async fn get_payout_control_name(&self, payout_control: PublicKey) -> Option<String> {
         let mut dbtx = self.db.begin_transaction().await;
 
@@ -1043,6 +972,7 @@ impl PredictionMarketsClientModule {
             .await
     }
 
+    /// Interacts with client named payout control public keys
     pub async fn get_payout_control_name_map(&self) -> HashMap<PublicKey, String> {
         let mut dbtx = self.db.begin_transaction().await;
 
@@ -1053,6 +983,9 @@ impl PredictionMarketsClientModule {
             .await
     }
 
+    /// Spend all bitcoin balance of client payout control to primary module
+    ///
+    /// Returns how much bitcoin was sent
     pub async fn send_payout_control_bitcoin_balance_to_primary_module(
         &self,
     ) -> anyhow::Result<Amount> {
@@ -1086,7 +1019,8 @@ impl PredictionMarketsClientModule {
         tx = tx.with_input(self.ctx.make_client_input(input));
 
         let outpoint = |txid, _| OutPoint { txid, out_idx: 0 };
-        let (txid, _) = self.ctx
+        let (txid, _) = self
+            .ctx
             .finalize_and_submit_transaction(
                 operation_id,
                 PredictionMarketsCommonInit::KIND.as_str(),
@@ -1105,6 +1039,7 @@ impl PredictionMarketsClientModule {
     }
 }
 
+/// private
 impl PredictionMarketsClientModule {
     const MARKET_PAYOUT_CONTROL_FROM_ROOT_SECRET: ChildId = ChildId(0);
     const ORDER_FROM_ROOT_SECRET: ChildId = ChildId(1);
@@ -1123,7 +1058,7 @@ impl PredictionMarketsClientModule {
     }
 
     async fn save_order_to_db(
-        dbtx: &mut DatabaseTransaction<'_,Committable>,
+        dbtx: &mut DatabaseTransaction<'_, Committable>,
         id: OrderIdClientSide,
         order: &Order,
     ) {
@@ -1173,7 +1108,7 @@ impl PredictionMarketsClientModule {
         dbtx.insert_entry(&db::OrderKey { id: order }, &OrderIdSlot::Reserved)
             .await;
     }
-    
+
     async fn unreserve_order_id_slot(mut dbtx: DatabaseTransaction<'_>, order: OrderIdClientSide) {
         dbtx.remove_entry(&db::OrderKey { id: order }).await;
     }
@@ -1181,7 +1116,7 @@ impl PredictionMarketsClientModule {
     async fn set_order_needs_update(
         mut dbtx: DatabaseTransaction<'_>,
         orders: Vec<OrderIdClientSide>,
-    ) { 
+    ) {
         for order in orders {
             dbtx.insert_entry(&db::OrderNeedsUpdateKey { order }, &())
                 .await;
@@ -1553,7 +1488,7 @@ impl ClientModule for PredictionMarketsClientModule {
                 }
 
                 Ok(serde_json::to_value(
-                    self.recover_orders(gap_size_to_check).await?,
+                    self.resync_order_slots(gap_size_to_check).await?,
                 )?)
             }
 
@@ -1606,43 +1541,5 @@ impl ClientModule for PredictionMarketsClientModule {
 
     fn supports_backup(&self) -> bool {
         false
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct PredictionMarketsClientInit;
-
-#[apply(async_trait_maybe_send!)]
-impl ModuleInit for PredictionMarketsClientInit {
-    type Common = PredictionMarketsCommonInit;
-
-    async fn dump_database(
-        &self,
-        _dbtx: &mut DatabaseTransaction<'_>,
-        _prefix_names: Vec<String>,
-    ) -> Box<dyn Iterator<Item = (String, Box<dyn erased_serde::Serialize + Send>)> + '_> {
-        unimplemented!();
-    }
-}
-
-/// Generates the client module
-#[apply(async_trait_maybe_send!)]
-impl ClientModuleInit for PredictionMarketsClientInit {
-    type Module = PredictionMarketsClientModule;
-
-    fn supported_api_versions(&self) -> MultiApiVersion {
-        MultiApiVersion::try_from_iter([ApiVersion { major: 0, minor: 0 }])
-            .expect("no version conflicts")
-    }
-
-    async fn init(&self, args: &ClientModuleInitArgs<Self>) -> anyhow::Result<Self::Module> {
-        Ok(PredictionMarketsClientModule {
-            cfg: args.cfg().to_owned(),
-            root_secret: args.module_root_secret().to_owned(),
-            _notifier: args.notifier().to_owned(),
-            ctx: args.context(),
-            db: args.db().to_owned(),
-            module_api: args.module_api().to_owned(),
-        })
     }
 }
