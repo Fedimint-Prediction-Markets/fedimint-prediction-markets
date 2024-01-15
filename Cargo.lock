@@ -1781,7 +1781,7 @@ dependencies = [
 
 [[package]]
 name = "fedimint-prediction-markets-client"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1803,7 +1803,7 @@ dependencies = [
 
 [[package]]
 name = "fedimint-prediction-markets-common"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-trait",
