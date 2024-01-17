@@ -867,20 +867,23 @@ impl PredictionMarketsClientModule {
     }
 
     /// create stream of candlesticks
-    pub async fn stream_candlesticks<'a>(
-        &'a self,
+    pub async fn stream_candlesticks(
+        &self,
         market: OutPoint,
         outcome: Outcome,
         candlestick_interval: Seconds,
         min_candlestick_timestamp: UnixTimestamp,
         min_duration_between_requests_milliseconds: u64,
-    ) -> BoxStream<'a, BTreeMap<UnixTimestamp, Candlestick>> {
+    ) -> BoxStream<'static, BTreeMap<UnixTimestamp, Candlestick>> {
+        let module_api = self.module_api.clone();
+
         let mut current_candlestick_timestamp = min_candlestick_timestamp;
         let mut current_candlestick_volume = ContractOfOutcomeAmount::ZERO;
+
         Box::pin(stream! {
             loop {
                 let start_api_request = Instant::now();
-                let api_result = self.module_api.wait_market_outcome_candlesticks(WaitMarketOutcomeCandlesticksParams {
+                let api_result = module_api.wait_market_outcome_candlesticks(WaitMarketOutcomeCandlesticksParams {
                     market,
                     outcome,
                     candlestick_interval,
