@@ -875,7 +875,7 @@ impl PredictionMarketsClientModule {
         min_candlestick_timestamp: UnixTimestamp,
         min_duration_between_requests_milliseconds: u64,
     ) -> BoxStream<'static, BTreeMap<UnixTimestamp, Candlestick>> {
-        let module_api = self.module_api.clone();
+        let module_api = self.module_api.to_owned();
 
         let mut current_candlestick_timestamp = min_candlestick_timestamp;
         let mut current_candlestick_volume = ContractOfOutcomeAmount::ZERO;
