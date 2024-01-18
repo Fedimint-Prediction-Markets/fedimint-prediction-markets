@@ -2,10 +2,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::ffi;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::{anyhow, bail};
-use async_stream::stream;
 use bitcoin::Denomination;
 use db::OrderIdSlot;
 use fedimint_client::derivable_secret::{ChildId, DerivableSecret};
@@ -23,11 +21,11 @@ use fedimint_core::db::{
 use fedimint_core::module::{
     ApiVersion, CommonModuleInit, ModuleCommon, ModuleInit, MultiApiVersion, TransactionItemAmount,
 };
-use fedimint_core::util::BoxStream;
 use fedimint_core::{apply, async_trait_maybe_send, Amount, OutPoint, TransactionId};
 use fedimint_prediction_markets_common::api::{
     GetMarketOutcomeCandlesticksParams, GetMarketOutcomeCandlesticksResult,
     GetPayoutControlMarketsParams, WaitMarketOutcomeCandlesticksParams,
+    WaitMarketOutcomeCandlesticksResult,
 };
 use fedimint_prediction_markets_common::config::PredictionMarketsClientConfig;
 use fedimint_prediction_markets_common::{
@@ -39,7 +37,6 @@ use futures::stream::FuturesUnordered;
 use futures::{future, StreamExt};
 use secp256k1::{KeyPair, PublicKey, Secp256k1};
 use states::PredictionMarketsStateMachine;
-use tokio::time::Instant;
 
 use crate::api::PredictionMarketsFederationApi;
 
@@ -103,7 +100,7 @@ impl ClientModuleInit for PredictionMarketsClientInit {
     }
 }
 
-/// Public api 
+/// Public api
 impl PredictionMarketsClientModule {
     /// Get payout control public key that client controls.
     pub fn get_client_payout_control(&self) -> PublicKey {
@@ -866,56 +863,29 @@ impl PredictionMarketsClientModule {
         Ok(candlesticks)
     }
 
-    /// create stream of candlesticks
-    pub async fn stream_candlesticks(
+    /// wait for new candlesticks
+    pub async fn wait_candlesticks(
         &self,
         market: OutPoint,
         outcome: Outcome,
         candlestick_interval: Seconds,
-        min_candlestick_timestamp: UnixTimestamp,
-        min_duration_between_requests_milliseconds: u64,
-    ) -> BoxStream<'static, BTreeMap<UnixTimestamp, Candlestick>> {
-        let module_api = self.module_api.to_owned();
+        candlestick_timestamp: UnixTimestamp,
+        candlestick_volume: ContractOfOutcomeAmount,
+    ) -> anyhow::Result<BTreeMap<UnixTimestamp, Candlestick>> {
+        let WaitMarketOutcomeCandlesticksResult { candlesticks } = self
+            .module_api
+            .wait_market_outcome_candlesticks(WaitMarketOutcomeCandlesticksParams {
+                market,
+                outcome,
+                candlestick_interval,
+                candlestick_timestamp,
+                candlestick_volume,
+            })
+            .await?;
 
-        let mut current_candlestick_timestamp = min_candlestick_timestamp;
-        let mut current_candlestick_volume = ContractOfOutcomeAmount::ZERO;
+        let candlesticks = candlesticks.into_iter().collect::<BTreeMap<_, _>>();
 
-        Box::pin(stream! {
-            loop {
-                let start_api_request = Instant::now();
-                let api_result = module_api.wait_market_outcome_candlesticks(WaitMarketOutcomeCandlesticksParams {
-                    market,
-                    outcome,
-                    candlestick_interval,
-                    candlestick_timestamp: current_candlestick_timestamp,
-                    candlestick_volume: current_candlestick_volume,
-                }).await;
-
-                match api_result {
-                    Ok(r) => {
-                        let b = r.candlesticks.into_iter().collect::<BTreeMap<_, _>>();
-                        if b.len() != 0 {
-                            let (newest_candlestick_timestamp, newest_candlestick) = b.last_key_value().expect("should always be some");
-
-                            current_candlestick_timestamp = newest_candlestick_timestamp.to_owned();
-                            current_candlestick_volume = newest_candlestick.volume;
-
-                            yield b;
-                        }
-                    }
-                    Err(_) => {
-                        // wait some time on error
-                        tokio::time::sleep(Duration::from_secs(5)).await;
-                    }
-                }
-
-                tokio::time::sleep(
-                    Duration::from_millis(min_duration_between_requests_milliseconds).saturating_sub(
-                        Instant::now().duration_since(start_api_request)
-                    )
-                ).await;
-            }
-        })
+        Ok(candlesticks)
     }
 
     /// Interacts with client saved markets.
