@@ -1790,7 +1790,7 @@ impl CandlestickDataCreator {
                         outcome: i as Outcome,
                         candlestick_interval,
                     },
-                    &(self.consensus_timestamp, candlestick.volume),
+                    &(candlestick_timestamp, candlestick.volume),
                 )
                 .await;
             }
