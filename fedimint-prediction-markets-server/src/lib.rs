@@ -10,7 +10,7 @@ use fedimint_core::config::{
 };
 use fedimint_core::core::ModuleInstanceId;
 use fedimint_core::db::{
-     DatabaseTransaction, DatabaseVersion, IDatabaseTransactionOpsCoreTyped, MigrationMap, Committable,
+     DatabaseTransaction, DatabaseVersion, IDatabaseTransactionOpsCoreTyped, MigrationMap, Committable, Database,
 };
 use fedimint_core::module::audit::Audit;
 use fedimint_core::module::{
@@ -19,6 +19,7 @@ use fedimint_core::module::{
     SupportedModuleApiVersions, TransactionItemAmount,
 };
 use fedimint_core::server::DynServerModule;
+
 use fedimint_core::{push_db_pair_items, Amount, OutPoint, PeerId, ServerModule};
 use fedimint_prediction_markets_common::api::{
     GetMarketOutcomeCandlesticksParams, GetMarketOutcomeCandlesticksResult,
@@ -222,7 +223,7 @@ impl ServerModuleInit for PredictionMarketsInit {
 
     /// Initialize the module
     async fn init(&self, args: &ServerModuleInitArgs<Self>) -> anyhow::Result<DynServerModule> {
-        Ok(PredictionMarkets::new(args.cfg().to_typed()?).into())
+        Ok(PredictionMarkets::new(args.cfg().to_typed()?, args.db().to_owned()).into())
     }
 
     /// DB migrations to move from old to newer versions
@@ -310,6 +311,14 @@ impl ServerModuleInit for PredictionMarketsInit {
 #[derive(Debug)]
 pub struct PredictionMarkets {
     pub cfg: PredictionMarketsConfig,
+    pub db: Database,
+}
+
+impl PredictionMarkets {
+    /// Create new module instance
+    pub fn new(cfg: PredictionMarketsConfig, db: Database) -> PredictionMarkets {
+        PredictionMarkets { cfg, db }
+    }
 }
 
 /// Implementation of consensus for the server module
@@ -1047,7 +1056,7 @@ impl PredictionMarkets {
         );
         _ = future.await;
 
-        let mut dbtx = context.dbtx();
+        let mut dbtx = self.db.begin_transaction_nc().await;
         let candlesticks = dbtx
             .find_by_prefix_sorted_descending(&db::MarketOutcomeCandlesticksPrefix3 {
                 market: params.market,
@@ -1576,13 +1585,6 @@ impl PredictionMarkets {
             .get(i)
             .expect("should always be some")
             .to_owned()
-    }
-}
-
-impl PredictionMarkets {
-    /// Create new module instance
-    pub fn new(cfg: PredictionMarketsConfig) -> PredictionMarkets {
-        PredictionMarkets { cfg }
     }
 }
 
