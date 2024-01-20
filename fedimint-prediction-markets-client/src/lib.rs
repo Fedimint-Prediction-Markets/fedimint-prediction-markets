@@ -27,7 +27,7 @@ use fedimint_prediction_markets_common::api::{
     GetPayoutControlMarketsParams, WaitMarketOutcomeCandlesticksParams,
     WaitMarketOutcomeCandlesticksResult,
 };
-use fedimint_prediction_markets_common::config::PredictionMarketsClientConfig;
+use fedimint_prediction_markets_common::config::{PredictionMarketsClientConfig, GeneralConsensus};
 use fedimint_prediction_markets_common::{
     Candlestick, ContractOfOutcomeAmount, Market, MarketInformation, Order, OrderIdClientSide,
     Outcome, PredictionMarketsCommonInit, PredictionMarketsInput, PredictionMarketsModuleTypes,
@@ -102,6 +102,10 @@ impl ClientModuleInit for PredictionMarketsClientInit {
 
 /// Public api
 impl PredictionMarketsClientModule {
+    pub fn get_general_consensus(&self) -> GeneralConsensus {
+        self.cfg.gc.to_owned()
+    }
+
     /// Get payout control public key that client controls.
     pub fn get_client_payout_control(&self) -> PublicKey {
         let key = self.get_payout_control_key_pair();
