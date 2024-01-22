@@ -27,7 +27,7 @@ use fedimint_prediction_markets_common::api::{
     GetPayoutControlMarketsParams, WaitMarketOutcomeCandlesticksParams,
     WaitMarketOutcomeCandlesticksResult,
 };
-use fedimint_prediction_markets_common::config::{PredictionMarketsClientConfig, GeneralConsensus};
+use fedimint_prediction_markets_common::config::{GeneralConsensus, PredictionMarketsClientConfig};
 use fedimint_prediction_markets_common::{
     Candlestick, ContractOfOutcomeAmount, Market, MarketInformation, Order, OrderIdClientSide,
     Outcome, PredictionMarketsCommonInit, PredictionMarketsInput, PredictionMarketsModuleTypes,
@@ -211,6 +211,93 @@ impl PredictionMarketsClientModule {
         }
     }
 
+    /// propose payout using client's payout control.
+    pub async fn propose_payout(
+        &self,
+        market_out_point: OutPoint,
+        outcome_payouts: Vec<Amount>,
+    ) -> anyhow::Result<()> {
+        let operation_id = OperationId::new_random();
+
+        let payout_control_key = self.get_payout_control_key_pair();
+
+        let input = ClientInput {
+            input: PredictionMarketsInput::PayoutProposal {
+                market: market_out_point,
+                payout_control: PublicKey::from_keypair(&payout_control_key),
+                outcome_payouts,
+            },
+            state_machines: Arc::new(move |tx_id, _| {
+                vec![PredictionMarketsStateMachine::ProposePayout {
+                    operation_id,
+                    tx_id,
+                }]
+            }),
+            keys: vec![payout_control_key],
+        };
+
+        let tx = TransactionBuilder::new().with_input(self.ctx.make_client_input(input));
+        let out_point = |txid, _| OutPoint { txid, out_idx: 0 };
+        let (txid, _) = self
+            .ctx
+            .finalize_and_submit_transaction(
+                operation_id,
+                PredictionMarketsCommonInit::KIND.as_str(),
+                out_point,
+                tx,
+            )
+            .await?;
+
+        let tx_subscription = self.ctx.transaction_updates(operation_id).await;
+        tx_subscription
+            .await_tx_accepted(txid)
+            .await
+            .map_err(|e| anyhow!(e))?;
+
+        Ok(())
+    }
+
+    /// get market's payout control proposals.
+    pub async fn get_market_payout_control_proposals(
+        &self,
+        market: OutPoint,
+        from_local_cache: bool,
+    ) -> anyhow::Result<BTreeMap<PublicKey, Vec<Amount>>> {
+        let mut dbtx = self.db.begin_transaction().await;
+
+        match from_local_cache {
+            true => Ok(dbtx
+                .find_by_prefix(&db::MarketPayoutControlProposalPrefix1 { market })
+                .await
+                .map(|(key, value)| (key.payout_control, value))
+                .collect::<BTreeMap<_, _>>()
+                .await),
+
+            false => {
+                let market_payout_control_proposals = self
+                    .module_api
+                    .get_market_payout_control_proposals(market)
+                    .await?;
+
+                dbtx.remove_by_prefix(&db::MarketPayoutControlProposalPrefix1 { market })
+                    .await;
+                for (payout_control, outcome_payout) in market_payout_control_proposals.iter() {
+                    dbtx.insert_entry(
+                        &db::MarketPayoutControlProposalKey {
+                            market,
+                            payout_control: payout_control.to_owned(),
+                        },
+                        outcome_payout,
+                    )
+                    .await;
+                }
+                dbtx.commit_tx().await;
+
+                Ok(market_payout_control_proposals)
+            }
+        }
+    }
+
     /// Get client payout controls markets.
     pub async fn get_client_payout_control_markets(
         &self,
@@ -278,80 +365,48 @@ impl PredictionMarketsClientModule {
         Ok(payout_control_markets)
     }
 
-    /// get market's payout control proposals.
-    pub async fn get_market_payout_control_proposals(
+    /// Spend all bitcoin balance of client payout control to primary module
+    ///
+    /// Returns how much bitcoin was sent
+    pub async fn send_payout_control_bitcoin_balance_to_primary_module(
         &self,
-        market: OutPoint,
-        from_local_cache: bool,
-    ) -> anyhow::Result<BTreeMap<PublicKey, Vec<Amount>>> {
-        let mut dbtx = self.db.begin_transaction().await;
-
-        match from_local_cache {
-            true => Ok(dbtx
-                .find_by_prefix(&db::MarketPayoutControlProposalPrefix1 { market })
-                .await
-                .map(|(key, value)| (key.payout_control, value))
-                .collect::<BTreeMap<_, _>>()
-                .await),
-
-            false => {
-                let market_payout_control_proposals = self
-                    .module_api
-                    .get_market_payout_control_proposals(market)
-                    .await?;
-
-                dbtx.remove_by_prefix(&db::MarketPayoutControlProposalPrefix1 { market })
-                    .await;
-                for (payout_control, outcome_payout) in market_payout_control_proposals.iter() {
-                    dbtx.insert_entry(
-                        &db::MarketPayoutControlProposalKey {
-                            market,
-                            payout_control: payout_control.to_owned(),
-                        },
-                        outcome_payout,
-                    )
-                    .await;
-                }
-                dbtx.commit_tx().await;
-
-                Ok(market_payout_control_proposals)
-            }
-        }
-    }
-
-    /// propose payout using client's payout control.
-    pub async fn propose_payout(
-        &self,
-        market_out_point: OutPoint,
-        outcome_payouts: Vec<Amount>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Amount> {
         let operation_id = OperationId::new_random();
 
-        let payout_control_key = self.get_payout_control_key_pair();
+        let payout_control_balance = self
+            .module_api
+            .get_payout_control_balance(self.get_client_payout_control())
+            .await?;
 
+        if payout_control_balance == Amount::ZERO {
+            return Ok(payout_control_balance);
+        }
+
+        let mut tx = TransactionBuilder::new();
         let input = ClientInput {
-            input: PredictionMarketsInput::PayoutProposal {
-                market: market_out_point,
-                payout_control: PublicKey::from_keypair(&payout_control_key),
-                outcome_payouts,
+            input: PredictionMarketsInput::ConsumePayoutControlBitcoinBalance {
+                payout_control: self.get_client_payout_control(),
+                amount: payout_control_balance,
             },
             state_machines: Arc::new(move |tx_id, _| {
-                vec![PredictionMarketsStateMachine::ProposePayout {
-                    operation_id,
-                    tx_id,
-                }]
+                vec![
+                    PredictionMarketsStateMachine::ConsumePayoutControlBitcoinBalance {
+                        operation_id,
+                        tx_id,
+                    },
+                ]
             }),
-            keys: vec![payout_control_key],
+            keys: vec![self.get_payout_control_key_pair()],
         };
+        tx = tx.with_input(self.ctx.make_client_input(input));
 
-        let tx = TransactionBuilder::new().with_input(self.ctx.make_client_input(input));
-        let out_point = |txid, _| OutPoint { txid, out_idx: 0 };
+        let outpoint = |txid, _| OutPoint { txid, out_idx: 0 };
         let (txid, _) = self
             .ctx
             .finalize_and_submit_transaction(
                 operation_id,
                 PredictionMarketsCommonInit::KIND.as_str(),
-                out_point,
+                outpoint,
                 tx,
             )
             .await?;
@@ -362,7 +417,7 @@ impl PredictionMarketsClientModule {
             .await
             .map_err(|e| anyhow!(e))?;
 
-        Ok(())
+        Ok(payout_control_balance)
     }
 
     /// Create new order
@@ -924,20 +979,19 @@ impl PredictionMarketsClientModule {
     }
 
     /// Interacts with client named payout control public keys
-    pub async fn assign_name_to_payout_control(&self, payout_control: PublicKey, name: String) {
+    pub async fn set_payout_control_name(&self, payout_control: PublicKey, name: Option<String>) {
         let mut dbtx = self.db.begin_transaction().await;
 
-        dbtx.insert_entry(&db::ClientNamedPayoutControlsKey { payout_control }, &name)
-            .await;
-        dbtx.commit_tx().await;
-    }
-
-    /// Interacts with client named payout control public keys
-    pub async fn unassign_name_from_payout_control(&self, payout_control: PublicKey) {
-        let mut dbtx = self.db.begin_transaction().await;
-
-        dbtx.remove_entry(&db::ClientNamedPayoutControlsKey { payout_control })
-            .await;
+        match name {
+            Some(s) => {
+                dbtx.insert_entry(&db::ClientNamedPayoutControlsKey { payout_control }, &s)
+                    .await;
+            }
+            None => {
+                dbtx.remove_entry(&db::ClientNamedPayoutControlsKey { payout_control })
+                    .await;
+            }
+        }
         dbtx.commit_tx().await;
     }
 
@@ -958,61 +1012,6 @@ impl PredictionMarketsClientModule {
             .map(|(k, v)| (k.payout_control, v))
             .collect()
             .await
-    }
-
-    /// Spend all bitcoin balance of client payout control to primary module
-    ///
-    /// Returns how much bitcoin was sent
-    pub async fn send_payout_control_bitcoin_balance_to_primary_module(
-        &self,
-    ) -> anyhow::Result<Amount> {
-        let operation_id = OperationId::new_random();
-
-        let payout_control_balance = self
-            .module_api
-            .get_payout_control_balance(self.get_client_payout_control())
-            .await?;
-
-        if payout_control_balance == Amount::ZERO {
-            return Ok(payout_control_balance);
-        }
-
-        let mut tx = TransactionBuilder::new();
-        let input = ClientInput {
-            input: PredictionMarketsInput::ConsumePayoutControlBitcoinBalance {
-                payout_control: self.get_client_payout_control(),
-                amount: payout_control_balance,
-            },
-            state_machines: Arc::new(move |tx_id, _| {
-                vec![
-                    PredictionMarketsStateMachine::ConsumePayoutControlBitcoinBalance {
-                        operation_id,
-                        tx_id,
-                    },
-                ]
-            }),
-            keys: vec![self.get_payout_control_key_pair()],
-        };
-        tx = tx.with_input(self.ctx.make_client_input(input));
-
-        let outpoint = |txid, _| OutPoint { txid, out_idx: 0 };
-        let (txid, _) = self
-            .ctx
-            .finalize_and_submit_transaction(
-                operation_id,
-                PredictionMarketsCommonInit::KIND.as_str(),
-                outpoint,
-                tx,
-            )
-            .await?;
-
-        let tx_subscription = self.ctx.transaction_updates(operation_id).await;
-        tx_subscription
-            .await_tx_accepted(txid)
-            .await
-            .map_err(|e| anyhow!(e))?;
-
-        Ok(payout_control_balance)
     }
 }
 
