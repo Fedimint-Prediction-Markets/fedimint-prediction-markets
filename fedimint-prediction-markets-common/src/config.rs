@@ -48,13 +48,13 @@ impl Default for PredictionMarketsGenParams {
 
                     // match data
                     candlestick_intervals: vec![
-                        15,
-                        60,
-                        60 * 5,
-                        60 * 15,
-                        60 * 60,
-                        60 * 60 * 4,
                         60 * 60 * 24,
+                        60 * 60 * 4,
+                        60 * 60,
+                        60 * 15,
+                        60 * 5,
+                        60,
+                        15,
                     ],
                     max_candlesticks_kept_per_market_outcome_interval: 500,
                 },
