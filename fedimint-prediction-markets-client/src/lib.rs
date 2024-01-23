@@ -996,7 +996,7 @@ impl PredictionMarketsClientModule {
     }
 
     /// Interacts with client named payout control public keys
-    pub async fn get_payout_control_by_name(&self, name: String) -> Option<PublicKey> {
+    pub async fn get_name_to_payout_control(&self, name: String) -> Option<PublicKey> {
         let mut dbtx = self.db.begin_transaction().await;
 
         dbtx.get_value(&db::ClientNamedPayoutControlsKey { name })
