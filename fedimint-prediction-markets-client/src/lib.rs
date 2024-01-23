@@ -979,16 +979,16 @@ impl PredictionMarketsClientModule {
     }
 
     /// Interacts with client named payout control public keys
-    pub async fn set_payout_control_name(&self, payout_control: PublicKey, name: Option<String>) {
+    pub async fn set_name_to_payout_control(&self, name: String, payout_control: Option<PublicKey>) {
         let mut dbtx = self.db.begin_transaction().await;
 
-        match name {
-            Some(s) => {
-                dbtx.insert_entry(&db::ClientNamedPayoutControlsKey { payout_control }, &s)
+        match payout_control {
+            Some(pk) => {
+                dbtx.insert_entry(&db::ClientNamedPayoutControlsKey { name }, &pk)
                     .await;
             }
             None => {
-                dbtx.remove_entry(&db::ClientNamedPayoutControlsKey { payout_control })
+                dbtx.remove_entry(&db::ClientNamedPayoutControlsKey { name })
                     .await;
             }
         }
@@ -996,20 +996,20 @@ impl PredictionMarketsClientModule {
     }
 
     /// Interacts with client named payout control public keys
-    pub async fn get_payout_control_name(&self, payout_control: PublicKey) -> Option<String> {
+    pub async fn get_payout_control_by_name(&self, name: String) -> Option<PublicKey> {
         let mut dbtx = self.db.begin_transaction().await;
 
-        dbtx.get_value(&db::ClientNamedPayoutControlsKey { payout_control })
+        dbtx.get_value(&db::ClientNamedPayoutControlsKey { name })
             .await
     }
 
     /// Interacts with client named payout control public keys
-    pub async fn get_payout_control_name_map(&self) -> HashMap<PublicKey, String> {
+    pub async fn get_name_to_payout_control_map(&self) -> HashMap<String, PublicKey> {
         let mut dbtx = self.db.begin_transaction().await;
 
         dbtx.find_by_prefix(&db::ClientNamedPayoutControlsPrefixAll)
             .await
-            .map(|(k, v)| (k.payout_control, v))
+            .map(|(k, v)| (k.name, v))
             .collect()
             .await
     }
