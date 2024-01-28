@@ -1811,6 +1811,7 @@ dependencies = [
  "erased-serde",
  "fedimint-core",
  "futures",
+ "instant",
  "rand",
  "secp256k1 0.24.3",
  "serde",

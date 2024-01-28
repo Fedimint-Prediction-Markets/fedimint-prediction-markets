@@ -661,12 +661,15 @@ impl UnixTimestamp {
     pub const ZERO: Self = Self(0);
 
     pub fn now() -> Self {
-        UnixTimestamp(
+        #[cfg(not(target_arch = "wasm32"))]
+        return UnixTimestamp(
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .expect("failed to get system unix timestamp")
                 .as_secs(),
-        )
+        );
+        #[cfg(target_arch = "wasm32")]
+        return UnixTimestamp(instant::now() / 1000.0 as Seconds);
     }
 
     pub fn round_down(&self, seconds: Seconds) -> Self {
