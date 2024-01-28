@@ -27,4 +27,7 @@ tracing = "0.1.37"
 instant = "0.1.12"
 # threshold_crypto = { workspace = true }
 
+[features]
+stdweb = [ "instant/stdweb" ]
+wasm-bindgen = [ "instant/wasm-bindgen" ]
 
