@@ -967,19 +967,23 @@ impl PredictionMarketsClientModule {
 
     /// Interacts with client saved markets.
     ///
-    /// return map is saved timestamp to market.
-    pub async fn get_saved_markets(&self) -> BTreeMap<UnixTimestamp, OutPoint> {
+    /// return is Vec<(market outpoint, saved timestamp)>
+    pub async fn get_saved_markets(&self) -> Vec<(OutPoint, UnixTimestamp)> {
         let mut dbtx = self.db.begin_transaction().await;
 
         dbtx.find_by_prefix(&db::ClientSavedMarketsPrefixAll)
             .await
-            .map(|(k, v)| (v, k.market))
+            .map(|(k, v)| (k.market, v))
             .collect()
             .await
     }
 
     /// Interacts with client named payout control public keys
-    pub async fn set_name_to_payout_control(&self, name: String, payout_control: Option<PublicKey>) {
+    pub async fn set_name_to_payout_control(
+        &self,
+        name: String,
+        payout_control: Option<PublicKey>,
+    ) {
         let mut dbtx = self.db.begin_transaction().await;
 
         match payout_control {
