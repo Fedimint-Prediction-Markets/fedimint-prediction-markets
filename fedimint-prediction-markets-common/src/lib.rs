@@ -669,7 +669,7 @@ impl UnixTimestamp {
                 .as_secs(),
         );
         #[cfg(target_arch = "wasm32")]
-        return UnixTimestamp((instant::now() / 1000f64) as Seconds);
+        return UnixTimestamp((js_sys::Date::now() / 1000f64) as Seconds);
     }
 
     pub fn round_down(&self, seconds: Seconds) -> Self {

@@ -24,10 +24,7 @@ strum = "0.24"
 strum_macros = "0.24"
 thiserror = "1.0.39"
 tracing = "0.1.37"
-instant = "0.1.12"
+js-sys = "0.3.67"
 # threshold_crypto = { workspace = true }
 
-[features]
-stdweb = [ "instant/stdweb" ]
-wasm-bindgen = [ "instant/wasm-bindgen" ]
 
