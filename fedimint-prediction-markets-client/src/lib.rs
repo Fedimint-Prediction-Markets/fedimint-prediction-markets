@@ -35,7 +35,7 @@ use fedimint_prediction_markets_common::{
 };
 use futures::stream::FuturesUnordered;
 use futures::{future, StreamExt};
-use secp256k1::{KeyPair, PublicKey, Secp256k1};
+use secp256k1::{KeyPair, PublicKey, Scalar, Secp256k1, SecretKey};
 use states::PredictionMarketsStateMachine;
 
 use crate::api::PredictionMarketsFederationApi;
@@ -474,7 +474,7 @@ impl PredictionMarketsClientModule {
             Side::Sell => {
                 let mut sources_for_input = BTreeMap::new();
                 let mut sources_for_state_machine = vec![];
-                let mut sources_keys = vec![];
+                let mut sources_keys_combined = None;
 
                 let non_zero_market_outcome_orders: Vec<_> = dbtx
                     .find_by_prefix(&db::NonZeroOrdersByMarketOutcomePrefix2 { market, outcome })
@@ -505,7 +505,16 @@ impl PredictionMarketsClientModule {
                         quantity_sourced_from_order,
                     );
                     sources_for_state_machine.push(order_id);
-                    sources_keys.push(order_key);
+                    sources_keys_combined = match sources_keys_combined {
+                        None => Some(order_key),
+                        Some(combined_keys) => {
+                            let p1 = SecretKey::from_keypair(&combined_keys);
+                            let p2 = SecretKey::from_keypair(&order_key);
+                            let p3 = p1.add_tweak(&Scalar::from(p2))?;
+
+                            Some(KeyPair::from_secret_key(secp256k1::SECP256K1, &p3))
+                        }
+                    };
 
                     sourced_quantity = sourced_quantity + quantity_sourced_from_order;
                     if quantity == sourced_quantity {
@@ -533,7 +542,7 @@ impl PredictionMarketsClientModule {
                             sources: sources_for_state_machine.to_owned(),
                         }]
                     }),
-                    keys: sources_keys,
+                    keys: vec![sources_keys_combined.unwrap()],
                 };
 
                 tx = tx.with_input(self.ctx.make_client_input(input));
