@@ -1,9 +1,9 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
-use std::fmt;
+use std::fmt::{self, Display};
 use std::hash::Hash;
 use std::ops::{Add, Mul, Sub};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Error;
 use config::PredictionMarketsClientConfig;
@@ -638,6 +638,17 @@ impl Mul<u64> for SignedAmount {
     }
 }
 
+impl Display for SignedAmount {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let prefix = match self.is_negative() {
+            true => "-",
+            false => ""
+        };
+
+        write!(f, "{}{}", prefix, self.amount)
+    }
+}
+
 pub type Seconds = u64;
 
 #[derive(
@@ -677,16 +688,6 @@ impl UnixTimestamp {
 
     pub fn divisible(&self, seconds: Seconds) -> bool {
         self.0 % seconds == 0
-    }
-
-    pub fn duration_till(&self) -> Duration {
-        Duration::from_secs(self.0)
-            .checked_sub(
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .expect("failed to get system unix timestamp"),
-            )
-            .unwrap_or(Duration::ZERO)
     }
 }
 
