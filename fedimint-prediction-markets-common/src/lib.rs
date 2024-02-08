@@ -365,7 +365,6 @@ pub struct Order {
 }
 
 impl Order {
-    /// returns true on pass of verification
     pub fn validate_order_params(
         market: &Market,
         consensus_max_order_quantity: &ContractOfOutcomeAmount,
