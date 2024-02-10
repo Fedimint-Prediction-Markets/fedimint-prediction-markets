@@ -345,7 +345,7 @@ pub struct Order {
     pub time_ordering: TimeOrdering,
     pub created_consensus_timestamp: UnixTimestamp,
 
-    // ----- mutated -----
+    // ----- mutated (for operation) -----
 
     // active market quantity
     pub quantity_waiting_for_match: ContractOfOutcomeAmount,
@@ -358,10 +358,17 @@ pub struct Order {
     // spendable by ConsumeOrderBitcoinBalance input
     pub bitcoin_balance: Amount,
 
+    // ----- mutated (for user information only) -----
+
+    pub quantity_fulfilled: ContractOfOutcomeAmount,
+
     // bitcoin earned from order matches
     // buys (for positive prices) subtract from this
     // sells add to this
-    pub bitcoin_acquired: SignedAmount,
+    // payouts add to this
+    pub bitcoin_acquired_from_order_matches: SignedAmount,
+
+    pub bitcoin_acquired_from_payout: Amount,
 }
 
 impl Order {

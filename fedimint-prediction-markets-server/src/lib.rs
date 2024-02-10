@@ -10,7 +10,8 @@ use fedimint_core::config::{
 };
 use fedimint_core::core::ModuleInstanceId;
 use fedimint_core::db::{
-     DatabaseTransaction, DatabaseVersion, IDatabaseTransactionOpsCoreTyped, MigrationMap, Committable, Database,
+    Committable, Database, DatabaseTransaction, DatabaseVersion, IDatabaseTransactionOpsCoreTyped,
+    MigrationMap,
 };
 use fedimint_core::module::audit::Audit;
 use fedimint_core::module::{
@@ -19,7 +20,6 @@ use fedimint_core::module::{
     SupportedModuleApiVersions, TransactionItemAmount,
 };
 use fedimint_core::server::DynServerModule;
-
 use fedimint_core::{push_db_pair_items, Amount, OutPoint, PeerId, ServerModule};
 use fedimint_prediction_markets_common::api::{
     GetMarketOutcomeCandlesticksParams, GetMarketOutcomeCandlesticksResult,
@@ -625,8 +625,7 @@ impl ServerModule for PredictionMarkets {
 
                         order.contract_of_outcome_balance = ContractOfOutcomeAmount::ZERO;
                         order.bitcoin_balance = order.bitcoin_balance + payout;
-                        order.bitcoin_acquired =
-                            order.bitcoin_acquired + SignedAmount::from(payout);
+                        order.bitcoin_acquired_from_payout = payout;
 
                         dbtx.insert_entry(&db::OrderKey(order_owner), &order).await;
 
@@ -896,9 +895,12 @@ impl ServerModule for PredictionMarkets {
     ) {
         // bitcoin owed for open contracts across markets
         audit
-            .add_items(dbtx, module_instance_id, &db::MarketPrefixAll, |_, market| {
-                -((market.contract_price * market.open_contracts.0).msats as i64)
-            })
+            .add_items(
+                dbtx,
+                module_instance_id,
+                &db::MarketPrefixAll,
+                |_, market| -((market.contract_price * market.open_contracts.0).msats as i64),
+            )
             .await;
 
         // bitcoin owed for collateral held for buy orders and in field bitcoin_balance
@@ -1196,7 +1198,9 @@ impl PredictionMarkets {
             contract_of_outcome_balance: ContractOfOutcomeAmount::ZERO,
             bitcoin_balance: Amount::ZERO,
 
-            bitcoin_acquired: SignedAmount::ZERO,
+            quantity_fulfilled: ContractOfOutcomeAmount::ZERO,
+            bitcoin_acquired_from_order_matches: SignedAmount::ZERO,
+            bitcoin_acquired_from_payout: Amount::ZERO,
         };
 
         while order.quantity_waiting_for_match > ContractOfOutcomeAmount::ZERO {
@@ -1264,6 +1268,8 @@ impl PredictionMarkets {
                 order.quantity_waiting_for_match =
                     order.quantity_waiting_for_match - satisfied_quantity;
 
+                order.quantity_fulfilled = order.quantity_fulfilled + satisfied_quantity;
+
                 match side {
                     Side::Buy => {
                         order.contract_of_outcome_balance =
@@ -1272,14 +1278,16 @@ impl PredictionMarkets {
                         order.bitcoin_balance = order.bitcoin_balance
                             + ((order.price - own_price) * satisfied_quantity.0);
 
-                        order.bitcoin_acquired = order.bitcoin_acquired
+                        order.bitcoin_acquired_from_order_matches = order
+                            .bitcoin_acquired_from_order_matches
                             - SignedAmount::from(own_price * satisfied_quantity.0);
                     }
                     Side::Sell => {
                         order.bitcoin_balance =
                             order.bitcoin_balance + (own_price * satisfied_quantity.0);
 
-                        order.bitcoin_acquired = order.bitcoin_acquired
+                        order.bitcoin_acquired_from_order_matches = order
+                            .bitcoin_acquired_from_order_matches
                             + SignedAmount::from(own_price * satisfied_quantity.0);
                     }
                 }
@@ -1313,6 +1321,8 @@ impl PredictionMarkets {
                 order.quantity_waiting_for_match =
                     order.quantity_waiting_for_match - satisfied_quantity;
 
+                order.quantity_fulfilled = order.quantity_fulfilled + satisfied_quantity;
+
                 match side {
                     Side::Buy => {
                         order.contract_of_outcome_balance =
@@ -1323,8 +1333,8 @@ impl PredictionMarkets {
                                 .expect("should always convert")
                                 * satisfied_quantity.0);
 
-                        order.bitcoin_acquired =
-                            order.bitcoin_acquired - (other_price * satisfied_quantity.0);
+                        order.bitcoin_acquired_from_order_matches =
+                            order.bitcoin_acquired_from_order_matches - (other_price * satisfied_quantity.0);
 
                         market.open_contracts =
                             market.open_contracts + ContractAmount(satisfied_quantity.0);
@@ -1334,8 +1344,8 @@ impl PredictionMarkets {
                             + (Amount::try_from(other_price).expect("should always convert")
                                 * satisfied_quantity.0);
 
-                        order.bitcoin_acquired =
-                            order.bitcoin_acquired + (other_price * satisfied_quantity.0);
+                        order.bitcoin_acquired_from_order_matches =
+                            order.bitcoin_acquired_from_order_matches + (other_price * satisfied_quantity.0);
 
                         market.open_contracts =
                             market.open_contracts - ContractAmount(satisfied_quantity.0);
@@ -1500,22 +1510,25 @@ impl PredictionMarkets {
         let order = order_cache.get_mut(dbtx, order_owner).await;
 
         let satisfied_quantity = quantity.to_owned();
+
         order.quantity_waiting_for_match = order.quantity_waiting_for_match - satisfied_quantity;
+
+        order.quantity_fulfilled = order.quantity_fulfilled + satisfied_quantity;
 
         match order.side {
             Side::Buy => {
                 order.contract_of_outcome_balance =
                     order.contract_of_outcome_balance + satisfied_quantity;
 
-                order.bitcoin_acquired =
-                    order.bitcoin_acquired - SignedAmount::from(order.price * satisfied_quantity.0);
+                order.bitcoin_acquired_from_order_matches =
+                    order.bitcoin_acquired_from_order_matches - SignedAmount::from(order.price * satisfied_quantity.0);
             }
             Side::Sell => {
                 order.bitcoin_balance =
                     order.bitcoin_balance + (order.price * satisfied_quantity.0);
 
-                order.bitcoin_acquired =
-                    order.bitcoin_acquired + SignedAmount::from(order.price * satisfied_quantity.0);
+                order.bitcoin_acquired_from_order_matches =
+                    order.bitcoin_acquired_from_order_matches + SignedAmount::from(order.price * satisfied_quantity.0);
             }
         }
 
