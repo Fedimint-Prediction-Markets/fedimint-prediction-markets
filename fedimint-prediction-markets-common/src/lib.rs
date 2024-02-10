@@ -350,9 +350,10 @@ pub struct Order {
     // active market quantity
     pub quantity_waiting_for_match: ContractOfOutcomeAmount,
 
+    // fulfilled buys add to this balance
+    // sells use this balance for funding
     // during a payout, the contract price is payed out to orders accoring to this balance.
     // payouts empty this balance
-    // sells use this balance for funding
     pub contract_of_outcome_balance: ContractOfOutcomeAmount,
 
     // spendable by ConsumeOrderBitcoinBalance input
@@ -360,14 +361,14 @@ pub struct Order {
 
     // ----- mutated (for user information only) -----
 
+    // how many contract of outcome were either bought or sold by this order
     pub quantity_fulfilled: ContractOfOutcomeAmount,
 
-    // bitcoin earned from order matches
     // buys (for positive prices) subtract from this
     // sells add to this
-    // payouts add to this
     pub bitcoin_acquired_from_order_matches: SignedAmount,
-
+    
+    // payouts add to this
     pub bitcoin_acquired_from_payout: Amount,
 }
 
