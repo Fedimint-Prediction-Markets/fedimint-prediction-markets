@@ -24,7 +24,7 @@ strum = "0.24"
 strum_macros = "0.24"
 thiserror = "1.0.39"
 tracing = "0.1.37"
-js-sys = "0.3.67"
+js-sys = "0.3.64"
 # threshold_crypto = { workspace = true }
 
 
