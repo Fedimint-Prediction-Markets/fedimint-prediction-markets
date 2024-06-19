@@ -12,11 +12,10 @@ use fedimint_client::module::recovery::NoModuleBackup;
 use fedimint_client::module::{ClientContext, ClientModule, IClientModule};
 use fedimint_client::sm::{Context, ModuleNotifier};
 use fedimint_client::transaction::{ClientInput, ClientOutput, TransactionBuilder};
-use fedimint_client::DynGlobalClientContext;
 use fedimint_core::api::DynModuleApi;
 use fedimint_core::core::{Decoder, OperationId};
 use fedimint_core::db::{
-    Committable, Database, DatabaseTransaction, IDatabaseTransactionOpsCoreTyped,
+    Committable, Database, DatabaseTransaction, DatabaseVersion, IDatabaseTransactionOpsCoreTyped,
 };
 use fedimint_core::module::{
     ApiVersion, CommonModuleInit, ModuleCommon, ModuleInit, MultiApiVersion, TransactionItemAmount,
@@ -48,7 +47,7 @@ mod states;
 pub struct PredictionMarketsClientModule {
     cfg: PredictionMarketsClientConfig,
     root_secret: DerivableSecret,
-    _notifier: ModuleNotifier<DynGlobalClientContext, PredictionMarketsStateMachine>,
+    _notifier: ModuleNotifier<PredictionMarketsStateMachine>,
     ctx: ClientContext<Self>,
     db: Database,
     module_api: DynModuleApi,
@@ -68,6 +67,7 @@ pub struct PredictionMarketsClientInit;
 #[apply(async_trait_maybe_send!)]
 impl ModuleInit for PredictionMarketsClientInit {
     type Common = PredictionMarketsCommonInit;
+    const DATABASE_VERSION: DatabaseVersion = DatabaseVersion(1);
 
     async fn dump_database(
         &self,
