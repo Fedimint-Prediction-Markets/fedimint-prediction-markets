@@ -10,7 +10,7 @@ use fedimint_prediction_markets_common::OrderIdClientSide;
 use crate::{PredictionMarketsClientContext, PredictionMarketsClientModule};
 
 /// Tracks a transaction.
-#[derive(Debug, Clone, Eq, PartialEq, Decodable, Encodable)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Decodable, Encodable)]
 pub enum PredictionMarketsStateMachine {
     NewMarket {
         operation_id: OperationId,
@@ -61,12 +61,11 @@ pub enum PredictionMarketsStateMachine {
 
 impl State for PredictionMarketsStateMachine {
     type ModuleContext = PredictionMarketsClientContext;
-    type GlobalContext = DynGlobalClientContext;
 
     fn transitions(
         &self,
         _context: &Self::ModuleContext,
-        global_context: &Self::GlobalContext,
+        global_context: &DynGlobalClientContext,
     ) -> Vec<StateTransition<Self>> {
         match self.clone() {
             Self::NewMarket {
@@ -289,15 +288,15 @@ impl State for PredictionMarketsStateMachine {
 // TODO: Boiler-plate, should return OutputOutcome
 async fn await_tx_accepted(
     context: DynGlobalClientContext,
-    id: OperationId,
+    _id: OperationId,
     txid: TransactionId,
 ) -> Result<(), String> {
-    context.await_tx_accepted(id, txid).await
+    context.await_tx_accepted(txid).await
 }
 
 // TODO: Boiler-plate
 impl IntoDynInstance for PredictionMarketsStateMachine {
-    type DynType = DynState<DynGlobalClientContext>;
+    type DynType = DynState;
 
     fn into_dyn(self, instance_id: ModuleInstanceId) -> Self::DynType {
         DynState::from_typed(instance_id, self)

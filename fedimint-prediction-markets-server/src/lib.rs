@@ -10,14 +10,11 @@ use fedimint_core::config::{
 };
 use fedimint_core::core::ModuleInstanceId;
 use fedimint_core::db::{
-    Committable, Database, DatabaseTransaction, DatabaseVersion, IDatabaseTransactionOpsCoreTyped,
-    MigrationMap,
+    Committable, Database, DatabaseTransaction, DatabaseVersion, IDatabaseTransactionOpsCoreTyped, ServerMigrationFn
 };
 use fedimint_core::module::audit::Audit;
 use fedimint_core::module::{
-    api_endpoint, ApiEndpoint, ApiEndpointContext, ApiError, CoreConsensusVersion, InputMeta,
-    ModuleConsensusVersion, ModuleInit, PeerHandle, ServerModuleInit, ServerModuleInitArgs,
-    SupportedModuleApiVersions, TransactionItemAmount,
+    api_endpoint, ApiEndpoint, ApiEndpointContext, ApiError, ApiVersion, CoreConsensusVersion, InputMeta, ModuleConsensusVersion, ModuleInit, PeerHandle, ServerModuleInit, ServerModuleInitArgs, SupportedModuleApiVersions, TransactionItemAmount
 };
 use fedimint_core::server::DynServerModule;
 use fedimint_core::{push_db_pair_items, Amount, OutPoint, PeerId, ServerModule};
@@ -54,6 +51,7 @@ pub struct PredictionMarketsInit;
 #[async_trait]
 impl ModuleInit for PredictionMarketsInit {
     type Common = PredictionMarketsCommonInit;
+    const DATABASE_VERSION: DatabaseVersion = DatabaseVersion(0);
 
     /// Dumps all database items for debugging
     async fn dump_database(
@@ -210,7 +208,6 @@ impl ModuleInit for PredictionMarketsInit {
 #[async_trait]
 impl ServerModuleInit for PredictionMarketsInit {
     type Params = PredictionMarketsGenParams;
-    const DATABASE_VERSION: DatabaseVersion = DatabaseVersion(0);
 
     /// Returns the version of this module
     fn versions(&self, _core: CoreConsensusVersion) -> &[ModuleConsensusVersion] {
@@ -227,8 +224,8 @@ impl ServerModuleInit for PredictionMarketsInit {
     }
 
     /// DB migrations to move from old to newer versions
-    fn get_database_migrations(&self) -> MigrationMap {
-        let migrations = MigrationMap::new();
+    fn get_database_migrations(&self) -> BTreeMap<DatabaseVersion, ServerMigrationFn> {
+        let migrations: BTreeMap<DatabaseVersion, ServerMigrationFn> = BTreeMap::new();
         migrations
     }
 
@@ -922,42 +919,49 @@ impl ServerModule for PredictionMarkets {
         vec![
             api_endpoint! {
                 "get_market",
+                ApiVersion::new(0, 0),
                 async |module: &PredictionMarkets, context, market: OutPoint| -> Option<Market> {
                     module.api_get_market(&mut context.dbtx(), market).await
                 }
             },
             api_endpoint! {
                 "get_order",
+                ApiVersion::new(0, 0),
                 async |module: &PredictionMarkets, context, order: PublicKey| -> Option<Order> {
                     module.api_get_order(&mut context.dbtx(), order).await
                 }
             },
             api_endpoint! {
                 "get_payout_control_markets",
+                ApiVersion::new(0, 0),
                 async |module: &PredictionMarkets, context, params: GetPayoutControlMarketsParams| -> GetPayoutControlMarketsResult {
                     module.api_get_payout_control_markets(&mut context.dbtx(), params).await
                 }
             },
             api_endpoint! {
                 "get_market_payout_control_proposals",
+                ApiVersion::new(0, 0),
                 async |module: &PredictionMarkets, context, market: OutPoint| -> BTreeMap<PublicKey,Vec<Amount>> {
                     module.api_get_market_payout_control_proposals(&mut context.dbtx(), market).await
                 }
             },
             api_endpoint! {
                 "get_market_outcome_candlesticks",
+                ApiVersion::new(0, 0),
                 async |module: &PredictionMarkets, context, params: GetMarketOutcomeCandlesticksParams| -> GetMarketOutcomeCandlesticksResult {
                     module.api_get_market_outcome_candlesticks(&mut context.dbtx(), params).await
                 }
             },
             api_endpoint! {
                 "wait_market_outcome_candlesticks",
+                ApiVersion::new(0, 0),
                 async |module: &PredictionMarkets, context, params: WaitMarketOutcomeCandlesticksParams| -> WaitMarketOutcomeCandlesticksResult {
                     module.api_wait_market_outcome_candlesticks(context, params).await
                 }
             },
             api_endpoint! {
                 "get_payout_control_balance",
+                ApiVersion::new(0, 0),
                 async |module: &PredictionMarkets, context, payout_control: PublicKey| -> Amount {
                     module.api_get_payout_control_balance(&mut context.dbtx(), payout_control).await
                 }
