@@ -22,7 +22,8 @@ use fedimint_core::module::{
 };
 use fedimint_core::{apply, async_trait_maybe_send, Amount, OutPoint, TransactionId};
 use fedimint_prediction_markets_common::api::{
-    GetMarketOutcomeCandlesticksParams, GetMarketOutcomeCandlesticksResult,
+    GetMarketOutcomeCandlesticksParams, GetMarketOutcomeCandlesticksResult, GetMarketParams,
+    GetMarketPayoutControlProposalsParams, GetOrderParams, GetPayoutControlBalanceParams,
     GetPayoutControlMarketsParams, WaitMarketOutcomeCandlesticksParams,
     WaitMarketOutcomeCandlesticksResult,
 };
@@ -194,8 +195,13 @@ impl PredictionMarketsClientModule {
                     }
                 }
 
-                let market_option = self.module_api.get_market(market_out_point).await?;
-                if let Some(market) = market_option.as_ref() {
+                let result = self
+                    .module_api
+                    .get_market(GetMarketParams {
+                        market: market_out_point,
+                    })
+                    .await?;
+                if let Some(market) = result.market.as_ref() {
                     dbtx.insert_entry(
                         &db::MarketKey {
                             market: market_out_point,
@@ -206,7 +212,7 @@ impl PredictionMarketsClientModule {
                     dbtx.commit_tx().await;
                 }
 
-                Ok(market_option)
+                Ok(result.market)
             }
         }
     }
@@ -274,14 +280,16 @@ impl PredictionMarketsClientModule {
                 .await),
 
             false => {
-                let market_payout_control_proposals = self
+                let result = self
                     .module_api
-                    .get_market_payout_control_proposals(market)
+                    .get_market_payout_control_proposals(GetMarketPayoutControlProposalsParams {
+                        market,
+                    })
                     .await?;
 
                 dbtx.remove_by_prefix(&db::MarketPayoutControlProposalPrefix1 { market })
                     .await;
-                for (payout_control, outcome_payout) in market_payout_control_proposals.iter() {
+                for (payout_control, outcome_payout) in result.payout_control_proposals.iter() {
                     dbtx.insert_entry(
                         &db::MarketPayoutControlProposalKey {
                             market,
@@ -293,7 +301,7 @@ impl PredictionMarketsClientModule {
                 }
                 dbtx.commit_tx().await;
 
-                Ok(market_payout_control_proposals)
+                Ok(result.payout_control_proposals)
             }
         }
     }
@@ -373,20 +381,22 @@ impl PredictionMarketsClientModule {
     ) -> anyhow::Result<Amount> {
         let operation_id = OperationId::new_random();
 
-        let payout_control_balance = self
+        let result = self
             .module_api
-            .get_payout_control_balance(self.get_client_payout_control())
+            .get_payout_control_balance(GetPayoutControlBalanceParams {
+                payout_control: self.get_client_payout_control(),
+            })
             .await?;
 
-        if payout_control_balance == Amount::ZERO {
-            return Ok(payout_control_balance);
+        if result.balance == Amount::ZERO {
+            return Ok(result.balance);
         }
 
         let mut tx = TransactionBuilder::new();
         let input = ClientInput {
             input: PredictionMarketsInput::ConsumePayoutControlBitcoinBalance {
                 payout_control: self.get_client_payout_control(),
-                amount: payout_control_balance,
+                amount: result.balance,
             },
             state_machines: Arc::new(move |tx_id, _| {
                 vec![
@@ -417,7 +427,7 @@ impl PredictionMarketsClientModule {
             .await
             .map_err(|e| anyhow!(e))?;
 
-        Ok(payout_control_balance)
+        Ok(result.balance)
     }
 
     /// Create new order
@@ -594,15 +604,18 @@ impl PredictionMarketsClientModule {
             }),
 
             false => {
-                let order_option = self.module_api.get_order(order_owner).await?;
+                let result = self
+                    .module_api
+                    .get_order(GetOrderParams { order: order_owner })
+                    .await?;
 
-                if let Some(order) = order_option.as_ref() {
+                if let Some(order) = result.order.as_ref() {
                     PredictionMarketsClientModule::save_order_to_db(&mut dbtx, id, order).await;
 
                     dbtx.commit_tx().await;
                 }
 
-                Ok(order_option)
+                Ok(result.order)
             }
         }
     }

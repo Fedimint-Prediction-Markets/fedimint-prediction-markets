@@ -1,34 +1,29 @@
-use std::collections::BTreeMap;
-
 use fedimint_core::api::{FederationApiExt, FederationResult, IModuleFederationApi};
-
 use fedimint_core::module::ApiRequestErased;
 use fedimint_core::task::{MaybeSend, MaybeSync};
-use fedimint_core::{apply, async_trait_maybe_send, Amount, OutPoint};
+use fedimint_core::{apply, async_trait_maybe_send};
 use fedimint_prediction_markets_common::api::{
-    WaitMarketOutcomeCandlesticksParams, WaitMarketOutcomeCandlesticksResult,
+    GetMarketOutcomeCandlesticksParams, GetMarketOutcomeCandlesticksResult, GetMarketParams,
+    GetMarketPayoutControlProposalsParams, GetMarketPayoutControlProposalsResult, GetMarketResult,
+    GetOrderParams, GetOrderResult, GetPayoutControlBalanceParams, GetPayoutControlBalanceResult,
+    GetPayoutControlMarketsParams, GetPayoutControlMarketsResult,
+    WaitMarketOutcomeCandlesticksParams, WaitMarketOutcomeCandlesticksResult, GET_MARKET,
+    GET_MARKET_OUTCOME_CANDLESTICKS, GET_MARKET_PAYOUT_CONTROL_PROPOSALS, GET_ORDER,
+    GET_PAYOUT_CONTROL_BALANCE, GET_PAYOUT_CONTROL_MARKETS, WAIT_MARKET_OUTCOME_CANDLESTICKS,
 };
-use fedimint_prediction_markets_common::{
-    api::{
-        GetMarketOutcomeCandlesticksParams, GetMarketOutcomeCandlesticksResult,
-        GetPayoutControlMarketsParams, GetPayoutControlMarketsResult,
-    },
-    Market, Order,
-};
-use secp256k1::PublicKey;
 
 #[apply(async_trait_maybe_send!)]
 pub trait PredictionMarketsFederationApi {
-    async fn get_market(&self, market: OutPoint) -> FederationResult<Option<Market>>;
-    async fn get_order(&self, order: PublicKey) -> FederationResult<Option<Order>>;
+    async fn get_market(&self, params: GetMarketParams) -> FederationResult<GetMarketResult>;
+    async fn get_order(&self, params: GetOrderParams) -> FederationResult<GetOrderResult>;
     async fn get_payout_control_markets(
         &self,
         params: GetPayoutControlMarketsParams,
     ) -> FederationResult<GetPayoutControlMarketsResult>;
     async fn get_market_payout_control_proposals(
         &self,
-        market: OutPoint,
-    ) -> FederationResult<BTreeMap<PublicKey, Vec<Amount>>>;
+        params: GetMarketPayoutControlProposalsParams,
+    ) -> FederationResult<GetMarketPayoutControlProposalsResult>;
     async fn get_market_outcome_candlesticks(
         &self,
         params: GetMarketOutcomeCandlesticksParams,
@@ -39,8 +34,8 @@ pub trait PredictionMarketsFederationApi {
     ) -> FederationResult<WaitMarketOutcomeCandlesticksResult>;
     async fn get_payout_control_balance(
         &self,
-        payout_control: PublicKey,
-    ) -> FederationResult<Amount>;
+        params: GetPayoutControlBalanceParams,
+    ) -> FederationResult<GetPayoutControlBalanceResult>;
 }
 
 #[apply(async_trait_maybe_send!)]
@@ -48,13 +43,13 @@ impl<T: ?Sized> PredictionMarketsFederationApi for T
 where
     T: IModuleFederationApi + MaybeSend + MaybeSync + 'static,
 {
-    async fn get_market(&self, market: OutPoint) -> FederationResult<Option<Market>> {
-        self.request_current_consensus("get_market".to_string(), ApiRequestErased::new(market))
+    async fn get_market(&self, params: GetMarketParams) -> FederationResult<GetMarketResult> {
+        self.request_current_consensus(GET_MARKET.into(), ApiRequestErased::new(params))
             .await
     }
 
-    async fn get_order(&self, order: PublicKey) -> FederationResult<Option<Order>> {
-        self.request_current_consensus("get_order".to_string(), ApiRequestErased::new(order))
+    async fn get_order(&self, params: GetOrderParams) -> FederationResult<GetOrderResult> {
+        self.request_current_consensus(GET_ORDER.into(), ApiRequestErased::new(params))
             .await
     }
 
@@ -63,7 +58,7 @@ where
         params: GetPayoutControlMarketsParams,
     ) -> FederationResult<GetPayoutControlMarketsResult> {
         self.request_current_consensus(
-            "get_payout_control_markets".to_string(),
+            GET_PAYOUT_CONTROL_MARKETS.into(),
             ApiRequestErased::new(params),
         )
         .await
@@ -71,11 +66,11 @@ where
 
     async fn get_market_payout_control_proposals(
         &self,
-        market: OutPoint,
-    ) -> FederationResult<BTreeMap<PublicKey, Vec<Amount>>> {
+        params: GetMarketPayoutControlProposalsParams,
+    ) -> FederationResult<GetMarketPayoutControlProposalsResult> {
         self.request_current_consensus(
-            "get_market_payout_control_proposals".to_string(),
-            ApiRequestErased::new(market),
+            GET_MARKET_PAYOUT_CONTROL_PROPOSALS.into(),
+            ApiRequestErased::new(params),
         )
         .await
     }
@@ -85,7 +80,7 @@ where
         params: GetMarketOutcomeCandlesticksParams,
     ) -> FederationResult<GetMarketOutcomeCandlesticksResult> {
         self.request_current_consensus(
-            "get_market_outcome_candlesticks".to_string(),
+            GET_MARKET_OUTCOME_CANDLESTICKS.into(),
             ApiRequestErased::new(params),
         )
         .await
@@ -96,7 +91,7 @@ where
         params: WaitMarketOutcomeCandlesticksParams,
     ) -> FederationResult<WaitMarketOutcomeCandlesticksResult> {
         self.request_current_consensus(
-            "wait_market_outcome_candlesticks".to_string(),
+            WAIT_MARKET_OUTCOME_CANDLESTICKS.into(),
             ApiRequestErased::new(params),
         )
         .await
@@ -104,11 +99,11 @@ where
 
     async fn get_payout_control_balance(
         &self,
-        payout_control: PublicKey,
-    ) -> FederationResult<Amount> {
+        params: GetPayoutControlBalanceParams,
+    ) -> FederationResult<GetPayoutControlBalanceResult> {
         self.request_current_consensus(
-            "get_payout_control_balance".to_string(),
-            ApiRequestErased::new(payout_control),
+            GET_PAYOUT_CONTROL_BALANCE.into(),
+            ApiRequestErased::new(params),
         )
         .await
     }

@@ -10,32 +10,23 @@ use fedimint_core::config::{
 };
 use fedimint_core::core::ModuleInstanceId;
 use fedimint_core::db::{
-    Committable, Database, DatabaseTransaction, DatabaseVersion, IDatabaseTransactionOpsCoreTyped, ServerMigrationFn
+    Committable, Database, DatabaseTransaction, DatabaseVersion, IDatabaseTransactionOpsCoreTyped,
+    ServerMigrationFn,
 };
 use fedimint_core::module::audit::Audit;
 use fedimint_core::module::{
-    api_endpoint, ApiEndpoint, ApiEndpointContext, ApiError, ApiVersion, CoreConsensusVersion, InputMeta, ModuleConsensusVersion, ModuleInit, PeerHandle, ServerModuleInit, ServerModuleInitArgs, SupportedModuleApiVersions, TransactionItemAmount
+    api_endpoint, ApiEndpoint, ApiEndpointContext, ApiError, ApiVersion, CoreConsensusVersion,
+    InputMeta, ModuleConsensusVersion, ModuleInit, PeerHandle, ServerModuleInit,
+    ServerModuleInitArgs, SupportedModuleApiVersions, TransactionItemAmount,
 };
 use fedimint_core::server::DynServerModule;
 use fedimint_core::{push_db_pair_items, Amount, OutPoint, PeerId, ServerModule};
-use fedimint_prediction_markets_common::api::{
-    GetMarketOutcomeCandlesticksParams, GetMarketOutcomeCandlesticksResult,
-    GetPayoutControlMarketsParams, GetPayoutControlMarketsResult,
-    WaitMarketOutcomeCandlesticksParams, WaitMarketOutcomeCandlesticksResult,
-};
-pub use fedimint_prediction_markets_common::config::{
-    PredictionMarketsClientConfig, PredictionMarketsConfig, PredictionMarketsConfigConsensus,
-    PredictionMarketsConfigLocal, PredictionMarketsConfigPrivate, PredictionMarketsGenParams,
-};
 use fedimint_prediction_markets_common::{
-    Candlestick, ContractAmount, ContractOfOutcomeAmount, Market, Order, Outcome, Payout,
-    PredictionMarketsInputError, PredictionMarketsOutputError, Seconds, Side, SignedAmount,
-    TimeOrdering, UnixTimestamp, WeightRequiredForPayout,
-};
-pub use fedimint_prediction_markets_common::{
-    PredictionMarketsCommonInit, PredictionMarketsConsensusItem, PredictionMarketsInput,
-    PredictionMarketsModuleTypes, PredictionMarketsOutput, PredictionMarketsOutputOutcome,
-    CONSENSUS_VERSION, KIND,
+    api, config, Candlestick, ContractAmount, ContractOfOutcomeAmount, Market, Order, Outcome,
+    Payout, PredictionMarketsCommonInit, PredictionMarketsConsensusItem, PredictionMarketsInput,
+    PredictionMarketsInputError, PredictionMarketsModuleTypes, PredictionMarketsOutput,
+    PredictionMarketsOutputError, PredictionMarketsOutputOutcome, Seconds, Side, SignedAmount,
+    TimeOrdering, UnixTimestamp, WeightRequiredForPayout, CONSENSUS_VERSION,
 };
 use futures::{future, StreamExt};
 use secp256k1::PublicKey;
@@ -207,7 +198,7 @@ impl ModuleInit for PredictionMarketsInit {
 /// Implementation of server module non-consensus functions
 #[async_trait]
 impl ServerModuleInit for PredictionMarketsInit {
-    type Params = PredictionMarketsGenParams;
+    type Params = config::PredictionMarketsGenParams;
 
     /// Returns the version of this module
     fn versions(&self, _core: CoreConsensusVersion) -> &[ModuleConsensusVersion] {
@@ -241,14 +232,14 @@ impl ServerModuleInit for PredictionMarketsInit {
         peers
             .iter()
             .map(|&peer| {
-                let config = PredictionMarketsConfig {
-                    local: PredictionMarketsConfigLocal {
+                let config = config::PredictionMarketsConfig {
+                    local: config::PredictionMarketsConfigLocal {
                         peer_count: peers.len().try_into().expect("should never fail"),
                     },
-                    private: PredictionMarketsConfigPrivate {
+                    private: config::PredictionMarketsConfigPrivate {
                         example: "test".to_owned(),
                     },
-                    consensus: PredictionMarketsConfigConsensus {
+                    consensus: config::PredictionMarketsConfigConsensus {
                         gc: params.consensus.gc.to_owned(),
                     },
                 };
@@ -265,18 +256,18 @@ impl ServerModuleInit for PredictionMarketsInit {
     ) -> DkgResult<ServerModuleConfig> {
         let params = self.parse_params(params).unwrap();
 
-        Ok(PredictionMarketsConfig {
-            local: PredictionMarketsConfigLocal {
+        Ok(config::PredictionMarketsConfig {
+            local: config::PredictionMarketsConfigLocal {
                 peer_count: peers
                     .peer_ids()
                     .len()
                     .try_into()
                     .expect("should never fail"),
             },
-            private: PredictionMarketsConfigPrivate {
+            private: config::PredictionMarketsConfigPrivate {
                 example: "test".to_owned(),
             },
-            consensus: PredictionMarketsConfigConsensus {
+            consensus: config::PredictionMarketsConfigConsensus {
                 gc: params.consensus.gc,
             },
         }
@@ -287,9 +278,9 @@ impl ServerModuleInit for PredictionMarketsInit {
     fn get_client_config(
         &self,
         config: &ServerModuleConsensusConfig,
-    ) -> anyhow::Result<PredictionMarketsClientConfig> {
-        let config = PredictionMarketsConfigConsensus::from_erased(config)?;
-        Ok(PredictionMarketsClientConfig { gc: config.gc })
+    ) -> anyhow::Result<config::PredictionMarketsClientConfig> {
+        let config = config::PredictionMarketsConfigConsensus::from_erased(config)?;
+        Ok(config::PredictionMarketsClientConfig { gc: config.gc })
     }
 
     /// Validates the private/public key of configs
@@ -298,22 +289,22 @@ impl ServerModuleInit for PredictionMarketsInit {
         _identity: &PeerId,
         config: ServerModuleConfig,
     ) -> anyhow::Result<()> {
-        let _config = config.to_typed::<PredictionMarketsConfig>()?;
+        let _config = config.to_typed::<config::PredictionMarketsConfig>()?;
 
         Ok(())
     }
 }
 
-/// Dummy module
+/// Prediction Markets Module
 #[derive(Debug)]
 pub struct PredictionMarkets {
-    pub cfg: PredictionMarketsConfig,
+    pub cfg: config::PredictionMarketsConfig,
     pub db: Database,
 }
 
 impl PredictionMarkets {
     /// Create new module instance
-    pub fn new(cfg: PredictionMarketsConfig, db: Database) -> PredictionMarkets {
+    pub fn new(cfg: config::PredictionMarketsConfig, db: Database) -> PredictionMarkets {
         PredictionMarkets { cfg, db }
     }
 }
@@ -918,81 +909,87 @@ impl ServerModule for PredictionMarkets {
     fn api_endpoints(&self) -> Vec<ApiEndpoint<Self>> {
         vec![
             api_endpoint! {
-                "get_market",
+                api::GET_MARKET,
                 ApiVersion::new(0, 0),
-                async |module: &PredictionMarkets, context, market: OutPoint| -> Option<Market> {
-                    module.api_get_market(&mut context.dbtx(), market).await
+                async |module: &PredictionMarkets, context, params: api::GetMarketParams| -> api::GetMarketResult {
+                    module.api_get_market(&mut context.dbtx(), params).await
                 }
             },
             api_endpoint! {
-                "get_order",
+                api::GET_ORDER,
                 ApiVersion::new(0, 0),
-                async |module: &PredictionMarkets, context, order: PublicKey| -> Option<Order> {
-                    module.api_get_order(&mut context.dbtx(), order).await
+                async |module: &PredictionMarkets, context, params: api::GetOrderParams| -> api::GetOrderResult {
+                    module.api_get_order(&mut context.dbtx(), params).await
                 }
             },
             api_endpoint! {
-                "get_payout_control_markets",
+                api::GET_PAYOUT_CONTROL_MARKETS,
                 ApiVersion::new(0, 0),
-                async |module: &PredictionMarkets, context, params: GetPayoutControlMarketsParams| -> GetPayoutControlMarketsResult {
+                async |module: &PredictionMarkets, context, params: api::GetPayoutControlMarketsParams| -> api::GetPayoutControlMarketsResult {
                     module.api_get_payout_control_markets(&mut context.dbtx(), params).await
                 }
             },
             api_endpoint! {
-                "get_market_payout_control_proposals",
+                api::GET_MARKET_PAYOUT_CONTROL_PROPOSALS,
                 ApiVersion::new(0, 0),
-                async |module: &PredictionMarkets, context, market: OutPoint| -> BTreeMap<PublicKey,Vec<Amount>> {
-                    module.api_get_market_payout_control_proposals(&mut context.dbtx(), market).await
+                async |module: &PredictionMarkets, context, params: api::GetMarketPayoutControlProposalsParams| -> api::GetMarketPayoutControlProposalsResult {
+                    module.api_get_market_payout_control_proposals(&mut context.dbtx(), params).await
                 }
             },
             api_endpoint! {
-                "get_market_outcome_candlesticks",
+                api::GET_MARKET_OUTCOME_CANDLESTICKS,
                 ApiVersion::new(0, 0),
-                async |module: &PredictionMarkets, context, params: GetMarketOutcomeCandlesticksParams| -> GetMarketOutcomeCandlesticksResult {
+                async |module: &PredictionMarkets, context, params: api::GetMarketOutcomeCandlesticksParams| -> api::GetMarketOutcomeCandlesticksResult {
                     module.api_get_market_outcome_candlesticks(&mut context.dbtx(), params).await
                 }
             },
             api_endpoint! {
-                "wait_market_outcome_candlesticks",
+                api::WAIT_MARKET_OUTCOME_CANDLESTICKS,
                 ApiVersion::new(0, 0),
-                async |module: &PredictionMarkets, context, params: WaitMarketOutcomeCandlesticksParams| -> WaitMarketOutcomeCandlesticksResult {
+                async |module: &PredictionMarkets, context, params: api::WaitMarketOutcomeCandlesticksParams| -> api::WaitMarketOutcomeCandlesticksResult {
                     module.api_wait_market_outcome_candlesticks(context, params).await
                 }
             },
             api_endpoint! {
-                "get_payout_control_balance",
+                api::GET_PAYOUT_CONTROL_BALANCE,
                 ApiVersion::new(0, 0),
-                async |module: &PredictionMarkets, context, payout_control: PublicKey| -> Amount {
-                    module.api_get_payout_control_balance(&mut context.dbtx(), payout_control).await
+                async |module: &PredictionMarkets, context, params: api::GetPayoutControlBalanceParams| -> api::GetPayoutControlBalanceResult {
+                    module.api_get_payout_control_balance(&mut context.dbtx(), params).await
                 }
             },
         ]
     }
 }
 
-/// api endpoints
+//
+// api endpoints
+//
 impl PredictionMarkets {
     async fn api_get_market(
         &self,
         dbtx: &mut DatabaseTransaction<'_, Committable>,
-        market: OutPoint,
-    ) -> Result<Option<Market>, ApiError> {
-        Ok(dbtx.get_value(&db::MarketKey(market)).await)
+        params: api::GetMarketParams,
+    ) -> Result<api::GetMarketResult, ApiError> {
+        Ok(api::GetMarketResult {
+            market: dbtx.get_value(&db::MarketKey(params.market)).await,
+        })
     }
 
     async fn api_get_order(
         &self,
         dbtx: &mut DatabaseTransaction<'_, Committable>,
-        order: PublicKey,
-    ) -> Result<Option<Order>, ApiError> {
-        Ok(dbtx.get_value(&db::OrderKey(order)).await)
+        params: api::GetOrderParams,
+    ) -> Result<api::GetOrderResult, ApiError> {
+        Ok(api::GetOrderResult {
+            order: dbtx.get_value(&db::OrderKey(params.order)).await,
+        })
     }
 
     async fn api_get_payout_control_markets(
         &self,
         dbtx: &mut DatabaseTransaction<'_, Committable>,
-        params: GetPayoutControlMarketsParams,
-    ) -> Result<GetPayoutControlMarketsResult, ApiError> {
+        params: api::GetPayoutControlMarketsParams,
+    ) -> Result<api::GetPayoutControlMarketsResult, ApiError> {
         let markets = dbtx
             .find_by_prefix_sorted_descending(&db::PayoutControlMarketsPrefix1 {
                 payout_control: params.payout_control,
@@ -1006,27 +1003,31 @@ impl PredictionMarkets {
             .collect::<Vec<_>>()
             .await;
 
-        Ok(GetPayoutControlMarketsResult { markets })
+        Ok(api::GetPayoutControlMarketsResult { markets })
     }
 
     async fn api_get_market_payout_control_proposals(
         &self,
         dbtx: &mut DatabaseTransaction<'_, Committable>,
-        market: OutPoint,
-    ) -> Result<BTreeMap<PublicKey, Vec<Amount>>, ApiError> {
-        Ok(dbtx
-            .find_by_prefix(&db::MarketPayoutControlProposalPrefix1 { market })
-            .await
-            .map(|(k, v)| (k.payout_control, v))
-            .collect()
-            .await)
+        params: api::GetMarketPayoutControlProposalsParams,
+    ) -> Result<api::GetMarketPayoutControlProposalsResult, ApiError> {
+        Ok(api::GetMarketPayoutControlProposalsResult {
+            payout_control_proposals: dbtx
+                .find_by_prefix(&db::MarketPayoutControlProposalPrefix1 {
+                    market: params.market,
+                })
+                .await
+                .map(|(k, v)| (k.payout_control, v))
+                .collect()
+                .await,
+        })
     }
 
     async fn api_get_market_outcome_candlesticks(
         &self,
         dbtx: &mut DatabaseTransaction<'_, Committable>,
-        params: GetMarketOutcomeCandlesticksParams,
-    ) -> Result<GetMarketOutcomeCandlesticksResult, ApiError> {
+        params: api::GetMarketOutcomeCandlesticksParams,
+    ) -> Result<api::GetMarketOutcomeCandlesticksResult, ApiError> {
         let candlesticks = dbtx
             .find_by_prefix_sorted_descending(&db::MarketOutcomeCandlesticksPrefix3 {
                 market: params.market,
@@ -1041,14 +1042,14 @@ impl PredictionMarkets {
             .collect::<Vec<(UnixTimestamp, Candlestick)>>()
             .await;
 
-        Ok(GetMarketOutcomeCandlesticksResult { candlesticks })
+        Ok(api::GetMarketOutcomeCandlesticksResult { candlesticks })
     }
 
     async fn api_wait_market_outcome_candlesticks(
         &self,
         context: &mut ApiEndpointContext<'_>,
-        params: WaitMarketOutcomeCandlesticksParams,
-    ) -> Result<WaitMarketOutcomeCandlesticksResult, ApiError> {
+        params: api::WaitMarketOutcomeCandlesticksParams,
+    ) -> Result<api::WaitMarketOutcomeCandlesticksResult, ApiError> {
         let future = context.wait_value_matches(
             db::MarketOutcomeNewestCandlestickVolumeKey {
                 market: params.market,
@@ -1077,22 +1078,28 @@ impl PredictionMarkets {
             .collect::<Vec<(UnixTimestamp, Candlestick)>>()
             .await;
 
-        Ok(WaitMarketOutcomeCandlesticksResult { candlesticks })
+        Ok(api::WaitMarketOutcomeCandlesticksResult { candlesticks })
     }
 
     async fn api_get_payout_control_balance(
         &self,
         dbtx: &mut DatabaseTransaction<'_, Committable>,
-        payout_control: PublicKey,
-    ) -> Result<Amount, ApiError> {
-        Ok(dbtx
-            .get_value(&db::PayoutControlBalanceKey { payout_control })
-            .await
-            .unwrap_or(Amount::ZERO))
+        params: api::GetPayoutControlBalanceParams,
+    ) -> Result<api::GetPayoutControlBalanceResult, ApiError> {
+        Ok(api::GetPayoutControlBalanceResult {
+            balance: dbtx
+                .get_value(&db::PayoutControlBalanceKey {
+                    payout_control: params.payout_control,
+                })
+                .await
+                .unwrap_or(Amount::ZERO),
+        })
     }
 }
 
-/// market operations
+//
+// market operations
+//
 impl PredictionMarkets {
     async fn get_next_order_time_ordering(
         dbtx: &mut DatabaseTransaction<'_>,
@@ -1337,8 +1344,9 @@ impl PredictionMarkets {
                                 .expect("should always convert")
                                 * satisfied_quantity.0);
 
-                        order.bitcoin_acquired_from_order_matches =
-                            order.bitcoin_acquired_from_order_matches - (other_price * satisfied_quantity.0);
+                        order.bitcoin_acquired_from_order_matches = order
+                            .bitcoin_acquired_from_order_matches
+                            - (other_price * satisfied_quantity.0);
 
                         market.open_contracts =
                             market.open_contracts + ContractAmount(satisfied_quantity.0);
@@ -1348,8 +1356,9 @@ impl PredictionMarkets {
                             + (Amount::try_from(other_price).expect("should always convert")
                                 * satisfied_quantity.0);
 
-                        order.bitcoin_acquired_from_order_matches =
-                            order.bitcoin_acquired_from_order_matches + (other_price * satisfied_quantity.0);
+                        order.bitcoin_acquired_from_order_matches = order
+                            .bitcoin_acquired_from_order_matches
+                            + (other_price * satisfied_quantity.0);
 
                         market.open_contracts =
                             market.open_contracts - ContractAmount(satisfied_quantity.0);
@@ -1524,15 +1533,17 @@ impl PredictionMarkets {
                 order.contract_of_outcome_balance =
                     order.contract_of_outcome_balance + satisfied_quantity;
 
-                order.bitcoin_acquired_from_order_matches =
-                    order.bitcoin_acquired_from_order_matches - SignedAmount::from(order.price * satisfied_quantity.0);
+                order.bitcoin_acquired_from_order_matches = order
+                    .bitcoin_acquired_from_order_matches
+                    - SignedAmount::from(order.price * satisfied_quantity.0);
             }
             Side::Sell => {
                 order.bitcoin_balance =
                     order.bitcoin_balance + (order.price * satisfied_quantity.0);
 
-                order.bitcoin_acquired_from_order_matches =
-                    order.bitcoin_acquired_from_order_matches + SignedAmount::from(order.price * satisfied_quantity.0);
+                order.bitcoin_acquired_from_order_matches = order
+                    .bitcoin_acquired_from_order_matches
+                    + SignedAmount::from(order.price * satisfied_quantity.0);
             }
         }
 
