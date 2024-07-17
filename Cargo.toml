@@ -6,7 +6,6 @@ members = [
     "fedimint-prediction-markets-client",
     "fedimint-prediction-markets-server",
     "fedimint-prediction-markets-tests",
-    "tests",
 ]
 resolver = "2"
 
