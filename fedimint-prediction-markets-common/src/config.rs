@@ -92,6 +92,7 @@ pub struct PredictionMarketsConfigConsensus {
 /// Will be encrypted and not shared such as private key material
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PredictionMarketsConfigPrivate {
+    // If private config is empty, fedimintd does not run
     pub example: String,
 }
 

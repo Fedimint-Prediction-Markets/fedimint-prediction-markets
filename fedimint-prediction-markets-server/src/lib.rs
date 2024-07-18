@@ -237,7 +237,7 @@ impl ServerModuleInit for PredictionMarketsInit {
                         peer_count: peers.len().try_into().expect("should never fail"),
                     },
                     private: config::PredictionMarketsConfigPrivate {
-                        example: "test".to_owned(),
+                        example: "test".into(),
                     },
                     consensus: config::PredictionMarketsConfigConsensus {
                         gc: params.consensus.gc.to_owned(),
@@ -265,7 +265,7 @@ impl ServerModuleInit for PredictionMarketsInit {
                     .expect("should never fail"),
             },
             private: config::PredictionMarketsConfigPrivate {
-                example: "test".to_owned(),
+                example: "test".into(),
             },
             consensus: config::PredictionMarketsConfigConsensus {
                 gc: params.consensus.gc,
