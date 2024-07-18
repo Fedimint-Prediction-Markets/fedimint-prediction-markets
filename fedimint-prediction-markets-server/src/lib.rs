@@ -320,15 +320,13 @@ impl ServerModule for PredictionMarkets {
         &self,
         _dbtx: &mut DatabaseTransaction<'_>,
     ) -> Vec<PredictionMarketsConsensusItem> {
-        let mut items = vec![];
-
         let timestamp_to_propose =
             UnixTimestamp::now().round_down(self.cfg.consensus.gc.timestamp_interval);
-        items.push(PredictionMarketsConsensusItem::TimestampProposal(
+        let timestamp_proposal = PredictionMarketsConsensusItem::TimestampProposal(
             timestamp_to_propose,
-        ));
+        );
 
-        items
+        vec![timestamp_proposal]
     }
 
     async fn process_consensus_item<'a, 'b>(
@@ -338,23 +336,23 @@ impl ServerModule for PredictionMarkets {
         peer_id: PeerId,
     ) -> anyhow::Result<()> {
         match consensus_item {
-            PredictionMarketsConsensusItem::TimestampProposal(new_peer_timestamp) => {
+            PredictionMarketsConsensusItem::TimestampProposal(timestamp_proposed) => {
                 // checks
-                if !new_peer_timestamp.divisible(self.cfg.consensus.gc.timestamp_interval) {
+                if !timestamp_proposed.divisible(self.cfg.consensus.gc.timestamp_interval) {
                     bail!("new unix timestamp is not divisible by timestamp interval");
                 }
                 let current_peer_timestamp = dbtx
                     .get_value(&db::PeersProposedTimestampKey { peer_id })
                     .await
                     .unwrap_or(UnixTimestamp::ZERO);
-                if current_peer_timestamp == new_peer_timestamp {
-                    bail!("duplicate timestamp")
+                if current_peer_timestamp >= timestamp_proposed {
+                    bail!("proposed timestamp is not after current timestamp")
                 }
 
                 // insert
                 dbtx.insert_entry(
                     &db::PeersProposedTimestampKey { peer_id },
-                    &new_peer_timestamp,
+                    &timestamp_proposed,
                 )
                 .await;
                 Ok(())
