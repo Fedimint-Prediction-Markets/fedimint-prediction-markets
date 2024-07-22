@@ -213,7 +213,7 @@ impl ServerModuleInit for PredictionMarketsInit {
                 MODULE_CONSENSUS_VERSION.major,
                 MODULE_CONSENSUS_VERSION.minor,
             ),
-            &[(0, 0)],
+            &[(1, 0)],
         )
     }
 
@@ -915,49 +915,49 @@ impl ServerModule for PredictionMarkets {
         vec![
             api_endpoint! {
                 api::GET_MARKET,
-                ApiVersion::new(0, 0),
+                ApiVersion::new(1, 0),
                 async |module: &PredictionMarkets, context, params: api::GetMarketParams| -> api::GetMarketResult {
                     module.api_get_market(&mut context.dbtx(), params).await
                 }
             },
             api_endpoint! {
                 api::GET_ORDER,
-                ApiVersion::new(0, 0),
+                ApiVersion::new(1, 0),
                 async |module: &PredictionMarkets, context, params: api::GetOrderParams| -> api::GetOrderResult {
                     module.api_get_order(&mut context.dbtx(), params).await
                 }
             },
             api_endpoint! {
                 api::GET_PAYOUT_CONTROL_MARKETS,
-                ApiVersion::new(0, 0),
+                ApiVersion::new(1, 0),
                 async |module: &PredictionMarkets, context, params: api::GetPayoutControlMarketsParams| -> api::GetPayoutControlMarketsResult {
                     module.api_get_payout_control_markets(&mut context.dbtx(), params).await
                 }
             },
             api_endpoint! {
                 api::GET_MARKET_PAYOUT_CONTROL_PROPOSALS,
-                ApiVersion::new(0, 0),
+                ApiVersion::new(1, 0),
                 async |module: &PredictionMarkets, context, params: api::GetMarketPayoutControlProposalsParams| -> api::GetMarketPayoutControlProposalsResult {
                     module.api_get_market_payout_control_proposals(&mut context.dbtx(), params).await
                 }
             },
             api_endpoint! {
                 api::GET_MARKET_OUTCOME_CANDLESTICKS,
-                ApiVersion::new(0, 0),
+                ApiVersion::new(1, 0),
                 async |module: &PredictionMarkets, context, params: api::GetMarketOutcomeCandlesticksParams| -> api::GetMarketOutcomeCandlesticksResult {
                     module.api_get_market_outcome_candlesticks(&mut context.dbtx(), params).await
                 }
             },
             api_endpoint! {
                 api::WAIT_MARKET_OUTCOME_CANDLESTICKS,
-                ApiVersion::new(0, 0),
+                ApiVersion::new(1, 0),
                 async |module: &PredictionMarkets, context, params: api::WaitMarketOutcomeCandlesticksParams| -> api::WaitMarketOutcomeCandlesticksResult {
                     module.api_wait_market_outcome_candlesticks(context, params).await
                 }
             },
             api_endpoint! {
                 api::GET_PAYOUT_CONTROL_BALANCE,
-                ApiVersion::new(0, 0),
+                ApiVersion::new(1, 0),
                 async |module: &PredictionMarkets, context, params: api::GetPayoutControlBalanceParams| -> api::GetPayoutControlBalanceResult {
                     module.api_get_payout_control_balance(&mut context.dbtx(), params).await
                 }
