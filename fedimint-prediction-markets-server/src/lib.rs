@@ -26,8 +26,9 @@ use fedimint_prediction_markets_common::{
     Payout, PredictionMarketsCommonInit, PredictionMarketsConsensusItem, PredictionMarketsInput,
     PredictionMarketsInputError, PredictionMarketsModuleTypes, PredictionMarketsOutput,
     PredictionMarketsOutputError, PredictionMarketsOutputOutcome, Seconds, Side, SignedAmount,
-    TimeOrdering, UnixTimestamp, WeightRequiredForPayout, CONSENSUS_VERSION,
+    TimeOrdering, UnixTimestamp, WeightRequiredForPayout, MODULE_CONSENSUS_VERSION,
 };
+use fedimint_server::config::CORE_CONSENSUS_VERSION;
 use futures::{future, StreamExt};
 use secp256k1::PublicKey;
 use strum::IntoEnumIterator;
@@ -202,11 +203,18 @@ impl ServerModuleInit for PredictionMarketsInit {
 
     /// Returns the version of this module
     fn versions(&self, _core: CoreConsensusVersion) -> &[ModuleConsensusVersion] {
-        &[CONSENSUS_VERSION]
+        &[MODULE_CONSENSUS_VERSION]
     }
 
     fn supported_api_versions(&self) -> SupportedModuleApiVersions {
-        SupportedModuleApiVersions::from_raw((2, 0), (2, 0), &[(0, 0)])
+        SupportedModuleApiVersions::from_raw(
+            (CORE_CONSENSUS_VERSION.major, CORE_CONSENSUS_VERSION.minor),
+            (
+                MODULE_CONSENSUS_VERSION.major,
+                MODULE_CONSENSUS_VERSION.minor,
+            ),
+            &[(0, 0)],
+        )
     }
 
     /// Initialize the module
@@ -322,9 +330,8 @@ impl ServerModule for PredictionMarkets {
     ) -> Vec<PredictionMarketsConsensusItem> {
         let timestamp_to_propose =
             UnixTimestamp::now().round_down(self.cfg.consensus.gc.timestamp_interval);
-        let timestamp_proposal = PredictionMarketsConsensusItem::TimestampProposal(
-            timestamp_to_propose,
-        );
+        let timestamp_proposal =
+            PredictionMarketsConsensusItem::TimestampProposal(timestamp_to_propose);
 
         vec![timestamp_proposal]
     }
