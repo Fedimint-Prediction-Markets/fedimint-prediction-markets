@@ -68,7 +68,7 @@ pub struct PredictionMarketsClientInit;
 #[apply(async_trait_maybe_send!)]
 impl ModuleInit for PredictionMarketsClientInit {
     type Common = PredictionMarketsCommonInit;
-    const DATABASE_VERSION: DatabaseVersion = DatabaseVersion(1);
+    const DATABASE_VERSION: DatabaseVersion = DatabaseVersion(0);
 
     async fn dump_database(
         &self,
@@ -85,7 +85,7 @@ impl ClientModuleInit for PredictionMarketsClientInit {
     type Module = PredictionMarketsClientModule;
 
     fn supported_api_versions(&self) -> MultiApiVersion {
-        MultiApiVersion::try_from_iter([ApiVersion { major: 1, minor: 0 }])
+        MultiApiVersion::try_from_iter([ApiVersion::new(0, 0)])
             .expect("no version conflicts")
     }
 

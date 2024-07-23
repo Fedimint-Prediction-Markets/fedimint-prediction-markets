@@ -27,7 +27,7 @@ pub mod api;
 pub const KIND: ModuleKind = ModuleKind::from_static_str("prediction-markets");
 
 /// Modules are non-compatible with older versions
-pub const MODULE_CONSENSUS_VERSION: ModuleConsensusVersion = ModuleConsensusVersion { major: 1, minor: 0 };
+pub const MODULE_CONSENSUS_VERSION: ModuleConsensusVersion = ModuleConsensusVersion { major: 0, minor: 0 };
 
 /// Non-transaction items that will be submitted to consensus
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize, Encodable, Decodable)]
