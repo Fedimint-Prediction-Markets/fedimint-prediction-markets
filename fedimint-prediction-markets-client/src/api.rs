@@ -7,9 +7,9 @@ use fedimint_prediction_markets_common::api::{
     GetMarketPayoutControlProposalsParams, GetMarketPayoutControlProposalsResult, GetMarketResult,
     GetOrderParams, GetOrderResult, GetPayoutControlBalanceParams, GetPayoutControlBalanceResult,
     GetPayoutControlMarketsParams, GetPayoutControlMarketsResult,
-    WaitMarketOutcomeCandlesticksParams, WaitMarketOutcomeCandlesticksResult, GET_MARKET,
-    GET_MARKET_OUTCOME_CANDLESTICKS, GET_MARKET_PAYOUT_CONTROL_PROPOSALS, GET_ORDER,
-    GET_PAYOUT_CONTROL_BALANCE, GET_PAYOUT_CONTROL_MARKETS, WAIT_MARKET_OUTCOME_CANDLESTICKS,
+    WaitMarketOutcomeCandlesticksParams, WaitMarketOutcomeCandlesticksResult, GET_MARKET_ENDPOINT,
+    GET_MARKET_OUTCOME_CANDLESTICKS_ENDPOINT, GET_MARKET_PAYOUT_CONTROL_PROPOSALS_ENDPOINT, GET_ORDER_ENDPOINT,
+    GET_PAYOUT_CONTROL_BALANCE_ENDPOINT, GET_PAYOUT_CONTROL_MARKETS_ENDPOINT, WAIT_MARKET_OUTCOME_CANDLESTICKS_ENDPOINT,
 };
 
 #[apply(async_trait_maybe_send!)]
@@ -44,12 +44,12 @@ where
     T: IModuleFederationApi + MaybeSend + MaybeSync + 'static,
 {
     async fn get_market(&self, params: GetMarketParams) -> FederationResult<GetMarketResult> {
-        self.request_current_consensus(GET_MARKET.into(), ApiRequestErased::new(params))
+        self.request_current_consensus(GET_MARKET_ENDPOINT.into(), ApiRequestErased::new(params))
             .await
     }
 
     async fn get_order(&self, params: GetOrderParams) -> FederationResult<GetOrderResult> {
-        self.request_current_consensus(GET_ORDER.into(), ApiRequestErased::new(params))
+        self.request_current_consensus(GET_ORDER_ENDPOINT.into(), ApiRequestErased::new(params))
             .await
     }
 
@@ -58,7 +58,7 @@ where
         params: GetPayoutControlMarketsParams,
     ) -> FederationResult<GetPayoutControlMarketsResult> {
         self.request_current_consensus(
-            GET_PAYOUT_CONTROL_MARKETS.into(),
+            GET_PAYOUT_CONTROL_MARKETS_ENDPOINT.into(),
             ApiRequestErased::new(params),
         )
         .await
@@ -69,7 +69,7 @@ where
         params: GetMarketPayoutControlProposalsParams,
     ) -> FederationResult<GetMarketPayoutControlProposalsResult> {
         self.request_current_consensus(
-            GET_MARKET_PAYOUT_CONTROL_PROPOSALS.into(),
+            GET_MARKET_PAYOUT_CONTROL_PROPOSALS_ENDPOINT.into(),
             ApiRequestErased::new(params),
         )
         .await
@@ -80,7 +80,7 @@ where
         params: GetMarketOutcomeCandlesticksParams,
     ) -> FederationResult<GetMarketOutcomeCandlesticksResult> {
         self.request_current_consensus(
-            GET_MARKET_OUTCOME_CANDLESTICKS.into(),
+            GET_MARKET_OUTCOME_CANDLESTICKS_ENDPOINT.into(),
             ApiRequestErased::new(params),
         )
         .await
@@ -91,7 +91,7 @@ where
         params: WaitMarketOutcomeCandlesticksParams,
     ) -> FederationResult<WaitMarketOutcomeCandlesticksResult> {
         self.request_current_consensus(
-            WAIT_MARKET_OUTCOME_CANDLESTICKS.into(),
+            WAIT_MARKET_OUTCOME_CANDLESTICKS_ENDPOINT.into(),
             ApiRequestErased::new(params),
         )
         .await
@@ -102,7 +102,7 @@ where
         params: GetPayoutControlBalanceParams,
     ) -> FederationResult<GetPayoutControlBalanceResult> {
         self.request_current_consensus(
-            GET_PAYOUT_CONTROL_BALANCE.into(),
+            GET_PAYOUT_CONTROL_BALANCE_ENDPOINT.into(),
             ApiRequestErased::new(params),
         )
         .await

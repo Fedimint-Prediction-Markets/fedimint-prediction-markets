@@ -11,7 +11,7 @@ use crate::{Candlestick, ContractOfOutcomeAmount, Market, Order, Outcome, Second
 // Get Market
 //
 
-pub const GET_MARKET: &str = "get_market";
+pub const GET_MARKET_ENDPOINT: &str = "get_market";
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct GetMarketParams {
     pub market: OutPoint,
@@ -25,7 +25,7 @@ pub struct GetMarketResult {
 // Get Order
 //
 
-pub const GET_ORDER: &str = "get_order";
+pub const GET_ORDER_ENDPOINT: &str = "get_order";
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct GetOrderParams {
     pub order: PublicKey,
@@ -39,7 +39,7 @@ pub struct GetOrderResult {
 // Get Payout Control Markets
 //
 
-pub const GET_PAYOUT_CONTROL_MARKETS: &str = "get_payout_control_markets";
+pub const GET_PAYOUT_CONTROL_MARKETS_ENDPOINT: &str = "get_payout_control_markets";
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct GetPayoutControlMarketsParams {
     pub payout_control: PublicKey,
@@ -54,7 +54,7 @@ pub struct GetPayoutControlMarketsResult {
 // Get Market Payout Control Proposals
 //
 
-pub const GET_MARKET_PAYOUT_CONTROL_PROPOSALS: &str = "get_market_payout_control_proposals";
+pub const GET_MARKET_PAYOUT_CONTROL_PROPOSALS_ENDPOINT: &str = "get_market_payout_control_proposals";
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct GetMarketPayoutControlProposalsParams {
     pub market: OutPoint,
@@ -68,7 +68,7 @@ pub struct GetMarketPayoutControlProposalsResult {
 // Get Market Outcome Candlesticks
 //
 
-pub const GET_MARKET_OUTCOME_CANDLESTICKS: &str = "get_market_outcome_candlesticks";
+pub const GET_MARKET_OUTCOME_CANDLESTICKS_ENDPOINT: &str = "get_market_outcome_candlesticks";
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct GetMarketOutcomeCandlesticksParams {
     pub market: OutPoint,
@@ -85,7 +85,7 @@ pub struct GetMarketOutcomeCandlesticksResult {
 // Wait Market Outcome Candlesticks
 //
 
-pub const WAIT_MARKET_OUTCOME_CANDLESTICKS: &str = "wait_market_outcome_candlesticks";
+pub const WAIT_MARKET_OUTCOME_CANDLESTICKS_ENDPOINT: &str = "wait_market_outcome_candlesticks";
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct WaitMarketOutcomeCandlesticksParams {
     pub market: OutPoint,
@@ -103,7 +103,7 @@ pub struct WaitMarketOutcomeCandlesticksResult {
 // Get Payout Control Balances
 //
 
-pub const GET_PAYOUT_CONTROL_BALANCE: &str = "get_payout_control_balance";
+pub const GET_PAYOUT_CONTROL_BALANCE_ENDPOINT: &str = "get_payout_control_balance";
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct GetPayoutControlBalanceParams {
     pub payout_control: PublicKey,
