@@ -11,52 +11,52 @@ use crate::{PredictionMarketsClientContext, PredictionMarketsClientModule};
 
 /// Tracks a transaction.
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Decodable, Encodable)]
-pub enum PredictionMarketsStateMachine {
+pub struct PredictionMarketsStateMachine {
+    pub operation_id: OperationId,
+    pub state: PredictionMarketState,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Decodable, Encodable)]
+pub enum PredictionMarketState {
     NewMarket {
-        operation_id: OperationId,
         tx_id: TransactionId,
     },
-    NewMarketAccepted(OperationId),
-    NewMarketFailed(OperationId),
+    NewMarketAccepted,
+    NewMarketFailed,
 
     ProposePayout {
-        operation_id: OperationId,
         tx_id: TransactionId,
     },
-    ProposePayoutAccepted(OperationId),
-    ProposePayoutFailed(OperationId),
+    ProposePayoutAccepted,
+    ProposePayoutFailed,
 
     NewOrder {
-        operation_id: OperationId,
         tx_id: TransactionId,
         order: OrderIdClientSide,
         sources: Vec<OrderIdClientSide>,
     },
-    NewOrderAccepted(OperationId),
-    NewOrderFailed(OperationId),
+    NewOrderAccepted,
+    NewOrderFailed,
 
     CancelOrder {
-        operation_id: OperationId,
         tx_id: TransactionId,
         order: OrderIdClientSide,
     },
-    CancelOrderAccepted(OperationId),
-    CancelOrderFailed(OperationId),
+    CancelOrderAccepted,
+    CancelOrderFailed,
 
     ConsumeOrderBitcoinBalance {
-        operation_id: OperationId,
         tx_id: TransactionId,
         order: OrderIdClientSide,
     },
-    ConsumeOrderBitcoinBalanceAccepted(OperationId),
-    ConsumeOrderBitcoinBalanceFailed(OperationId),
+    ConsumeOrderBitcoinBalanceAccepted,
+    ConsumeOrderBitcoinBalanceFailed,
 
     ConsumePayoutControlBitcoinBalance {
-        operation_id: OperationId,
         tx_id: TransactionId,
     },
-    ConsumePayoutControlBitcoinBalanceAccepted(OperationId),
-    ConsumePayoutControlBitcoinBalanceFailed(OperationId),
+    ConsumePayoutControlBitcoinBalanceAccepted,
+    ConsumePayoutControlBitcoinBalanceFailed,
 }
 
 impl State for PredictionMarketsStateMachine {
@@ -67,51 +67,58 @@ impl State for PredictionMarketsStateMachine {
         _context: &Self::ModuleContext,
         global_context: &DynGlobalClientContext,
     ) -> Vec<StateTransition<Self>> {
-        match self.clone() {
-            Self::NewMarket {
-                operation_id,
-                tx_id,
-            } => {
+        let operation_id = self.operation_id;
+
+        match self.state.clone() {
+            PredictionMarketState::NewMarket { tx_id } => {
+                vec![StateTransition::new(
+                    await_tx_accepted(global_context.clone(), operation_id, tx_id),
+                    move |_dbtx, res, _state_machine: Self| match res {
+                        // tx accepted
+                        Ok(_) => Box::pin(async move {
+                            Self {
+                                operation_id,
+                                state: PredictionMarketState::NewMarketAccepted,
+                            }
+                        }),
+                        // tx rejected
+                        Err(_) => Box::pin(async move {
+                            Self {
+                                operation_id,
+                                state: PredictionMarketState::NewMarketFailed,
+                            }
+                        }),
+                    },
+                )]
+            }
+            PredictionMarketState::NewMarketAccepted => vec![],
+            PredictionMarketState::NewMarketFailed => vec![],
+
+            PredictionMarketState::ProposePayout { tx_id } => {
                 vec![StateTransition::new(
                     await_tx_accepted(global_context.clone(), operation_id, tx_id),
                     move |_dbtx, res, _state: Self| match res {
                         // tx accepted
                         Ok(_) => Box::pin(async move {
-                            PredictionMarketsStateMachine::NewMarketAccepted(operation_id)
+                            Self {
+                                operation_id,
+                                state: PredictionMarketState::ProposePayoutAccepted,
+                            }
                         }),
                         // tx rejected
                         Err(_) => Box::pin(async move {
-                            PredictionMarketsStateMachine::NewMarketFailed(operation_id)
+                            Self {
+                                operation_id,
+                                state: PredictionMarketState::ProposePayoutFailed,
+                            }
                         }),
                     },
                 )]
             }
-            Self::NewMarketAccepted(_) => vec![],
-            Self::NewMarketFailed(_) => vec![],
+            PredictionMarketState::ProposePayoutAccepted => vec![],
+            PredictionMarketState::ProposePayoutFailed => vec![],
 
-            Self::ProposePayout {
-                operation_id,
-                tx_id,
-            } => {
-                vec![StateTransition::new(
-                    await_tx_accepted(global_context.clone(), operation_id, tx_id),
-                    move |_dbtx, res, _state: Self| match res {
-                        // tx accepted
-                        Ok(_) => Box::pin(async move {
-                            PredictionMarketsStateMachine::ProposePayoutAccepted(operation_id)
-                        }),
-                        // tx rejected
-                        Err(_) => Box::pin(async move {
-                            PredictionMarketsStateMachine::ProposePayoutFailed(operation_id)
-                        }),
-                    },
-                )]
-            }
-            Self::ProposePayoutAccepted(_) => vec![],
-            Self::ProposePayoutFailed(_) => vec![],
-
-            Self::NewOrder {
-                operation_id,
+            PredictionMarketState::NewOrder {
                 tx_id,
                 order,
                 sources,
@@ -131,7 +138,10 @@ impl State for PredictionMarketsStateMachine {
                                     changed_orders,
                                 )
                                 .await;
-                                PredictionMarketsStateMachine::NewOrderAccepted(operation_id)
+                                Self {
+                                    operation_id,
+                                    state: PredictionMarketState::NewOrderAccepted,
+                                }
                             })
                         }
                         // tx rejected
@@ -141,19 +151,18 @@ impl State for PredictionMarketsStateMachine {
                                 order,
                             )
                             .await;
-                            PredictionMarketsStateMachine::NewOrderFailed(operation_id)
+                            Self {
+                                operation_id,
+                                state: PredictionMarketState::NewOrderFailed,
+                            }
                         }),
                     },
                 )]
             }
-            Self::NewOrderAccepted(_) => vec![],
-            Self::NewOrderFailed(_) => vec![],
+            PredictionMarketState::NewOrderAccepted => vec![],
+            PredictionMarketState::NewOrderFailed => vec![],
 
-            Self::CancelOrder {
-                operation_id,
-                tx_id,
-                order,
-            } => {
+            PredictionMarketState::CancelOrder { tx_id, order } => {
                 vec![StateTransition::new(
                     await_tx_accepted(global_context.clone(), operation_id, tx_id),
                     move |dbtx, res, _state: Self| match res {
@@ -164,23 +173,25 @@ impl State for PredictionMarketsStateMachine {
                                 vec![order],
                             )
                             .await;
-                            PredictionMarketsStateMachine::CancelOrderAccepted(operation_id)
+                            Self {
+                                operation_id,
+                                state: PredictionMarketState::CancelOrderAccepted,
+                            }
                         }),
                         // tx rejected
                         Err(_) => Box::pin(async move {
-                            PredictionMarketsStateMachine::CancelOrderFailed(operation_id)
+                            Self {
+                                operation_id,
+                                state: PredictionMarketState::CancelOrderFailed,
+                            }
                         }),
                     },
                 )]
             }
-            Self::CancelOrderAccepted(_) => vec![],
-            Self::CancelOrderFailed(_) => vec![],
+            PredictionMarketState::CancelOrderAccepted => vec![],
+            PredictionMarketState::CancelOrderFailed => vec![],
 
-            Self::ConsumeOrderBitcoinBalance {
-                operation_id,
-                tx_id,
-                order,
-            } => {
+            PredictionMarketState::ConsumeOrderBitcoinBalance { tx_id, order } => {
                 vec![StateTransition::new(
                     await_tx_accepted(global_context.clone(), operation_id, tx_id),
                     move |dbtx, res, _state: Self| match res {
@@ -191,97 +202,53 @@ impl State for PredictionMarketsStateMachine {
                                 vec![order],
                             )
                             .await;
-                            PredictionMarketsStateMachine::ConsumeOrderBitcoinBalanceAccepted(
+                            Self {
                                 operation_id,
-                            )
+                                state: PredictionMarketState::ConsumeOrderBitcoinBalanceAccepted,
+                            }
                         }),
                         // tx rejected
                         Err(_) => Box::pin(async move {
-                            PredictionMarketsStateMachine::ConsumeOrderBitcoinBalanceFailed(
+                            Self {
                                 operation_id,
-                            )
+                                state: PredictionMarketState::ConsumeOrderBitcoinBalanceFailed,
+                            }
                         }),
                     },
                 )]
             }
-            Self::ConsumeOrderBitcoinBalanceAccepted(_) => vec![],
-            Self::ConsumeOrderBitcoinBalanceFailed(_) => vec![],
+            PredictionMarketState::ConsumeOrderBitcoinBalanceAccepted => vec![],
+            PredictionMarketState::ConsumeOrderBitcoinBalanceFailed => vec![],
 
-            Self::ConsumePayoutControlBitcoinBalance {
-                operation_id,
-                tx_id,
-            } => {
+            PredictionMarketState::ConsumePayoutControlBitcoinBalance { tx_id } => {
                 vec![StateTransition::new(
                     await_tx_accepted(global_context.clone(), operation_id, tx_id),
                     move |_dbtx, res, _state: Self| match res {
                         // tx accepted
                         Ok(_) => Box::pin(async move {
-                            PredictionMarketsStateMachine::ConsumePayoutControlBitcoinBalanceAccepted(
+                            Self {
                                 operation_id,
-                            )
+                                state: PredictionMarketState::ConsumePayoutControlBitcoinBalanceAccepted,
+                            }
                         }),
                         // tx rejected
                         Err(_) => Box::pin(async move {
-                            PredictionMarketsStateMachine::ConsumePayoutControlBitcoinBalanceFailed(
+                            Self {
                                 operation_id,
-                            )
+                                state:
+                                    PredictionMarketState::ConsumePayoutControlBitcoinBalanceFailed,
+                            }
                         }),
                     },
                 )]
             }
-            Self::ConsumePayoutControlBitcoinBalanceAccepted(_) => vec![],
-            Self::ConsumePayoutControlBitcoinBalanceFailed(_) => vec![],
+            PredictionMarketState::ConsumePayoutControlBitcoinBalanceAccepted => vec![],
+            PredictionMarketState::ConsumePayoutControlBitcoinBalanceFailed => vec![],
         }
     }
 
     fn operation_id(&self) -> OperationId {
-        match self {
-            Self::NewMarket {
-                operation_id,
-                tx_id: _,
-            } => *operation_id,
-            Self::NewMarketAccepted(operation_id) => *operation_id,
-            Self::NewMarketFailed(operation_id) => *operation_id,
-
-            Self::ProposePayout {
-                operation_id,
-                tx_id: _,
-            } => *operation_id,
-            Self::ProposePayoutAccepted(operation_id) => *operation_id,
-            Self::ProposePayoutFailed(operation_id) => *operation_id,
-
-            Self::NewOrder {
-                operation_id,
-                tx_id: _,
-                order: _,
-                sources: _,
-            } => *operation_id,
-            Self::NewOrderAccepted(operation_id) => *operation_id,
-            Self::NewOrderFailed(operation_id) => *operation_id,
-
-            Self::CancelOrder {
-                operation_id,
-                tx_id: _,
-                order: _,
-            } => *operation_id,
-            Self::CancelOrderAccepted(operation_id) => *operation_id,
-            Self::CancelOrderFailed(operation_id) => *operation_id,
-
-            Self::ConsumeOrderBitcoinBalance {
-                operation_id,
-                tx_id: _,
-                order: _,
-            } => *operation_id,
-            Self::ConsumeOrderBitcoinBalanceAccepted(operation_id) => *operation_id,
-            Self::ConsumeOrderBitcoinBalanceFailed(operation_id) => *operation_id,
-
-            Self::ConsumePayoutControlBitcoinBalance {
-                operation_id,
-                tx_id: _,
-            } => *operation_id,
-            Self::ConsumePayoutControlBitcoinBalanceAccepted(operation_id) => *operation_id,
-            Self::ConsumePayoutControlBitcoinBalanceFailed(operation_id) => *operation_id,
-        }
+        self.operation_id
     }
 }
 

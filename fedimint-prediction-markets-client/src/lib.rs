@@ -36,7 +36,7 @@ use fedimint_prediction_markets_common::{
 use futures::stream::FuturesUnordered;
 use futures::{future, StreamExt};
 use secp256k1::{KeyPair, PublicKey, Scalar, Secp256k1, SecretKey};
-use states::PredictionMarketsStateMachine;
+use states::{PredictionMarketState, PredictionMarketsStateMachine};
 
 use crate::api::PredictionMarketsFederationApi;
 
@@ -136,9 +136,9 @@ impl PredictionMarketsClientModule {
                 information,
             },
             state_machines: Arc::new(move |tx_id, _| {
-                vec![PredictionMarketsStateMachine::NewMarket {
+                vec![PredictionMarketsStateMachine {
                     operation_id,
-                    tx_id,
+                    state: PredictionMarketState::NewMarket { tx_id },
                 }]
             }),
         };
@@ -234,9 +234,9 @@ impl PredictionMarketsClientModule {
                 outcome_payouts,
             },
             state_machines: Arc::new(move |tx_id, _| {
-                vec![PredictionMarketsStateMachine::ProposePayout {
+                vec![PredictionMarketsStateMachine {
                     operation_id,
-                    tx_id,
+                    state: PredictionMarketState::ProposePayout { tx_id },
                 }]
             }),
             keys: vec![payout_control_key],
@@ -399,12 +399,10 @@ impl PredictionMarketsClientModule {
                 amount: result.balance,
             },
             state_machines: Arc::new(move |tx_id, _| {
-                vec![
-                    PredictionMarketsStateMachine::ConsumePayoutControlBitcoinBalance {
-                        operation_id,
-                        tx_id,
-                    },
-                ]
+                vec![PredictionMarketsStateMachine {
+                    operation_id,
+                    state: PredictionMarketState::ConsumePayoutControlBitcoinBalance { tx_id },
+                }]
             }),
             keys: vec![self.get_payout_control_key_pair()],
         };
@@ -470,11 +468,13 @@ impl PredictionMarketsClientModule {
                         quantity,
                     },
                     state_machines: Arc::new(move |tx_id, _| {
-                        vec![PredictionMarketsStateMachine::NewOrder {
+                        vec![PredictionMarketsStateMachine {
                             operation_id,
-                            tx_id,
-                            order: order_id,
-                            sources: vec![],
+                            state: PredictionMarketState::NewOrder {
+                                tx_id,
+                                order: order_id,
+                                sources: vec![],
+                            },
                         }]
                     }),
                 };
@@ -545,11 +545,13 @@ impl PredictionMarketsClientModule {
                         sources: sources_for_input,
                     },
                     state_machines: Arc::new(move |tx_id, _| {
-                        vec![PredictionMarketsStateMachine::NewOrder {
+                        vec![PredictionMarketsStateMachine {
                             operation_id,
-                            tx_id,
-                            order: order_id,
-                            sources: sources_for_state_machine.to_owned(),
+                            state: PredictionMarketState::NewOrder {
+                                tx_id,
+                                order: order_id,
+                                sources: sources_for_state_machine.to_owned(),
+                            },
                         }]
                     }),
                     keys: vec![sources_keys_combined.unwrap()],
@@ -631,10 +633,9 @@ impl PredictionMarketsClientModule {
                 order: PublicKey::from_keypair(&order_key),
             },
             state_machines: Arc::new(move |tx_id, _| {
-                vec![PredictionMarketsStateMachine::CancelOrder {
+                vec![PredictionMarketsStateMachine {
                     operation_id,
-                    tx_id,
-                    order: id,
+                    state: PredictionMarketState::CancelOrder { tx_id, order: id },
                 }]
             }),
             keys: vec![order_key],
@@ -701,10 +702,12 @@ impl PredictionMarketsClientModule {
                     amount: order.bitcoin_balance,
                 },
                 state_machines: Arc::new(move |tx_id, _| {
-                    vec![PredictionMarketsStateMachine::ConsumeOrderBitcoinBalance {
+                    vec![PredictionMarketsStateMachine {
                         operation_id,
-                        tx_id,
-                        order: order_id,
+                        state: PredictionMarketState::ConsumeOrderBitcoinBalance {
+                            tx_id,
+                            order: order_id,
+                        },
                     }]
                 }),
                 keys: vec![order_key],
