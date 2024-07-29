@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::string::ToString;
 
 use anyhow::bail;
@@ -31,11 +31,15 @@ use fedimint_prediction_markets_common::{
 };
 use fedimint_server::config::CORE_CONSENSUS_VERSION;
 use futures::{future, StreamExt};
+use highest_priority_order_cache::HighestPriorityOrderCache;
+use order_cache::OrderCache;
 use secp256k1::PublicKey;
 use strum::IntoEnumIterator;
 
 mod candlestick_data_creator;
 mod db;
+mod highest_priority_order_cache;
+mod order_cache;
 
 /// Generates the module
 #[derive(Debug, Clone)]
@@ -1618,93 +1622,5 @@ impl PredictionMarkets {
             .get(i)
             .expect("should always be some")
             .to_owned()
-    }
-}
-
-pub struct OrderCache {
-    m: HashMap<PublicKey, Order>,
-    mut_orders: HashMap<PublicKey, ()>,
-}
-
-impl OrderCache {
-    fn new() -> Self {
-        Self {
-            m: HashMap::new(),
-            mut_orders: HashMap::new(),
-        }
-    }
-
-    async fn get<'a>(
-        &'a mut self,
-        dbtx: &mut DatabaseTransaction<'_>,
-        order_owner: &PublicKey,
-    ) -> &'a Order {
-        if !self.m.contains_key(order_owner) {
-            let order = dbtx
-                .get_value(&db::OrderKey(order_owner.to_owned()))
-                .await
-                .expect("OrderCache always expects order to exist");
-            self.m.insert(order_owner.to_owned(), order);
-        }
-
-        self.m
-            .get(order_owner)
-            .expect("should always produce order")
-    }
-
-    async fn get_mut<'a>(
-        &'a mut self,
-        dbtx: &mut DatabaseTransaction<'_>,
-        order_owner: &PublicKey,
-    ) -> &'a mut Order {
-        if !self.m.contains_key(order_owner) {
-            let order = dbtx
-                .get_value(&db::OrderKey(order_owner.to_owned()))
-                .await
-                .expect("OrderCache always expects order to exist");
-            self.m.insert(order_owner.to_owned(), order);
-        }
-
-        self.mut_orders.insert(order_owner.to_owned(), ());
-
-        self.m
-            .get_mut(order_owner)
-            .expect("should always produce order")
-    }
-
-    async fn save(self, dbtx: &mut DatabaseTransaction<'_>) {
-        for (order_owner, _) in self.mut_orders {
-            let order = self
-                .m
-                .get(&order_owner)
-                .expect("should always produce order");
-            dbtx.insert_entry(&db::OrderKey(order_owner), order).await;
-        }
-    }
-}
-
-pub struct HighestPriorityOrderCache {
-    v: Vec<Option<PublicKey>>,
-}
-
-impl HighestPriorityOrderCache {
-    fn new(market: &Market) -> Self {
-        Self {
-            v: vec![None; market.outcomes.into()],
-        }
-    }
-
-    fn set(&mut self, outcome: Outcome, order_owner: Option<PublicKey>) {
-        let v = self
-            .v
-            .get_mut::<usize>(outcome.into())
-            .expect("vec's length is number of outcomes");
-        *v = order_owner;
-    }
-
-    fn get<'a>(&'a self, outcome: Outcome) -> &'a Option<PublicKey> {
-        self.v
-            .get::<usize>(outcome.into())
-            .expect("vec's length is number of outcomes")
     }
 }
