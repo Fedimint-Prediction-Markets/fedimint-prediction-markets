@@ -352,8 +352,8 @@ pub struct Order {
 
     // fulfilled buys add to this balance
     // sells use this balance for funding
-    // during a payout, the contract price is payed out to orders accoring to this balance.
-    // payouts empty this balance
+    // during payout, the payout amount is found by multiplying this by the order's outcome's payout amount.
+    // payouts set this to zero
     pub contract_of_outcome_balance: ContractOfOutcomeAmount,
 
     // spendable by ConsumeOrderBitcoinBalance input
