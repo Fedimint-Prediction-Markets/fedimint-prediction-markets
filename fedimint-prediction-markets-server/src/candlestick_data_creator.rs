@@ -136,11 +136,10 @@ impl CandlestickDataCreator {
                 .consensus_timestamp
                 .round_down(candlestick_interval.to_owned());
 
-            let min_candlestick_timestamp = UnixTimestamp(
-                candlestick_timestamp.0
-                    - (candlestick_interval
-                        * self.consensus_max_candlesticks_kept_per_market_outcome_interval),
-            );
+            let min_candlestick_timestamp = UnixTimestamp(candlestick_timestamp.0.saturating_sub(
+                candlestick_interval
+                    * self.consensus_max_candlesticks_kept_per_market_outcome_interval,
+            ));
 
             for outcome in 0..candlesticks_by_outcome.len() {
                 let keys_to_remove = dbtx
