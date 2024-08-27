@@ -276,7 +276,7 @@ pub struct MarketInformation {
 }
 
 impl MarketInformation {
-    // hard coded size limits
+    // hard coded string length limits
     const MAX_TITLE_LENGTH: usize = 150;
     const MAX_DESCRIPTION_LENGTH: usize = 1500;
     const MAX_OUTCOME_TITLE_LENGTH: usize = 64;
