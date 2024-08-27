@@ -276,9 +276,9 @@ pub struct MarketInformation {
 }
 
 impl MarketInformation {
-    // sane default size limits
+    // hard coded size limits
     const MAX_TITLE_LENGTH: usize = 150;
-    const MAX_DESCRIPTION_LENGTH: usize = 500;
+    const MAX_DESCRIPTION_LENGTH: usize = 1500;
     const MAX_OUTCOME_TITLE_LENGTH: usize = 64;
 
     pub fn validate(&self, outcomes: &Outcome) -> Result<(), ()> {
