@@ -10,12 +10,14 @@ name = "fedimintd"
 path = "src/fedimintd.rs"
 
 [dependencies]
-anyhow = "1.0.66"
-fedimintd = { workspace = true }
+anyhow = { workspace = true }
 tokio = { version = "1.25.0", features = ["full", "tracing"] }
+
+# Fedimint dependencies
+fedimint-core = { workspace = true }
+fedimintd = { workspace = true }
 fedimint-prediction-markets-server = { path = "../fedimint-prediction-markets-server" }
 fedimint-prediction-markets-common = { path = "../fedimint-prediction-markets-common" }
-fedimint-core = { workspace = true }
 
 [build-dependencies]
 fedimint-build = { git = "https://github.com/fedimint/fedimint" }

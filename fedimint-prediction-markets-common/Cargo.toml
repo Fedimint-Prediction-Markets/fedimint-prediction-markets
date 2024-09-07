@@ -11,12 +11,11 @@ name = "fedimint_prediction_markets_common"
 path = "src/lib.rs"
 
 [dependencies]
-anyhow = "1.0.66"
+anyhow = { workspace = true }
 async-trait = "0.1"
 bitcoin_hashes = "0.11.0"
 erased-serde = "0.4"
 futures = "0.3.30"
-fedimint-core ={ workspace = true }
 rand = "0.8"
 serde = { version = "1.0.149", features = [ "derive" ] }
 secp256k1 = "0.24.2"
@@ -25,6 +24,8 @@ strum_macros = "0.24"
 thiserror = "1.0.39"
 tracing = "0.1.37"
 js-sys = "0.3.64"
-# threshold_crypto = { workspace = true }
+
+# Fedimint dependencies
+fedimint-core = { workspace = true }
 
 
