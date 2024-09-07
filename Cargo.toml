@@ -22,6 +22,18 @@ keywords = ["bitcoin", "lightning", "chaumian", "e-cash", "federated"]
 
 [workspace.dependencies]
 anyhow = "1.0.66"
+rand = "0.8.5"
+tokio = { version = "1.26.0", features = ["full", "tracing"] }
+futures = "0.3.30"
+secp256k1 = "0.24.2"
+tracing = "0.1.37"
+async-trait = "0.1.73"
+serde = { version = "1.0.149", features = [ "derive" ] }
+serde_json = { version = "1.0.91" }
+erased-serde = "0.4"
+thiserror = "1.0.39"
+strum = "0.24"
+strum_macros = "0.24"
 prediction-market-event = "0.4.0"
 
 # Fedimint dependencies

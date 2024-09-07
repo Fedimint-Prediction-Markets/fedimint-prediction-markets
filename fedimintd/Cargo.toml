@@ -11,7 +11,7 @@ path = "src/fedimintd.rs"
 
 [dependencies]
 anyhow = { workspace = true }
-tokio = { version = "1.25.0", features = ["full", "tracing"] }
+tokio = { workspace = true }
 
 # Fedimint dependencies
 fedimint-core = { workspace = true }

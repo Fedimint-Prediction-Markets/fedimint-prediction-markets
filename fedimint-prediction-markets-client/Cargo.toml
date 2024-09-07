@@ -11,19 +11,19 @@ name = "fedimint_prediction_markets_client"
 path = "src/lib.rs"
 
 [dependencies]
-async-trait = "0.1"
+async-trait = { workspace = true }
 anyhow = { workspace = true }
-futures = "0.3.30"
-erased-serde = "0.4"
-rand = "0.8.5"
-secp256k1 = "0.24.2"
-serde = {version = "1.0.149", features = [ "derive" ] }
-serde_json = { version = "1.0.91", features = ["preserve_order"] }
-tracing = "0.1.37"
-thiserror = "1.0.39"
+futures = { workspace = true }
+erased-serde = { workspace = true }
+rand = { workspace = true }
+secp256k1 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
 bitcoin = "0.29.2"
 async-stream = "0.3.5"
-tokio = { version = "1.26.0", features = ["sync"] }
 
 # Fedimint dependencies
 fedimint-core = { workspace = true }
