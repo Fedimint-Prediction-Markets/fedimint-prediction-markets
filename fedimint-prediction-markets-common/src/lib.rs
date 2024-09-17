@@ -2,15 +2,17 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt::{self, Display};
 use std::hash::Hash;
-use std::ops::{Add, Mul, Sub};
+use std::ops::{Add, AddAssign, Mul, Sub, SubAssign};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::Error;
-use config::PredictionMarketsClientConfig;
+use anyhow::bail;
+use config::{GeneralConsensus, PredictionMarketsClientConfig};
 use fedimint_core::core::{Decoder, ModuleInstanceId, ModuleKind};
 use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::module::{CommonModuleInit, ModuleCommon, ModuleConsensusVersion};
 use fedimint_core::{plugin_types_trait_impl_common, Amount, OutPoint};
+use prediction_market_event::Event;
+pub use prediction_market_event::Outcome;
 use secp256k1::PublicKey;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -27,7 +29,8 @@ pub mod api;
 pub const KIND: ModuleKind = ModuleKind::from_static_str("prediction-markets");
 
 /// Modules are non-compatible with older versions
-pub const MODULE_CONSENSUS_VERSION: ModuleConsensusVersion = ModuleConsensusVersion { major: 0, minor: 0 };
+pub const MODULE_CONSENSUS_VERSION: ModuleConsensusVersion =
+    ModuleConsensusVersion { major: 0, minor: 0 };
 
 /// Non-transaction items that will be submitted to consensus
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize, Encodable, Decodable)]
@@ -52,27 +55,16 @@ pub enum PredictionMarketsInput {
     CancelOrder {
         order: PublicKey,
     },
-    PayoutProposal {
-        market: OutPoint,
-        payout_control: PublicKey,
-        outcome_payouts: Vec<Amount>,
-    },
-    ConsumePayoutControlBitcoinBalance {
-        payout_control: PublicKey,
-        amount: Amount,
-    },
 }
 
 /// Output for a fedimint transaction
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Deserialize, Serialize, Encodable, Decodable)]
 pub enum PredictionMarketsOutput {
     NewMarket {
+        event_json: EventJson,
         contract_price: Amount,
-        outcomes: Outcome,
-        payout_control_weights: BTreeMap<PublicKey, Weight>,
+        payout_control_weight_map: BTreeMap<NostrPublicKeyHex, Weight>,
         weight_required_for_payout: WeightRequiredForPayout,
-        payout_controls_fee_per_contract: Amount,
-        information: MarketInformation,
     },
     NewBuyOrder {
         owner: PublicKey,
@@ -80,6 +72,10 @@ pub enum PredictionMarketsOutput {
         outcome: Outcome,
         price: Amount,
         quantity: ContractOfOutcomeAmount,
+    },
+    PayoutMarket {
+        market: OutPoint,
+        event_payout_attestations_json: Vec<NostrEventJson>,
     },
 }
 
@@ -120,6 +116,10 @@ pub enum PredictionMarketsInputError {
     PayoutValidationFailed,
     #[error("A payout already exists for market")]
     PayoutAlreadyExists,
+
+    // other
+    #[error("Other: {0}")]
+    Other(String),
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Error, Encodable, Decodable)]
@@ -151,6 +151,10 @@ pub enum PredictionMarketsOutputError {
     PayoutValidationFailed,
     #[error("A payout already exists for market")]
     PayoutAlreadyExists,
+
+    // other
+    #[error("Other: {0}")]
+    Other(String),
 }
 
 /// Contains the types defined above
@@ -213,53 +217,52 @@ impl fmt::Display for PredictionMarketsConsensusItem {
 
 /// Markets are identified by the OutPoint they were created in.
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
-pub struct Market {
-    // static user set parameters
-    pub contract_price: Amount,
-    pub outcomes: Outcome,
-    pub payout_controls_weights: BTreeMap<PublicKey, Weight>,
-    pub weight_required_for_payout: WeightRequiredForPayout,
-    pub payout_controls_fee_per_contract: Amount,
-    pub information: MarketInformation,
-
-    // set by guardians at creation time
-    pub created_consensus_timestamp: UnixTimestamp,
-
-    // mutated
-    pub open_contracts: ContractAmount,
-    pub payout: Option<Payout>,
-}
+pub struct Market(pub MarketStatic, pub MarketDynamic);
 
 impl Market {
     pub fn validate_market_params(
-        consensus_max_contract_price: &Amount,
-        consensus_max_market_outcomes: &Outcome,
-        consensus_max_payout_control_keys: &u16,
+        gc: &GeneralConsensus,
+        event: &Event,
         contract_price: &Amount,
-        outcomes: &Outcome,
-        payout_control_weights: &BTreeMap<PublicKey, Weight>,
-        payout_controls_fee_per_contract: &Amount,
-        information: &MarketInformation,
+        payout_control_weight_map: &BTreeMap<NostrPublicKeyHex, Weight>,
+        weight_required_for_payout: &WeightRequiredForPayout,
     ) -> Result<(), ()> {
-        // verify market params
-        if contract_price == &Amount::ZERO
-            || contract_price > consensus_max_contract_price
-            || outcomes < &2
-            || outcomes > consensus_max_market_outcomes
-            || payout_control_weights.len() == 0
-            || payout_control_weights.len() > usize::from(*consensus_max_payout_control_keys)
-            || payout_controls_fee_per_contract >= contract_price
+        // validate event
+        let accepted_information_variant_ids = gc
+            .accepted_event_information_variant_ids
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<&str>>();
+        if let Err(_) = event.validate(accepted_information_variant_ids.as_slice()) {
+            return Err(());
+        }
+        if event.outcome_count > gc.max_market_outcomes {
+            return Err(());
+        }
+
+        // validate contract price
+        if contract_price == &Amount::ZERO || contract_price > &gc.max_contract_price {
+            return Err(());
+        }
+        if contract_price.msats % u64::from(event.units_to_payout) != 0 {
+            return Err(());
+        }
+
+        // validate nostr public key weight
+        if payout_control_weight_map.len() == 0
+            || payout_control_weight_map.len() > usize::from(gc.max_payout_control_keys)
         {
             return Err(());
         }
 
-        for (_, weight) in payout_control_weights.iter() {
+        for (_, weight) in payout_control_weight_map.iter() {
             if weight == &0 {
                 return Err(());
             }
         }
 
-        if let Err(_) = information.validate(outcomes) {
+        // validate weight required for payout
+        if weight_required_for_payout < &1 {
             return Err(());
         }
 
@@ -268,67 +271,36 @@ impl Market {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
-pub struct MarketInformation {
-    pub title: String,
-    pub description: String,
-    pub outcome_titles: Vec<String>,
-    pub expected_payout_timestamp: UnixTimestamp,
+pub struct MarketStatic {
+    // set by market creator
+    pub event_json: EventJson,
+    pub contract_price: Amount,
+    pub payout_control_weight_map: BTreeMap<NostrPublicKeyHex, Weight>,
+    pub weight_required_for_payout: WeightRequiredForPayout,
+
+    // set by guardians
+    pub created_consensus_timestamp: UnixTimestamp,
 }
 
-impl MarketInformation {
-    // hard coded string length limits
-    const MAX_TITLE_LENGTH: usize = 150;
-    const MAX_DESCRIPTION_LENGTH: usize = 1500;
-    const MAX_OUTCOME_TITLE_LENGTH: usize = 64;
-
-    pub fn validate(&self, outcomes: &Outcome) -> Result<(), ()> {
-        if self.title.len() > Self::MAX_TITLE_LENGTH
-            || self.description.len() > Self::MAX_DESCRIPTION_LENGTH
-            || self.outcome_titles.len() != usize::from(outcomes.to_owned())
-        {
-            return Err(());
-        }
-        for outcome_title in &self.outcome_titles {
-            if outcome_title.len() > Self::MAX_OUTCOME_TITLE_LENGTH {
-                return Err(());
-            }
-        }
-
-        Ok(())
+impl MarketStatic {
+    pub fn event(&self) -> Result<Event, prediction_market_event::Error> {
+        Event::try_from_json_str(&self.event_json)
     }
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+pub struct MarketDynamic {
+    pub open_contracts: ContractAmount,
+    pub payout: Option<Payout>,
+}
+
+pub type Weight = u16;
+pub type WeightRequiredForPayout = u64;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct Payout {
-    pub outcome_payouts: Vec<Amount>,
+    pub amount_per_outcome: Vec<Amount>,
     pub occurred_consensus_timestamp: UnixTimestamp,
-}
-
-impl Payout {
-    pub fn validate_payout_params(
-        market: &Market,
-        outcome_payouts: &Vec<Amount>,
-    ) -> Result<(), ()> {
-        let payout_per_contract_after_fee =
-            market.contract_price - market.payout_controls_fee_per_contract;
-
-        let mut total_payout = Amount::ZERO;
-        for outcome_payout in outcome_payouts {
-            if outcome_payout > &payout_per_contract_after_fee {
-                return Err(());
-            }
-
-            total_payout += outcome_payout.to_owned();
-        }
-
-        if total_payout != payout_per_contract_after_fee
-            || outcome_payouts.len() != usize::from(market.outcomes)
-        {
-            return Err(());
-        }
-
-        Ok(())
-    }
 }
 
 /// On the server side, Orders are identified by the [PublicKey] that
@@ -352,8 +324,8 @@ pub struct Order {
 
     // fulfilled buys add to this balance
     // sells use this balance for funding
-    // during payout, the payout amount is found by multiplying this by the order's outcome's payout amount.
-    // payouts set this to zero
+    // during payout, the payout amount is found by multiplying this by the order's outcome's
+    // payout amount. payouts set this to zero
     pub contract_of_outcome_balance: ContractOfOutcomeAmount,
 
     // spendable by ConsumeOrderBitcoinBalance input
@@ -367,24 +339,25 @@ pub struct Order {
     // buys (for positive prices) subtract from this
     // sells add to this
     pub bitcoin_acquired_from_order_matches: SignedAmount,
-    
+
     // payouts add to this
     pub bitcoin_acquired_from_payout: Amount,
 }
 
 impl Order {
     pub fn validate_order_params(
-        market: &Market,
-        consensus_max_order_quantity: &ContractOfOutcomeAmount,
+        gc: &GeneralConsensus,
+        market_outcome_count: &Outcome,
+        market_contract_price: &Amount,
         outcome: &Outcome,
         price: &Amount,
         quantity: &ContractOfOutcomeAmount,
     ) -> Result<(), ()> {
-        if outcome >= &market.outcomes
+        if outcome >= &market_outcome_count
             || price == &Amount::ZERO
-            || price >= &market.contract_price
+            || price >= &market_contract_price
             || quantity == &ContractOfOutcomeAmount::ZERO
-            || quantity > consensus_max_order_quantity
+            || quantity > &gc.max_order_quantity
         {
             Err(())
         } else {
@@ -410,9 +383,6 @@ impl Order {
 )]
 pub struct OrderIdClientSide(pub u64);
 
-/// The id of outcomes starts from 0 like an array.
-pub type Outcome = u8;
-
 /// Side of order
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub enum Side {
@@ -436,7 +406,7 @@ impl TryFrom<&str> for Side {
         match value.to_lowercase().as_str() {
             "buy" => Ok(Self::Buy),
             "sell" => Ok(Self::Sell),
-            _ => Err(Error::msg("could not parse side")),
+            _ => bail!("could not parse side"),
         }
     }
 }
@@ -472,6 +442,12 @@ impl Add for ContractAmount {
     }
 }
 
+impl AddAssign for ContractAmount {
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
 impl Sub for ContractAmount {
     type Output = Self;
 
@@ -481,6 +457,12 @@ impl Sub for ContractAmount {
                 .checked_sub(rhs.0)
                 .expect("PredictionMarkets: ContractAmount: subtraction overflow"),
         )
+    }
+}
+
+impl SubAssign for ContractAmount {
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
     }
 }
 
@@ -515,6 +497,12 @@ impl Add for ContractOfOutcomeAmount {
     }
 }
 
+impl AddAssign for ContractOfOutcomeAmount {
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
 impl Sub for ContractOfOutcomeAmount {
     type Output = Self;
 
@@ -527,8 +515,13 @@ impl Sub for ContractOfOutcomeAmount {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
-pub struct TimeOrdering(pub u64);
+impl SubAssign for ContractOfOutcomeAmount {
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
+
+pub type TimeOrdering = u64;
 
 /// Used to represent negative prices.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
@@ -562,9 +555,7 @@ impl TryFrom<SignedAmount> for Amount {
 
     fn try_from(value: SignedAmount) -> Result<Self, Self::Error> {
         if value.is_negative() {
-            Err(Error::msg(
-                "SignedAmount is negative. Amount cannot represent a negative.",
-            ))
+            bail!("SignedAmount is negative. Amount cannot represent a negative.",)
         } else {
             Ok(value.amount)
         }
@@ -625,6 +616,12 @@ impl Add for SignedAmount {
     }
 }
 
+impl AddAssign for SignedAmount {
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
 impl Sub for SignedAmount {
     type Output = SignedAmount;
 
@@ -632,6 +629,12 @@ impl Sub for SignedAmount {
         rhs.negative = !rhs.negative;
 
         self + rhs
+    }
+}
+
+impl SubAssign for SignedAmount {
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
     }
 }
 
@@ -650,7 +653,7 @@ impl Display for SignedAmount {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let prefix = match self.is_negative() {
             true => "-",
-            false => ""
+            false => "",
         };
 
         write!(f, "{}{}", prefix, self.amount)
@@ -699,8 +702,10 @@ impl UnixTimestamp {
     }
 }
 
-pub type Weight = u8;
-pub type WeightRequiredForPayout = u32;
+pub type EventJson = String;
+pub type EventHashHex = String;
+pub type NostrPublicKeyHex = String;
+pub type NostrEventJson = String;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct Candlestick {
