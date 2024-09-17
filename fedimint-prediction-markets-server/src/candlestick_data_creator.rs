@@ -1,11 +1,12 @@
 use fedimint_core::db::{DatabaseTransaction, IDatabaseTransactionOpsCoreTyped};
 use fedimint_core::{Amount, OutPoint};
+use fedimint_prediction_markets_common::config::GeneralConsensus;
 use fedimint_prediction_markets_common::{
-    Candlestick, ContractOfOutcomeAmount, Market, Outcome, Seconds, UnixTimestamp,
+    Candlestick, ContractOfOutcomeAmount, Outcome, Seconds, UnixTimestamp,
 };
 use futures::{future, StreamExt};
 
-use crate::db;
+use crate::{db, MarketSpecificationsNeededForNewOrders};
 
 pub struct CandlestickDataCreator {
     market: OutPoint,
@@ -22,23 +23,24 @@ pub struct CandlestickDataCreator {
 
 impl CandlestickDataCreator {
     pub fn new(
-        consensus_candlestick_intervals: &Vec<Seconds>,
-        consensus_max_candlesticks_kept_per_market_outcome_interval: u64,
+        gc: &GeneralConsensus,
         consensus_timestamp: UnixTimestamp,
-        market_out_point: OutPoint,
-        market: &Market,
+        market: OutPoint,
+        market_specifications: &MarketSpecificationsNeededForNewOrders,
     ) -> Self {
         Self {
-            market: market_out_point,
-            consensus_max_candlesticks_kept_per_market_outcome_interval,
+            market,
+            consensus_max_candlesticks_kept_per_market_outcome_interval: gc
+                .max_candlesticks_kept_per_market_outcome_interval,
             consensus_timestamp,
 
-            candlestick_intervals: consensus_candlestick_intervals
+            candlestick_intervals: gc
+                .candlestick_intervals
                 .iter()
                 .map(|candlestick_interval_seconds| {
                     (
-                        candlestick_interval_seconds.to_owned(),
-                        vec![None; market.outcomes.into()],
+                        *candlestick_interval_seconds,
+                        vec![None; market_specifications.outcome_count.into()],
                     )
                 })
                 .collect(),
@@ -57,7 +59,7 @@ impl CandlestickDataCreator {
         {
             let candlestick_timestamp = self
                 .consensus_timestamp
-                .round_down(candlestick_interval_seconds.to_owned());
+                .round_down(*candlestick_interval_seconds);
 
             let candlestick_opt = candlesticks_by_outcome
                 .get_mut::<usize>(outcome.into())
@@ -68,7 +70,7 @@ impl CandlestickDataCreator {
                     .get_value(&db::MarketOutcomeCandlesticksKey {
                         market: self.market,
                         outcome,
-                        candlestick_interval: candlestick_interval_seconds.to_owned(),
+                        candlestick_interval: *candlestick_interval_seconds,
                         candlestick_timestamp,
                     })
                     .await
@@ -97,9 +99,7 @@ impl CandlestickDataCreator {
         self.remove_old_candlesticks(dbtx).await;
 
         for (candlestick_interval, candlesticks_by_outcome) in self.candlestick_intervals {
-            let candlestick_timestamp = self
-                .consensus_timestamp
-                .round_down(candlestick_interval.to_owned());
+            let candlestick_timestamp = self.consensus_timestamp.round_down(candlestick_interval);
 
             for (i, candlestick_opt) in candlesticks_by_outcome.into_iter().enumerate() {
                 let Some(candlestick) = candlestick_opt else {
@@ -132,9 +132,7 @@ impl CandlestickDataCreator {
 
     pub async fn remove_old_candlesticks(&mut self, dbtx: &mut DatabaseTransaction<'_>) {
         for (candlestick_interval, candlesticks_by_outcome) in self.candlestick_intervals.iter() {
-            let candlestick_timestamp = self
-                .consensus_timestamp
-                .round_down(candlestick_interval.to_owned());
+            let candlestick_timestamp = self.consensus_timestamp.round_down(*candlestick_interval);
 
             let min_candlestick_timestamp = UnixTimestamp(candlestick_timestamp.0.saturating_sub(
                 candlestick_interval
@@ -146,7 +144,7 @@ impl CandlestickDataCreator {
                     .find_by_prefix(&db::MarketOutcomeCandlesticksPrefix3 {
                         market: self.market,
                         outcome: outcome as Outcome,
-                        candlestick_interval: candlestick_interval.to_owned(),
+                        candlestick_interval: *candlestick_interval,
                     })
                     .await
                     .map(|(k, _)| k)

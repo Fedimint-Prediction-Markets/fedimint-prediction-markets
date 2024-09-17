@@ -26,15 +26,13 @@ impl OrderCache {
     ) -> &'a Order {
         if !self.m.contains_key(order_owner) {
             let order = dbtx
-                .get_value(&db::OrderKey(order_owner.to_owned()))
+                .get_value(&db::OrderKey(*order_owner))
                 .await
                 .expect("OrderCache always expects order to exist");
-            self.m.insert(order_owner.to_owned(), order);
+            self.m.insert(*order_owner, order);
         }
 
-        self.m
-            .get(order_owner)
-            .expect("should always produce order")
+        self.m.get(order_owner).unwrap()
     }
 
     pub async fn get_mut<'a>(
@@ -44,25 +42,20 @@ impl OrderCache {
     ) -> &'a mut Order {
         if !self.m.contains_key(order_owner) {
             let order = dbtx
-                .get_value(&db::OrderKey(order_owner.to_owned()))
+                .get_value(&db::OrderKey(*order_owner))
                 .await
                 .expect("OrderCache always expects order to exist");
-            self.m.insert(order_owner.to_owned(), order);
+            self.m.insert(*order_owner, order);
         }
 
-        self.mut_orders.insert(order_owner.to_owned(), ());
+        self.mut_orders.insert(*order_owner, ());
 
-        self.m
-            .get_mut(order_owner)
-            .expect("should always produce order")
+        self.m.get_mut(order_owner).unwrap()
     }
 
     pub async fn save(self, dbtx: &mut DatabaseTransaction<'_>) {
         for (order_owner, _) in self.mut_orders {
-            let order = self
-                .m
-                .get(&order_owner)
-                .expect("should always produce order");
+            let order = self.m.get(&order_owner).unwrap();
             dbtx.insert_entry(&db::OrderKey(order_owner), order).await;
         }
     }

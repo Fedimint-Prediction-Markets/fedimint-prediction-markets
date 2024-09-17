@@ -20,12 +20,14 @@ erased-serde = { workspace = true }
 futures = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 secp256k1 = { workspace = true }
 strum = { workspace = true }
 strum_macros = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
+prediction-market-event = { workspace = true }
 
 # Fedimint dependencies
 fedimint-core = { workspace = true }
