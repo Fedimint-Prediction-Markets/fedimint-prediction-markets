@@ -425,6 +425,7 @@ impl TryFrom<&str> for Side {
     PartialOrd,
     Ord,
 )]
+#[serde(transparent)]
 pub struct ContractAmount(pub u64);
 impl ContractAmount {
     pub const ZERO: Self = ContractAmount(0);
@@ -480,6 +481,7 @@ impl SubAssign for ContractAmount {
     PartialOrd,
     Ord,
 )]
+#[serde(transparent)]
 pub struct ContractOfOutcomeAmount(pub u64);
 impl ContractOfOutcomeAmount {
     pub const ZERO: ContractOfOutcomeAmount = ContractOfOutcomeAmount(0);
@@ -676,6 +678,7 @@ pub type Seconds = u64;
     PartialOrd,
     Ord,
 )]
+#[serde(transparent)]
 pub struct UnixTimestamp(pub Seconds);
 
 impl UnixTimestamp {
