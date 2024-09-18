@@ -1,6 +1,10 @@
 use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::{impl_db_lookup, impl_db_record, OutPoint, PeerId};
-use fedimint_prediction_markets_common::*;
+use fedimint_prediction_markets_common::{
+    Candlestick, ContractOfOutcomeAmount, MarketDynamic, MarketStatic, NostrEventJson, Order,
+    PredictionMarketsOutputOutcome, Seconds, Side, TimeOrdering, UnixTimestamp,
+};
+use prediction_market_event::Outcome;
 use secp256k1::PublicKey;
 use serde::Serialize;
 use strum_macros::EnumIter;
@@ -11,13 +15,13 @@ use crate::MarketSpecificationsNeededForNewOrders;
 #[repr(u8)]
 #[derive(Clone, EnumIter, Debug)]
 pub enum DbKeyPrefix {
-    /// [PredictionMarketsOutput] [OutPoint] to [PredictionMarketsOutputOutcome]
+    /// [fedimint_prediction_markets_common::PredictionMarketsOutput] [OutPoint] to [PredictionMarketsOutputOutcome]
     Outcome = 0x00,
 
-    /// [PredictionMarketsOutput::NewMarket] [OutPoint] to [MarketStatic]
+    /// [fedimint_prediction_markets_common::PredictionMarketsOutput::NewMarket] [OutPoint] to [MarketStatic]
     MarketStatic = 0x01,
 
-    /// [PredictionMarketsOutput::NewMarket] [OutPoint] to [MarketDynamic]
+    /// [fedimint_prediction_markets_common::PredictionMarketsOutput::NewMarket] [OutPoint] to [MarketDynamic]
     MarketDynamic = 0x02,
 
     /// Owner's [PublicKey] to [Order]
@@ -25,7 +29,7 @@ pub enum DbKeyPrefix {
 
     /// Information needed to process new orders
     ///
-    /// [PredictionMarketsOutput::NewMarket] [OutPoint] to
+    /// [fedimint_prediction_markets_common::PredictionMarketsOutput::NewMarket] [OutPoint] to
     /// [MarketSpecificationsNeededForNewOrders]
     MarketSpecificationsNeededForNewOrders = 0x20,
 
@@ -40,7 +44,7 @@ pub enum DbKeyPrefix {
     /// Amount is (contract_price - price of order) for buys
     /// Amount is (price of order) for sells
     ///
-    /// (Market's [OutPoint], [Outcome], [Side], [Amount], [TimeOrdering]) to
+    /// (Market's [OutPoint], [Outcome], [Side], Price priority [u64], [TimeOrdering]) to
     /// (Order's [PublicKey])
     OrderPriceTimePriority = 0x22,
 
