@@ -50,7 +50,6 @@ mod order_cache;
 #[derive(Debug, Clone)]
 pub struct PredictionMarketsInit;
 
-// TODO: Boilerplate-code
 #[async_trait]
 impl ModuleInit for PredictionMarketsInit {
     type Common = PredictionMarketsCommonInit;
@@ -62,7 +61,6 @@ impl ModuleInit for PredictionMarketsInit {
         dbtx: &mut DatabaseTransaction<'_>,
         prefix_names: Vec<String>,
     ) -> Box<dyn Iterator<Item = (String, Box<dyn erased_serde::Serialize + Send>)> + '_> {
-        // TODO: Boilerplate-code
         let mut items: BTreeMap<String, Box<dyn erased_serde::Serialize + Send>> = BTreeMap::new();
         let filtered_prefixes = db::DbKeyPrefix::iter().filter(|f| {
             prefix_names.is_empty() || prefix_names.contains(&f.to_string().to_lowercase())
