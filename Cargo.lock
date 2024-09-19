@@ -4040,9 +4040,9 @@ checksum = "5b40af805b3121feab8a3c29f04d8ad262fa8e0561883e7653e024ae4479e6de"
 
 [[package]]
 name = "prediction-market-event"
-version = "0.6.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01a791e4607d85fbe1159bcea28f3286463e483caf4601dc05ca73cb073230d5"
+checksum = "6d2900d1c739cf6fefaae460ea71038caff0d900c80a947f614c2810af6f4052"
 dependencies = [
  "nostr-sdk",
  "rand",
