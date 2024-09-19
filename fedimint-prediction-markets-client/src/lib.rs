@@ -17,6 +17,7 @@ use fedimint_core::core::{Decoder, OperationId};
 use fedimint_core::db::{
     Committable, Database, DatabaseTransaction, DatabaseVersion, IDatabaseTransactionOpsCoreTyped,
 };
+use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::module::{
     ApiVersion, CommonModuleInit, ModuleCommon, ModuleInit, MultiApiVersion, TransactionItemAmount,
 };
@@ -36,6 +37,7 @@ use fedimint_prediction_markets_common::{
 use futures::stream::FuturesUnordered;
 use futures::{future, StreamExt};
 use secp256k1::{KeyPair, PublicKey, Scalar, Secp256k1, SecretKey};
+use serde::{Deserialize, Serialize};
 use states::{PredictionMarketState, PredictionMarketsStateMachine};
 
 use crate::api::PredictionMarketsFederationApi;
@@ -436,7 +438,7 @@ impl PredictionMarketsClientModule {
         side: Side,
         price: Amount,
         quantity: ContractOfOutcomeAmount,
-    ) -> anyhow::Result<OrderIdClientSide> {
+    ) -> anyhow::Result<OrderId> {
         let operation_id = OperationId::new_random();
         let mut dbtx = self.db.begin_transaction().await;
 
@@ -449,7 +451,7 @@ impl PredictionMarketsClientModule {
                     key.id.0 += 1;
                     key.id
                 }
-                None => OrderIdClientSide(0),
+                None => OrderId(0),
             }
         };
 
@@ -587,7 +589,7 @@ impl PredictionMarketsClientModule {
     /// Get order
     pub async fn get_order(
         &self,
-        id: OrderIdClientSide,
+        id: OrderId,
         from_local_cache: bool,
     ) -> anyhow::Result<Option<Order>> {
         let mut dbtx = self.db.begin_transaction().await;
@@ -623,7 +625,7 @@ impl PredictionMarketsClientModule {
     }
 
     /// Cancel order
-    pub async fn cancel_order(&self, id: OrderIdClientSide) -> anyhow::Result<()> {
+    pub async fn cancel_order(&self, id: OrderId) -> anyhow::Result<()> {
         let operation_id = OperationId::new_random();
 
         let order_key = self.order_id_to_key_pair(id);
@@ -757,7 +759,7 @@ impl PredictionMarketsClientModule {
         sync_possible_payouts: bool,
         market: Option<OutPoint>,
         outcome: Option<Outcome>,
-    ) -> anyhow::Result<BTreeMap<OrderIdClientSide, Order>> {
+    ) -> anyhow::Result<BTreeMap<OrderId, Order>> {
         let mut dbtx = self.db.begin_transaction().await;
 
         let mut orders_to_update = HashMap::new();
@@ -862,7 +864,7 @@ impl PredictionMarketsClientModule {
         &self,
         market: Option<OutPoint>,
         outcome: Option<Outcome>,
-    ) -> BTreeMap<OrderIdClientSide, Order> {
+    ) -> BTreeMap<OrderId, Order> {
         let mut dbtx = self.db.begin_transaction().await;
 
         let orders_by_market_outcome_result: Vec<_> = match market {
@@ -906,7 +908,7 @@ impl PredictionMarketsClientModule {
 
     /// Scans for all orders that the client owns.
     pub async fn resync_order_slots(&self, gap_size_to_check: u16) -> anyhow::Result<()> {
-        let mut order_id = OrderIdClientSide(0);
+        let mut order_id = OrderId(0);
         let mut slots_without_order = 0u16;
         loop {
             if let Some(_) = self.get_order(order_id, false).await? {
@@ -1055,7 +1057,7 @@ impl PredictionMarketsClientModule {
             .to_secp_key(&Secp256k1::new())
     }
 
-    fn order_id_to_key_pair(&self, id: OrderIdClientSide) -> KeyPair {
+    fn order_id_to_key_pair(&self, id: OrderId) -> KeyPair {
         self.root_secret
             .child_key(Self::ORDER_FROM_ROOT_SECRET)
             .child_key(ChildId(id.0))
@@ -1064,7 +1066,7 @@ impl PredictionMarketsClientModule {
 
     async fn save_order_to_db(
         dbtx: &mut DatabaseTransaction<'_, Committable>,
-        id: OrderIdClientSide,
+        id: OrderId,
         order: &Order,
     ) {
         dbtx.insert_entry(&db::OrderKey { id }, &OrderIdSlot::Order(order.to_owned()))
@@ -1108,19 +1110,19 @@ impl PredictionMarketsClientModule {
 
     async fn reserve_order_id_slot(
         dbtx: &mut DatabaseTransaction<'_, Committable>,
-        order: OrderIdClientSide,
+        order: OrderId,
     ) {
         dbtx.insert_entry(&db::OrderKey { id: order }, &OrderIdSlot::Reserved)
             .await;
     }
 
-    async fn unreserve_order_id_slot(mut dbtx: DatabaseTransaction<'_>, order: OrderIdClientSide) {
+    async fn unreserve_order_id_slot(mut dbtx: DatabaseTransaction<'_>, order: OrderId) {
         dbtx.remove_entry(&db::OrderKey { id: order }).await;
     }
 
     async fn set_order_needs_update(
         mut dbtx: DatabaseTransaction<'_>,
-        orders: Vec<OrderIdClientSide>,
+        orders: Vec<OrderId>,
     ) {
         for order in orders {
             dbtx.insert_entry(&db::OrderNeedsUpdateKey { order }, &())
@@ -1423,7 +1425,7 @@ impl ClientModule for PredictionMarketsClientModule {
                     bail!("`get-order` command expects 1 argument: <order_id>")
                 }
 
-                let id = OrderIdClientSide(args[1].to_string_lossy().parse()?);
+                let id = OrderId(args[1].to_string_lossy().parse()?);
 
                 Ok(serde_json::to_value(self.get_order(id, false).await?)?)
             }
@@ -1433,7 +1435,7 @@ impl ClientModule for PredictionMarketsClientModule {
                     bail!("`cancel-order` command expects 1 argument: <order_id>")
                 }
 
-                let id = OrderIdClientSide(args[1].to_string_lossy().parse()?);
+                let id = OrderId(args[1].to_string_lossy().parse()?);
 
                 Ok(serde_json::to_value(self.cancel_order(id).await?)?)
             }
@@ -1548,3 +1550,20 @@ impl ClientModule for PredictionMarketsClientModule {
         false
     }
 }
+
+/// Same as the ChildID used from the order root secret to derive order owner
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    Encodable,
+    Decodable,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+)]
+pub struct OrderId(pub u64);

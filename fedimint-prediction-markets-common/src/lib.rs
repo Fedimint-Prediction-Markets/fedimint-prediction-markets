@@ -215,7 +215,7 @@ impl fmt::Display for PredictionMarketsConsensusItem {
     }
 }
 
-/// Markets are identified by the OutPoint they were created in.
+/// Markets are identified by the [PredictionMarketsOutput::NewMarket] [OutPoint] they were created in.
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct Market(pub MarketStatic, pub MarketDynamic);
 
@@ -365,23 +365,6 @@ impl Order {
         }
     }
 }
-
-/// Same as the ChildID used from the order root secret to derive order owner
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Serialize,
-    Deserialize,
-    Encodable,
-    Decodable,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-)]
-pub struct OrderIdClientSide(pub u64);
 
 /// Side of order
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]

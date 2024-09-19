@@ -3,7 +3,7 @@ use fedimint_client::DynGlobalClientContext;
 use fedimint_core::core::{IntoDynInstance, ModuleInstanceId, OperationId};
 use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::TransactionId;
-use fedimint_prediction_markets_common::OrderIdClientSide;
+use crate::OrderId;
 
 // use serde::{Deserialize, Serialize};
 // use thiserror::Error;
@@ -32,22 +32,22 @@ pub enum PredictionMarketState {
 
     NewOrder {
         tx_id: TransactionId,
-        order: OrderIdClientSide,
-        sources: Vec<OrderIdClientSide>,
+        order: OrderId,
+        sources: Vec<OrderId>,
     },
     NewOrderAccepted,
     NewOrderFailed,
 
     CancelOrder {
         tx_id: TransactionId,
-        order: OrderIdClientSide,
+        order: OrderId,
     },
     CancelOrderAccepted,
     CancelOrderFailed,
 
     ConsumeOrderBitcoinBalance {
         tx_id: TransactionId,
-        order: OrderIdClientSide,
+        order: OrderId,
     },
     ConsumeOrderBitcoinBalanceAccepted,
     ConsumeOrderBitcoinBalanceFailed,
