@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::string::ToString;
 
 use anyhow::bail;
@@ -785,7 +785,28 @@ impl ServerModule for PredictionMarkets {
         module_instance_id: ModuleInstanceId,
     ) {
         // bitcoin owed for open contracts across markets
-        // TODO: unimplementable with current audit functions. fedimint 0.3.0
+        let market_open_contracts_map: HashMap<OutPoint, ContractAmount> = dbtx
+            .find_by_prefix(&db::MarketDynamicPrefixAll)
+            .await
+            .map(|(db::MarketDynamicKey(outpoint), market_dynamic)| {
+                (outpoint, market_dynamic.open_contracts)
+            })
+            .collect()
+            .await;
+        audit
+            .add_items(
+                dbtx,
+                module_instance_id,
+                &db::MarketStaticPrefixAll,
+                |db::MarketStaticKey(outpoint), market_static| {
+                    let market_open_contracts = market_open_contracts_map.get(&outpoint).unwrap();
+                    let milli_sat =
+                        -((market_static.contract_price * market_open_contracts.0).msats as i64);
+
+                    milli_sat
+                },
+            )
+            .await;
 
         // bitcoin owed for collateral held for buy orders and in field bitcoin_balance
         // on orders
