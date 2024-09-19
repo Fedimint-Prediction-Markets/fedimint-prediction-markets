@@ -15,13 +15,13 @@ use crate::MarketSpecificationsNeededForNewOrders;
 #[repr(u8)]
 #[derive(Clone, EnumIter, Debug)]
 pub enum DbKeyPrefix {
-    /// [fedimint_prediction_markets_common::PredictionMarketsOutput] [OutPoint] to [PredictionMarketsOutputOutcome]
+    /// [OutPoint] to [PredictionMarketsOutputOutcome]
     Outcome = 0x00,
 
-    /// [fedimint_prediction_markets_common::PredictionMarketsOutput::NewMarket] [OutPoint] to [MarketStatic]
+    /// Market's [OutPoint] to [MarketStatic]
     MarketStatic = 0x01,
 
-    /// [fedimint_prediction_markets_common::PredictionMarketsOutput::NewMarket] [OutPoint] to [MarketDynamic]
+    /// Market's [OutPoint] to [MarketDynamic]
     MarketDynamic = 0x02,
 
     /// Owner's [PublicKey] to [Order]
@@ -29,8 +29,7 @@ pub enum DbKeyPrefix {
 
     /// Information needed to process new orders
     ///
-    /// [fedimint_prediction_markets_common::PredictionMarketsOutput::NewMarket] [OutPoint] to
-    /// [MarketSpecificationsNeededForNewOrders]
+    /// Market's [OutPoint] to [MarketSpecificationsNeededForNewOrders]
     MarketSpecificationsNeededForNewOrders = 0x20,
 
     /// Used for payouts
@@ -44,8 +43,8 @@ pub enum DbKeyPrefix {
     /// Amount is (contract_price - price of order) for buys
     /// Amount is (price of order) for sells
     ///
-    /// (Market's [OutPoint], [Outcome], [Side], Price priority [u64], [TimeOrdering]) to
-    /// (Order's [PublicKey])
+    /// (Market's [OutPoint], [Outcome], [Side], Price priority [u64],
+    /// [TimeOrdering]) to (Order's [PublicKey])
     OrderPriceTimePriority = 0x22,
 
     /// (Market's [OutPoint]) to
