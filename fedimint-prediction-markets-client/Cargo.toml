@@ -6,6 +6,10 @@ edition = "2021"
 description = "fedimint-dummy is a dummy example fedimint module."
 license = "MIT"
 
+[features]
+default = []
+cli = ["dep:clap","dep:serde_json"]
+
 [lib]
 name = "fedimint_prediction_markets_client"
 path = "src/lib.rs"
@@ -18,12 +22,14 @@ erased-serde = { workspace = true }
 rand = { workspace = true }
 secp256k1 = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
-bitcoin = "0.29.2"
-async-stream = "0.3.5"
+prediction-market-event = { workspace = true }
+
+# Cli deps
+clap = { version = "4.5.18", optional = true }
+serde_json = { workspace = true, optional = true }
 
 # Fedimint dependencies
 fedimint-core = { workspace = true }

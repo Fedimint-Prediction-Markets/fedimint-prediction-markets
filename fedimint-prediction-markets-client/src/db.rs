@@ -1,7 +1,8 @@
 use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::{impl_db_lookup, impl_db_record, OutPoint};
-use fedimint_prediction_markets_common::{Market, Order, Outcome, UnixTimestamp};
-use secp256k1::PublicKey;
+use fedimint_prediction_markets_common::{
+    Market, NostrPublicKeyHex, Order, Outcome, UnixTimestamp,
+};
 
 use crate::OrderId;
 
@@ -37,7 +38,7 @@ pub enum DbKeyPrefix {
     /// (Market's [OutPoint]) to (Saved to db [UnixTimestamp])
     ClientSavedMarkets = 0x41,
 
-    /// (Name [String]) to (Payout control [PublicKey])
+    /// (Name [String]) to (Payout control [NostrPublicKeyHex])
     ClientNamedPayoutControls = 0x42,
 }
 
@@ -196,7 +197,7 @@ pub struct ClientNamedPayoutControlsPrefixAll;
 
 impl_db_record!(
     key = ClientNamedPayoutControlsKey,
-    value = PublicKey,
+    value = NostrPublicKeyHex,
     db_prefix = DbKeyPrefix::ClientNamedPayoutControls,
 );
 

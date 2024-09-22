@@ -1,10 +1,8 @@
 use std::collections::{BTreeMap, HashMap};
 use std::ffi;
-use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail};
-use bitcoin::Denomination;
 use db::OrderIdSlot;
 use fedimint_client::derivable_secret::{ChildId, DerivableSecret};
 use fedimint_client::module::init::{ClientModuleInit, ClientModuleInitArgs};
@@ -21,21 +19,20 @@ use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::module::{
     ApiVersion, CommonModuleInit, ModuleCommon, ModuleInit, MultiApiVersion, TransactionItemAmount,
 };
-use fedimint_core::{apply, async_trait_maybe_send, Amount, OutPoint, TransactionId};
+use fedimint_core::{apply, async_trait_maybe_send, Amount, OutPoint};
 use fedimint_prediction_markets_common::api::{
+    GetEventPayoutAttestationsUsedToPermitPayoutParams, GetMarketDynamicParams,
     GetMarketOutcomeCandlesticksParams, GetMarketOutcomeCandlesticksResult, GetMarketParams,
-    GetMarketPayoutControlProposalsParams, GetOrderParams, GetPayoutControlBalanceParams,
-    GetPayoutControlMarketsParams, WaitMarketOutcomeCandlesticksParams,
-    WaitMarketOutcomeCandlesticksResult,
+    GetOrderParams, WaitMarketOutcomeCandlesticksParams, WaitMarketOutcomeCandlesticksResult,
 };
 use fedimint_prediction_markets_common::config::{GeneralConsensus, PredictionMarketsClientConfig};
 use fedimint_prediction_markets_common::{
-    Candlestick, ContractOfOutcomeAmount, Market, MarketInformation, Order, OrderIdClientSide,
-    Outcome, PredictionMarketsCommonInit, PredictionMarketsInput, PredictionMarketsModuleTypes,
+    Candlestick, ContractOfOutcomeAmount, EventJson, Market, NostrPublicKeyHex, Order, Outcome,
+    PredictionMarketsCommonInit, PredictionMarketsInput, PredictionMarketsModuleTypes,
     PredictionMarketsOutput, Seconds, Side, UnixTimestamp, Weight, WeightRequiredForPayout,
 };
 use futures::stream::FuturesUnordered;
-use futures::{future, StreamExt};
+use futures::StreamExt;
 use secp256k1::{KeyPair, PublicKey, Scalar, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
 use states::{PredictionMarketState, PredictionMarketsStateMachine};
@@ -43,6 +40,8 @@ use states::{PredictionMarketState, PredictionMarketsStateMachine};
 use crate::api::PredictionMarketsFederationApi;
 
 mod api;
+#[cfg(feature = "cli")]
+mod cli;
 mod db;
 mod states;
 
@@ -87,8 +86,7 @@ impl ClientModuleInit for PredictionMarketsClientInit {
     type Module = PredictionMarketsClientModule;
 
     fn supported_api_versions(&self) -> MultiApiVersion {
-        MultiApiVersion::try_from_iter([ApiVersion::new(0, 0)])
-            .expect("no version conflicts")
+        MultiApiVersion::try_from_iter([ApiVersion::new(0, 0)]).expect("no version conflicts")
     }
 
     async fn init(&self, args: &ClientModuleInitArgs<Self>) -> anyhow::Result<Self::Module> {
@@ -109,33 +107,21 @@ impl PredictionMarketsClientModule {
         self.cfg.gc.to_owned()
     }
 
-    /// Get payout control public key that client controls.
-    pub fn get_client_payout_control(&self) -> PublicKey {
-        let key = self.get_payout_control_key_pair();
-
-        PublicKey::from_keypair(&key)
-    }
-
-    /// Create new market
     pub async fn new_market(
         &self,
+        event_json: EventJson,
         contract_price: Amount,
-        outcomes: Outcome,
-        payout_control_weights: BTreeMap<PublicKey, Weight>,
+        payout_control_weight_map: BTreeMap<NostrPublicKeyHex, Weight>,
         weight_required_for_payout: WeightRequiredForPayout,
-        payout_controls_fee_per_contract: Amount,
-        information: MarketInformation,
     ) -> anyhow::Result<OutPoint> {
         let operation_id = OperationId::new_random();
 
         let output = ClientOutput {
             output: PredictionMarketsOutput::NewMarket {
+                event_json,
                 contract_price,
-                outcomes,
-                payout_control_weights,
+                payout_control_weight_map,
                 weight_required_for_payout,
-                payout_controls_fee_per_contract,
-                information,
             },
             state_machines: Arc::new(move |tx_id, _| {
                 vec![PredictionMarketsStateMachine {
@@ -169,32 +155,40 @@ impl PredictionMarketsClientModule {
         })
     }
 
-    /// Get market
     pub async fn get_market(
         &self,
-        market_out_point: OutPoint,
+        market: OutPoint,
         from_local_cache: bool,
     ) -> anyhow::Result<Option<Market>> {
         let mut dbtx = self.db.begin_transaction().await;
+        let market_out_point = market;
 
         match from_local_cache {
-            true => Ok(dbtx
-                .get_value(&db::MarketKey {
-                    market: market_out_point,
-                })
-                .await),
+            true => Ok(dbtx.get_value(&db::MarketKey(market_out_point)).await),
 
             false => {
-                // if in finished state in db, just return db version
-                let market = dbtx
-                    .get_value(&db::MarketKey {
-                        market: market_out_point,
-                    })
-                    .await;
-                if let Some(market) = market {
-                    if market.payout.is_some() {
+                if let Some(mut market) = dbtx.get_value(&db::MarketKey(market_out_point)).await {
+                    // if in finished state in db, just return db version
+                    if market.1.payout.is_some() {
                         return Ok(Some(market));
                     }
+
+                    // if we have market but not finished, update market dynamic
+                    let result = self
+                        .module_api
+                        .get_market_dynamic(GetMarketDynamicParams {
+                            market: market_out_point,
+                        })
+                        .await?;
+                    let Some(market_dynamic) = result.market_dynamic else {
+                        bail!("server returned no market_dynamic when it should exist")
+                    };
+                    market.1 = market_dynamic;
+                    dbtx.insert_entry(&db::MarketKey(market_out_point), &market)
+                        .await;
+                    dbtx.commit_tx().await;
+
+                    return Ok(Some(market));
                 }
 
                 let result = self
@@ -204,13 +198,8 @@ impl PredictionMarketsClientModule {
                     })
                     .await?;
                 if let Some(market) = result.market.as_ref() {
-                    dbtx.insert_entry(
-                        &db::MarketKey {
-                            market: market_out_point,
-                        },
-                        market,
-                    )
-                    .await;
+                    dbtx.insert_entry(&db::MarketKey(market_out_point), market)
+                        .await;
                     dbtx.commit_tx().await;
                 }
 
@@ -219,32 +208,27 @@ impl PredictionMarketsClientModule {
         }
     }
 
-    /// propose payout using client's payout control.
-    pub async fn propose_payout(
+    pub async fn payout_market(
         &self,
-        market_out_point: OutPoint,
-        outcome_payouts: Vec<Amount>,
+        market: OutPoint,
+        event_payout_attestations_json: Vec<EventJson>,
     ) -> anyhow::Result<()> {
         let operation_id = OperationId::new_random();
 
-        let payout_control_key = self.get_payout_control_key_pair();
-
-        let input = ClientInput {
-            input: PredictionMarketsInput::PayoutProposal {
-                market: market_out_point,
-                payout_control: PublicKey::from_keypair(&payout_control_key),
-                outcome_payouts,
+        let output = ClientOutput {
+            output: PredictionMarketsOutput::PayoutMarket {
+                market,
+                event_payout_attestations_json,
             },
             state_machines: Arc::new(move |tx_id, _| {
                 vec![PredictionMarketsStateMachine {
                     operation_id,
-                    state: PredictionMarketState::ProposePayout { tx_id },
+                    state: PredictionMarketState::PayoutMarket { tx_id },
                 }]
             }),
-            keys: vec![payout_control_key],
         };
 
-        let tx = TransactionBuilder::new().with_input(self.ctx.make_client_input(input));
+        let tx = TransactionBuilder::new().with_output(self.ctx.make_client_output(output));
         let out_point = |txid, _| OutPoint { txid, out_idx: 0 };
         let (txid, _) = self
             .ctx
@@ -265,172 +249,20 @@ impl PredictionMarketsClientModule {
         Ok(())
     }
 
-    /// get market's payout control proposals.
-    pub async fn get_market_payout_control_proposals(
+    pub async fn get_event_payout_attestations_used_to_permit_payout(
         &self,
         market: OutPoint,
-        from_local_cache: bool,
-    ) -> anyhow::Result<BTreeMap<PublicKey, Vec<Amount>>> {
-        let mut dbtx = self.db.begin_transaction().await;
-
-        match from_local_cache {
-            true => Ok(dbtx
-                .find_by_prefix(&db::MarketPayoutControlProposalPrefix1 { market })
-                .await
-                .map(|(key, value)| (key.payout_control, value))
-                .collect::<BTreeMap<_, _>>()
-                .await),
-
-            false => {
-                let result = self
-                    .module_api
-                    .get_market_payout_control_proposals(GetMarketPayoutControlProposalsParams {
-                        market,
-                    })
-                    .await?;
-
-                dbtx.remove_by_prefix(&db::MarketPayoutControlProposalPrefix1 { market })
-                    .await;
-                for (payout_control, outcome_payout) in result.payout_control_proposals.iter() {
-                    dbtx.insert_entry(
-                        &db::MarketPayoutControlProposalKey {
-                            market,
-                            payout_control: payout_control.to_owned(),
-                        },
-                        outcome_payout,
-                    )
-                    .await;
-                }
-                dbtx.commit_tx().await;
-
-                Ok(result.payout_control_proposals)
-            }
-        }
-    }
-
-    /// Get client payout controls markets.
-    pub async fn get_client_payout_control_markets(
-        &self,
-        from_local_cache: bool,
-        markets_created_after_and_including: UnixTimestamp,
-    ) -> anyhow::Result<BTreeMap<UnixTimestamp, Vec<OutPoint>>> {
-        let payout_control = self.get_client_payout_control();
-        let mut dbtx = self.db.begin_transaction().await;
-
-        if !from_local_cache {
-            let newest_market_in_db = dbtx
-                .find_by_prefix_sorted_descending(&db::ClientPayoutControlMarketsPrefixAll)
-                .await
-                .next()
-                .await
-                .map(|(key, _)| key.market_created)
-                .unwrap_or(UnixTimestamp::ZERO);
-
-            let get_payout_control_markets_result = self
-                .module_api
-                .get_payout_control_markets(GetPayoutControlMarketsParams {
-                    payout_control,
-                    markets_created_after_and_including: newest_market_in_db,
-                })
-                .await?;
-
-            for market_out_point in get_payout_control_markets_result.markets {
-                let market = self
-                    .get_market(market_out_point, false)
-                    .await?
-                    .expect("should always produce market");
-
-                dbtx.insert_entry(
-                    &db::ClientPayoutControlMarketsKey {
-                        market_created: market.created_consensus_timestamp,
-                        market: market_out_point,
-                    },
-                    &(),
-                )
-                .await;
-            }
-        }
-
-        let mut payout_control_markets_stream = dbtx
-            .find_by_prefix_sorted_descending(&db::ClientPayoutControlMarketsPrefixAll)
-            .await
-            .map(|(k, _)| (k.market_created, k.market))
-            .take_while(|(market_created, _)| {
-                future::ready(market_created >= &markets_created_after_and_including)
-            });
-
-        let mut payout_control_markets = BTreeMap::new();
-        while let Some((market_created, market)) = payout_control_markets_stream.next().await {
-            if !payout_control_markets.contains_key(&market_created) {
-                payout_control_markets.insert(market_created, Vec::new());
-            }
-
-            let v = payout_control_markets.get_mut(&market_created).unwrap();
-            v.push(market);
-        }
-        drop(payout_control_markets_stream);
-
-        dbtx.commit_tx().await;
-
-        Ok(payout_control_markets)
-    }
-
-    /// Spend all bitcoin balance of client payout control to primary module
-    ///
-    /// Returns how much bitcoin was sent
-    pub async fn send_payout_control_bitcoin_balance_to_primary_module(
-        &self,
-    ) -> anyhow::Result<Amount> {
-        let operation_id = OperationId::new_random();
-
+    ) -> anyhow::Result<Option<Vec<EventJson>>> {
         let result = self
             .module_api
-            .get_payout_control_balance(GetPayoutControlBalanceParams {
-                payout_control: self.get_client_payout_control(),
-            })
-            .await?;
-
-        if result.balance == Amount::ZERO {
-            return Ok(result.balance);
-        }
-
-        let mut tx = TransactionBuilder::new();
-        let input = ClientInput {
-            input: PredictionMarketsInput::ConsumePayoutControlBitcoinBalance {
-                payout_control: self.get_client_payout_control(),
-                amount: result.balance,
-            },
-            state_machines: Arc::new(move |tx_id, _| {
-                vec![PredictionMarketsStateMachine {
-                    operation_id,
-                    state: PredictionMarketState::ConsumePayoutControlBitcoinBalance { tx_id },
-                }]
-            }),
-            keys: vec![self.get_payout_control_key_pair()],
-        };
-        tx = tx.with_input(self.ctx.make_client_input(input));
-
-        let outpoint = |txid, _| OutPoint { txid, out_idx: 0 };
-        let (txid, _) = self
-            .ctx
-            .finalize_and_submit_transaction(
-                operation_id,
-                PredictionMarketsCommonInit::KIND.as_str(),
-                outpoint,
-                tx,
+            .get_event_payout_attestations_used_to_permit_payout(
+                GetEventPayoutAttestationsUsedToPermitPayoutParams { market },
             )
-            .await?;
+            .await;
 
-        let tx_subscription = self.ctx.transaction_updates(operation_id).await;
-        tx_subscription
-            .await_tx_accepted(txid)
-            .await
-            .map_err(|e| anyhow!(e))?;
-
-        Ok(result.balance)
+        Ok(result?.event_payout_attestations)
     }
 
-    /// Create new order
     pub async fn new_order(
         &self,
         market: OutPoint,
@@ -448,8 +280,8 @@ impl PredictionMarketsClientModule {
                 .await;
             match stream.next().await {
                 Some((mut key, _)) => {
-                    key.id.0 += 1;
-                    key.id
+                    key.0 .0 += 1;
+                    key.0
                 }
                 None => OrderId(0),
             }
@@ -484,7 +316,7 @@ impl PredictionMarketsClientModule {
                 tx = tx.with_output(self.ctx.make_client_output(output));
             }
             Side::Sell => {
-                let mut sources_for_input = BTreeMap::new();
+                let mut sources = BTreeMap::new();
                 let mut sources_for_state_machine = vec![];
                 let mut sources_keys_combined = None;
 
@@ -496,12 +328,12 @@ impl PredictionMarketsClientModule {
                     .await;
 
                 let mut sourced_quantity = ContractOfOutcomeAmount::ZERO;
-                for order_id in non_zero_market_outcome_orders {
-                    let order = self
-                        .get_order(order_id, true)
-                        .await
-                        .expect("should never fail")
-                        .expect("should always be some");
+                for (n, order_id) in non_zero_market_outcome_orders.into_iter().enumerate() {
+                    if n == usize::from(self.cfg.gc.max_sell_order_sources) {
+                        bail!("max number of sell order sources reached. try again with a quantity less than or equal to {}", sourced_quantity.0)
+                    }
+
+                    let order = self.get_order(order_id, true).await.unwrap().unwrap();
 
                     if order.contract_of_outcome_balance == ContractOfOutcomeAmount::ZERO {
                         continue;
@@ -512,7 +344,7 @@ impl PredictionMarketsClientModule {
                         .contract_of_outcome_balance
                         .min(quantity - sourced_quantity);
 
-                    sources_for_input.insert(
+                    sources.insert(
                         PublicKey::from_keypair(&order_key),
                         quantity_sourced_from_order,
                     );
@@ -528,7 +360,7 @@ impl PredictionMarketsClientModule {
                         }
                     };
 
-                    sourced_quantity = sourced_quantity + quantity_sourced_from_order;
+                    sourced_quantity += quantity_sourced_from_order;
                     if quantity == sourced_quantity {
                         break;
                     }
@@ -544,7 +376,7 @@ impl PredictionMarketsClientModule {
                         market,
                         outcome,
                         price,
-                        sources: sources_for_input,
+                        sources,
                     },
                     state_machines: Arc::new(move |tx_id, _| {
                         vec![PredictionMarketsStateMachine {
@@ -564,15 +396,14 @@ impl PredictionMarketsClientModule {
         }
 
         PredictionMarketsClientModule::reserve_order_id_slot(&mut dbtx, order_id).await;
-        dbtx.commit_tx().await;
+        dbtx.commit_tx_result().await?;
 
-        let outpoint = |txid, _| OutPoint { txid, out_idx: 0 };
         let (txid, _) = self
             .ctx
             .finalize_and_submit_transaction(
                 operation_id,
                 PredictionMarketsCommonInit::KIND.as_str(),
-                outpoint,
+                |_, _| (),
                 tx,
             )
             .await?;
@@ -586,7 +417,6 @@ impl PredictionMarketsClientModule {
         Ok(order_id)
     }
 
-    /// Get order
     pub async fn get_order(
         &self,
         id: OrderId,
@@ -594,18 +424,17 @@ impl PredictionMarketsClientModule {
     ) -> anyhow::Result<Option<Order>> {
         let mut dbtx = self.db.begin_transaction().await;
 
-        let order_key = self.order_id_to_key_pair(id);
-        let order_owner = PublicKey::from_keypair(&order_key);
+        let order_owner = self.order_id_to_key_pair(id).public_key();
 
         match from_local_cache {
-            true => Ok(match dbtx.get_value(&db::OrderKey { id }).await {
-                Some(d) => match d {
+            true => Ok(dbtx
+                .get_value(&db::OrderKey(id))
+                .await
+                .map(|v| match v {
                     OrderIdSlot::Reserved => None,
                     OrderIdSlot::Order(order) => Some(order),
-                },
-
-                None => None,
-            }),
+                })
+                .flatten()),
 
             false => {
                 let result = self
@@ -616,7 +445,7 @@ impl PredictionMarketsClientModule {
                 if let Some(order) = result.order.as_ref() {
                     PredictionMarketsClientModule::save_order_to_db(&mut dbtx, id, order).await;
 
-                    dbtx.commit_tx().await;
+                    dbtx.commit_tx_result().await?;
                 }
 
                 Ok(result.order)
@@ -624,16 +453,14 @@ impl PredictionMarketsClientModule {
         }
     }
 
-    /// Cancel order
     pub async fn cancel_order(&self, id: OrderId) -> anyhow::Result<()> {
         let operation_id = OperationId::new_random();
 
         let order_key = self.order_id_to_key_pair(id);
+        let order_owner = order_key.public_key();
 
         let input = ClientInput {
-            input: PredictionMarketsInput::CancelOrder {
-                order: PublicKey::from_keypair(&order_key),
-            },
+            input: PredictionMarketsInput::CancelOrder { order: order_owner },
             state_machines: Arc::new(move |tx_id, _| {
                 vec![PredictionMarketsStateMachine {
                     operation_id,
@@ -644,13 +471,12 @@ impl PredictionMarketsClientModule {
         };
 
         let tx = TransactionBuilder::new().with_input(self.ctx.make_client_input(input));
-        let outpoint = |txid, _| OutPoint { txid, out_idx: 0 };
         let (txid, _) = self
             .ctx
             .finalize_and_submit_transaction(
                 operation_id,
                 PredictionMarketsCommonInit::KIND.as_str(),
-                outpoint,
+                |_, _| (),
                 tx,
             )
             .await?;
@@ -679,10 +505,7 @@ impl PredictionMarketsClientModule {
 
         let mut orders_with_non_zero_bitcoin_balance = vec![];
         for order_id in non_zero_orders {
-            let order = self
-                .get_order(order_id, true)
-                .await?
-                .expect("should always produce order");
+            let order = self.get_order(order_id, true).await?.unwrap();
 
             if order.bitcoin_balance != Amount::ZERO {
                 orders_with_non_zero_bitcoin_balance.push((order_id, order));
@@ -717,7 +540,7 @@ impl PredictionMarketsClientModule {
 
             tx = tx.with_input(self.ctx.make_client_input(input));
 
-            total_amount = total_amount + order.bitcoin_balance;
+            total_amount += order.bitcoin_balance;
         }
 
         let outpoint = |txid, _| OutPoint { txid, out_idx: 0 };
@@ -794,11 +617,7 @@ impl PredictionMarketsClientModule {
         };
 
         for order_id in non_zero_orders {
-            let order = self
-                .get_order(order_id, true)
-                .await
-                .expect("should never error because from local cache")
-                .expect("should always produce order");
+            let order = self.get_order(order_id, true).await.unwrap().unwrap();
 
             if order.quantity_waiting_for_match == ContractOfOutcomeAmount::ZERO
                 && (!sync_possible_payouts
@@ -812,7 +631,7 @@ impl PredictionMarketsClientModule {
 
         let mut stream = dbtx.find_by_prefix(&db::OrderNeedsUpdatePrefixAll).await;
         while let Some((key, _)) = stream.next().await {
-            orders_to_update.insert(key.order, ());
+            orders_to_update.insert(key.0, ());
         }
 
         let mut changed_orders = BTreeMap::new();
@@ -1009,7 +828,7 @@ impl PredictionMarketsClientModule {
     pub async fn set_name_to_payout_control(
         &self,
         name: String,
-        payout_control: Option<PublicKey>,
+        payout_control: Option<NostrPublicKeyHex>,
     ) {
         let mut dbtx = self.db.begin_transaction().await;
 
@@ -1027,7 +846,7 @@ impl PredictionMarketsClientModule {
     }
 
     /// Interacts with client named payout control public keys
-    pub async fn get_name_to_payout_control(&self, name: String) -> Option<PublicKey> {
+    pub async fn get_name_to_payout_control(&self, name: String) -> Option<NostrPublicKeyHex> {
         let mut dbtx = self.db.begin_transaction().await;
 
         dbtx.get_value(&db::ClientNamedPayoutControlsKey { name })
@@ -1035,7 +854,7 @@ impl PredictionMarketsClientModule {
     }
 
     /// Interacts with client named payout control public keys
-    pub async fn get_name_to_payout_control_map(&self) -> HashMap<String, PublicKey> {
+    pub async fn get_name_to_payout_control_map(&self) -> HashMap<String, NostrPublicKeyHex> {
         let mut dbtx = self.db.begin_transaction().await;
 
         dbtx.find_by_prefix(&db::ClientNamedPayoutControlsPrefixAll)
@@ -1048,14 +867,7 @@ impl PredictionMarketsClientModule {
 
 /// private
 impl PredictionMarketsClientModule {
-    const MARKET_PAYOUT_CONTROL_FROM_ROOT_SECRET: ChildId = ChildId(0);
-    const ORDER_FROM_ROOT_SECRET: ChildId = ChildId(1);
-
-    fn get_payout_control_key_pair(&self) -> KeyPair {
-        self.root_secret
-            .child_key(Self::MARKET_PAYOUT_CONTROL_FROM_ROOT_SECRET)
-            .to_secp_key(&Secp256k1::new())
-    }
+    const ORDER_FROM_ROOT_SECRET: ChildId = ChildId(0);
 
     fn order_id_to_key_pair(&self, id: OrderId) -> KeyPair {
         self.root_secret
@@ -1069,7 +881,7 @@ impl PredictionMarketsClientModule {
         id: OrderId,
         order: &Order,
     ) {
-        dbtx.insert_entry(&db::OrderKey { id }, &OrderIdSlot::Order(order.to_owned()))
+        dbtx.insert_entry(&db::OrderKey(id), &OrderIdSlot::Order(order.to_owned()))
             .await;
 
         dbtx.insert_entry(
@@ -1104,29 +916,21 @@ impl PredictionMarketsClientModule {
             .await;
         }
 
-        dbtx.remove_entry(&db::OrderNeedsUpdateKey { order: id })
+        dbtx.remove_entry(&db::OrderNeedsUpdateKey(id)).await;
+    }
+
+    async fn reserve_order_id_slot(dbtx: &mut DatabaseTransaction<'_, Committable>, id: OrderId) {
+        dbtx.insert_entry(&db::OrderKey(id), &OrderIdSlot::Reserved)
             .await;
     }
 
-    async fn reserve_order_id_slot(
-        dbtx: &mut DatabaseTransaction<'_, Committable>,
-        order: OrderId,
-    ) {
-        dbtx.insert_entry(&db::OrderKey { id: order }, &OrderIdSlot::Reserved)
-            .await;
+    async fn unreserve_order_id_slot(mut dbtx: DatabaseTransaction<'_>, id: OrderId) {
+        dbtx.remove_entry(&db::OrderKey(id)).await;
     }
 
-    async fn unreserve_order_id_slot(mut dbtx: DatabaseTransaction<'_>, order: OrderId) {
-        dbtx.remove_entry(&db::OrderKey { id: order }).await;
-    }
-
-    async fn set_order_needs_update(
-        mut dbtx: DatabaseTransaction<'_>,
-        orders: Vec<OrderId>,
-    ) {
-        for order in orders {
-            dbtx.insert_entry(&db::OrderNeedsUpdateKey { order }, &())
-                .await;
+    async fn set_order_needs_update(mut dbtx: DatabaseTransaction<'_>, ids: Vec<OrderId>) {
+        for id in ids {
+            dbtx.insert_entry(&db::OrderNeedsUpdateKey(id), &()).await;
         }
     }
 }
@@ -1153,14 +957,6 @@ impl ClientModule for PredictionMarketsClientModule {
         let fee;
 
         match input {
-            PredictionMarketsInput::PayoutProposal {
-                market: _,
-                payout_control: _,
-                outcome_payouts: _,
-            } => {
-                amount = Amount::ZERO;
-                fee = self.cfg.gc.payout_proposal_fee;
-            }
             PredictionMarketsInput::CancelOrder { order: _ } => {
                 amount = Amount::ZERO;
                 fee = Amount::ZERO;
@@ -1182,13 +978,6 @@ impl ClientModule for PredictionMarketsClientModule {
                 amount = Amount::ZERO;
                 fee = self.cfg.gc.new_order_fee;
             }
-            PredictionMarketsInput::ConsumePayoutControlBitcoinBalance {
-                payout_control: _,
-                amount: amount_to_free,
-            } => {
-                amount = amount_to_free.to_owned();
-                fee = self.cfg.gc.consume_payout_control_bitcoin_balance_fee;
-            }
         }
 
         Some(TransactionItemAmount { amount, fee })
@@ -1203,12 +992,10 @@ impl ClientModule for PredictionMarketsClientModule {
 
         match output {
             PredictionMarketsOutput::NewMarket {
+                event_json: _,
                 contract_price: _,
-                outcomes: _,
-                payout_control_weights: _,
+                payout_control_weight_map: _,
                 weight_required_for_payout: _,
-                payout_controls_fee_per_contract: _,
-                information: _,
             } => {
                 amount = Amount::ZERO;
                 fee = self.cfg.gc.new_market_fee;
@@ -1223,327 +1010,354 @@ impl ClientModule for PredictionMarketsClientModule {
                 amount = price.to_owned() * quantity.0;
                 fee = self.cfg.gc.new_order_fee;
             }
+            PredictionMarketsOutput::PayoutMarket {
+                market: _,
+                event_payout_attestations_json: _,
+            } => {
+                amount = Amount::ZERO;
+                fee = Amount::ZERO;
+            }
         }
 
         Some(TransactionItemAmount { amount, fee })
     }
 
+    #[cfg(feature = "cli")]
     async fn handle_cli_command(
         &self,
         args: &[ffi::OsString],
     ) -> anyhow::Result<serde_json::Value> {
-        const SUPPORTED_COMMANDS: &str = "new-market, get-market, new-order, get-order, cancel-order, sync-orders, get-client-payout-control, get-candlesticks, recover-orders, withdraw-available-bitcoin, list-orders, propose-payout, get-market-payout-control-proposals, get-client-payout-control-markets";
-
-        if args.is_empty() {
-            bail!("Expected to be called with at least 1 argument: <command> …")
-        }
-
-        let command = args[0].to_string_lossy();
-
-        match command.as_ref() {
-            "get-client-payout-control" => {
-                if args.len() != 1 {
-                    bail!("`get-client-payout-control` expects 0 arguments")
-                }
-
-                Ok(serde_json::to_value(self.get_client_payout_control())?)
-            }
-
-            "new-market" => {
-                if args.len() != 4 {
-                    bail!("`new-market` command expects 3 arguments: <outcomes> <contract_price_msats> <payout_controls_fee_per_contract_msats>")
-                }
-
-                let outcomes: Outcome = args[1].to_string_lossy().parse()?;
-                let contract_price =
-                    Amount::from_str_in(&args[2].to_string_lossy(), Denomination::MilliSatoshi)?;
-                let payout_controls_fee_per_contract =
-                    Amount::from_str_in(&args[3].to_string_lossy(), Denomination::MilliSatoshi)?;
-
-                let mut payout_control_weights = BTreeMap::new();
-                payout_control_weights.insert(self.get_client_payout_control(), 1);
-
-                let weight_required = 1;
-
-                let market_out_point = self
-                    .new_market(
-                        contract_price,
-                        outcomes,
-                        payout_control_weights,
-                        weight_required,
-                        payout_controls_fee_per_contract,
-                        MarketInformation {
-                            title: "my market".to_owned(),
-                            description: "this is my market".to_owned(),
-                            outcome_titles: (0..outcomes)
-                                .map(|i| {
-                                    let mut title = String::new();
-
-                                    title.push_str("Outcome ");
-                                    title.push_str(&i.to_string());
-
-                                    title
-                                })
-                                .collect(),
-                            expected_payout_timestamp: UnixTimestamp::ZERO,
-                        },
-                    )
-                    .await?;
-
-                Ok(serde_json::to_value(market_out_point.txid)?)
-            }
-
-            "get-market" => {
-                if args.len() != 2 {
-                    return Err(anyhow::format_err!(
-                        "`get-market` command expects 1 argument: <market_txid>"
-                    ));
-                }
-
-                let Ok(txid) = TransactionId::from_str(&args[1].to_string_lossy()) else {
-                    bail!("Error getting transaction id");
-                };
-
-                let out_point = OutPoint { txid, out_idx: 0 };
-
-                Ok(serde_json::to_value(
-                    self.get_market(out_point, false).await?,
-                )?)
-            }
-
-            "get-client-payout-control-markets" => {
-                if args.len() != 1 {
-                    bail!("`get-client-payout-control-markets` expects 0 arguments")
-                }
-
-                let payout_control_markets = self
-                    .get_client_payout_control_markets(false, UnixTimestamp::ZERO)
-                    .await?;
-
-                Ok(serde_json::to_value(payout_control_markets)?)
-            }
-
-            "get-market-payout-control-proposals" => {
-                if args.len() != 2 {
-                    bail!("`get-market-payout-control-proposals` command expects 1 argument: <market_txid>")
-                }
-
-                let Ok(txid) = TransactionId::from_str(&args[1].to_string_lossy()) else {
-                    bail!("Error getting transaction id");
-                };
-
-                let out_point = OutPoint { txid, out_idx: 0 };
-
-                Ok(serde_json::to_value(
-                    self.get_market_payout_control_proposals(out_point, false)
-                        .await?,
-                )?)
-            }
-
-            "propose-payout" => {
-                if args.len() < 4 {
-                    return Err(anyhow::format_err!(
-                        "`propose-payout` command expects at least 3 arguments: <market_txid> <outcome_0_payout> <outcome_1_payout> ..."
-                    ));
-                }
-
-                let Ok(txid) = TransactionId::from_str(&args[1].to_string_lossy()) else {
-                    bail!("Error getting transaction id");
-                };
-                let market_out_point = OutPoint { txid, out_idx: 0 };
-
-                let mut outcome_payouts: Vec<Amount> = vec![];
-
-                for i in 2..usize::MAX {
-                    let Some(arg) = args.get(i) else {
-                        break;
-                    };
-
-                    outcome_payouts.push(Amount::from_str_in(
-                        &arg.to_string_lossy(),
-                        Denomination::MilliSatoshi,
-                    )?);
-                }
-
-                Ok(serde_json::to_value(
-                    self.propose_payout(market_out_point, outcome_payouts)
-                        .await?,
-                )?)
-            }
-
-            "new-order" => {
-                if args.len() != 6 {
-                    bail!("`new-order` command expects 5 arguments: <market_txid> <outcome> <side> <price_msats> <quantity>")
-                }
-
-                let Ok(txid) = TransactionId::from_str(&args[1].to_string_lossy()) else {
-                    bail!("Error getting transaction id");
-                };
-
-                let out_point = OutPoint { txid, out_idx: 0 };
-
-                let outcome: Outcome = args[2].to_string_lossy().parse()?;
-
-                let side = Side::try_from(args[3].to_string_lossy().as_ref())?;
-
-                let price =
-                    Amount::from_str_in(&args[4].to_string_lossy(), Denomination::MilliSatoshi)?;
-
-                let quantity = ContractOfOutcomeAmount(args[5].to_string_lossy().parse()?);
-
-                Ok(serde_json::to_value(
-                    self.new_order(out_point, outcome, side, price, quantity)
-                        .await?,
-                )?)
-            }
-
-            "list-orders" => {
-                if args.len() < 1 || args.len() > 3 {
-                    bail!("`list-orders` command has 2 optional arguments: (market_txid) (outcome)")
-                }
-
-                let mut market: Option<OutPoint> = None;
-                if let Some(arg_tx_id) = args.get(1) {
-                    market = Some(OutPoint {
-                        txid: TransactionId::from_str(&arg_tx_id.to_string_lossy())?,
-                        out_idx: 0,
-                    });
-                };
-
-                let mut outcome: Option<Outcome> = None;
-                if let Some(arg_outcome) = args.get(2) {
-                    outcome = Some(Outcome::from_str(&arg_outcome.to_string_lossy())?);
-                }
-
-                Ok(serde_json::to_value(
-                    self.get_orders_from_db(market, outcome).await,
-                )?)
-            }
-
-            "get-order" => {
-                if args.len() != 2 {
-                    bail!("`get-order` command expects 1 argument: <order_id>")
-                }
-
-                let id = OrderId(args[1].to_string_lossy().parse()?);
-
-                Ok(serde_json::to_value(self.get_order(id, false).await?)?)
-            }
-
-            "cancel-order" => {
-                if args.len() != 2 {
-                    bail!("`cancel-order` command expects 1 argument: <order_id>")
-                }
-
-                let id = OrderId(args[1].to_string_lossy().parse()?);
-
-                Ok(serde_json::to_value(self.cancel_order(id).await?)?)
-            }
-
-            "withdraw-available-bitcoin" => {
-                if args.len() != 1 {
-                    bail!("`withdraw-available-bitcoin` command expects 0 arguments")
-                }
-
-                let mut m = HashMap::new();
-                m.insert(
-                    "withdrawed_from_orders",
-                    self.send_order_bitcoin_balance_to_primary_module().await?,
-                );
-                m.insert(
-                    "withdrawed_from_payout_control",
-                    self.send_payout_control_bitcoin_balance_to_primary_module()
-                        .await?,
-                );
-
-                Ok(serde_json::to_value(m)?)
-            }
-
-            "sync-orders" => {
-                if args.len() < 1 || args.len() > 3 {
-                    bail!("`sync-order` command accepts 2 optional arguments: (market_txid) (outcome)")
-                }
-
-                let mut market: Option<OutPoint> = None;
-                if let Some(arg_tx_id) = args.get(1) {
-                    market = Some(OutPoint {
-                        txid: TransactionId::from_str(&arg_tx_id.to_string_lossy())?,
-                        out_idx: 0,
-                    });
-                };
-
-                let mut outcome: Option<Outcome> = None;
-                if let Some(arg_outcome) = args.get(2) {
-                    outcome = Some(Outcome::from_str(&arg_outcome.to_string_lossy())?);
-                }
-
-                Ok(serde_json::to_value(
-                    self.sync_orders(true, market, outcome).await?,
-                )?)
-            }
-
-            "recover-orders" => {
-                if args.len() != 1 && args.len() != 2 {
-                    bail!(
-                        "`recover-orders` command accepts 1 optional argument: (gap_size_checked)"
-                    )
-                }
-
-                let mut gap_size_to_check = 20u16;
-                if let Some(s) = args.get(1) {
-                    gap_size_to_check = s.to_string_lossy().parse()?;
-                }
-
-                Ok(serde_json::to_value(
-                    self.resync_order_slots(gap_size_to_check).await?,
-                )?)
-            }
-
-            "get-candlesticks" => {
-                if args.len() != 4 && args.len() != 5 {
-                    bail!("`get-candlesticks` command expects 3 arguments and has 1 optional argument: <market_txid> <outcome> <candlestick_interval_seconds> (min_candlestick_timestamp)")
-                }
-
-                let Ok(txid) = TransactionId::from_str(&args[1].to_string_lossy()) else {
-                    bail!("Error getting transaction id");
-                };
-                let market = OutPoint { txid, out_idx: 0 };
-
-                let outcome: Outcome = args[2].to_string_lossy().parse()?;
-
-                let candlestick_interval: Seconds = args[3].to_string_lossy().parse()?;
-
-                let mut min_candlestick_timestamp = UnixTimestamp::ZERO;
-                if let Some(s) = args.get(4) {
-                    min_candlestick_timestamp = UnixTimestamp(s.to_string_lossy().parse()?)
-                }
-
-                let candlesticks = self
-                    .get_candlesticks(
-                        market,
-                        outcome,
-                        candlestick_interval,
-                        min_candlestick_timestamp,
-                    )
-                    .await?
-                    .into_iter()
-                    .map(|(key, value)| (key.0.to_string(), value))
-                    .collect::<BTreeMap<String, Candlestick>>();
-
-                Ok(serde_json::to_value(candlesticks)?)
-            }
-
-            "help" => {
-                let mut m = HashMap::new();
-                m.insert("supported_commands", SUPPORTED_COMMANDS);
-
-                Ok(serde_json::to_value(m)?)
-            }
-
-            command => {
-                bail!("Unknown command: {command}, supported commands: {SUPPORTED_COMMANDS}")
-            }
-        }
+        cli::handle_cli_command(self, args).await
+        // const SUPPORTED_COMMANDS: &str = "new-market, get-market, new-order,
+        // get-order, cancel-order, sync-orders, get-client-payout-control,
+        // get-candlesticks, recover-orders, withdraw-available-bitcoin,
+        // list-orders, propose-payout, get-market-payout-control-proposals,
+        // get-client-payout-control-markets";
+
+        // if args.is_empty() {
+        //     bail!("Expected to be called with at least 1 argument: <command>
+        // …") }
+
+        // let command = args[0].to_string_lossy();
+
+        // match command.as_ref() {
+        //     "new-market" => {
+        //         if args.len() != 4 {
+        //             bail!("`new-market` command expects 3 arguments:
+        // <outcomes> <contract_price_msats>
+        // <payout_controls_fee_per_contract_msats>")         }
+
+        //         let outcomes: Outcome = args[1].to_string_lossy().parse()?;
+        //         let contract_price =
+        //             Amount::from_str_in(&args[2].to_string_lossy(),
+        // Denomination::MilliSatoshi)?;         let
+        // payout_controls_fee_per_contract =
+        // Amount::from_str_in(&args[3].to_string_lossy(),
+        // Denomination::MilliSatoshi)?;
+
+        //         let mut payout_control_weights = BTreeMap::new();
+        //         payout_control_weights.insert(self.
+        // get_client_payout_control(), 1);
+
+        //         let weight_required = 1;
+
+        //         let market_out_point = self
+        //             .new_market(
+        //                 contract_price,
+        //                 outcomes,
+        //                 payout_control_weights,
+        //                 weight_required,
+        //                 payout_controls_fee_per_contract,
+        //                 MarketInformation {
+        //                     title: "my market".to_owned(),
+        //                     description: "this is my market".to_owned(),
+        //                     outcome_titles: (0..outcomes)
+        //                         .map(|i| {
+        //                             let mut title = String::new();
+
+        //                             title.push_str("Outcome ");
+        //                             title.push_str(&i.to_string());
+
+        //                             title
+        //                         })
+        //                         .collect(),
+        //                     expected_payout_timestamp: UnixTimestamp::ZERO,
+        //                 },
+        //             )
+        //             .await?;
+
+        //         Ok(serde_json::to_value(market_out_point.txid)?)
+        //     }
+
+        //     "get-market" => {
+        //         if args.len() != 2 {
+        //             return Err(anyhow::format_err!(
+        //                 "`get-market` command expects 1 argument:
+        // <market_txid>"             ));
+        //         }
+
+        //         let Ok(txid) =
+        // TransactionId::from_str(&args[1].to_string_lossy()) else {
+        //             bail!("Error getting transaction id");
+        //         };
+
+        //         let out_point = OutPoint { txid, out_idx: 0 };
+
+        //         Ok(serde_json::to_value(
+        //             self.get_market(out_point, false).await?,
+        //         )?)
+        //     }
+
+        //     "get-client-payout-control-markets" => {
+        //         if args.len() != 1 {
+        //             bail!("`get-client-payout-control-markets` expects 0
+        // arguments")         }
+
+        //         let payout_control_markets = self
+        //             .get_client_payout_control_markets(false,
+        // UnixTimestamp::ZERO)             .await?;
+
+        //         Ok(serde_json::to_value(payout_control_markets)?)
+        //     }
+
+        //     "get-market-payout-control-proposals" => {
+        //         if args.len() != 2 {
+        //             bail!("`get-market-payout-control-proposals` command
+        // expects 1 argument: <market_txid>")         }
+
+        //         let Ok(txid) =
+        // TransactionId::from_str(&args[1].to_string_lossy()) else {
+        //             bail!("Error getting transaction id");
+        //         };
+
+        //         let out_point = OutPoint { txid, out_idx: 0 };
+
+        //         Ok(serde_json::to_value(
+        //             self.get_market_payout_control_proposals(out_point,
+        // false)                 .await?,
+        //         )?)
+        //     }
+
+        //     "propose-payout" => {
+        //         if args.len() < 4 {
+        //             return Err(anyhow::format_err!(
+        //                 "`propose-payout` command expects at least 3 arguments: <market_txid> <outcome_0_payout> <outcome_1_payout> ..."
+        //             ));
+        //         }
+
+        //         let Ok(txid) =
+        // TransactionId::from_str(&args[1].to_string_lossy()) else {
+        //             bail!("Error getting transaction id");
+        //         };
+        //         let market_out_point = OutPoint { txid, out_idx: 0 };
+
+        //         let mut outcome_payouts: Vec<Amount> = vec![];
+
+        //         for i in 2..usize::MAX {
+        //             let Some(arg) = args.get(i) else {
+        //                 break;
+        //             };
+
+        //             outcome_payouts.push(Amount::from_str_in(
+        //                 &arg.to_string_lossy(),
+        //                 Denomination::MilliSatoshi,
+        //             )?);
+        //         }
+
+        //         Ok(serde_json::to_value(
+        //             self.propose_payout(market_out_point, outcome_payouts)
+        //                 .await?,
+        //         )?)
+        //     }
+
+        //     "new-order" => {
+        //         if args.len() != 6 {
+        //             bail!("`new-order` command expects 5 arguments:
+        // <market_txid> <outcome> <side> <price_msats> <quantity>")
+        //         }
+
+        //         let Ok(txid) =
+        // TransactionId::from_str(&args[1].to_string_lossy()) else {
+        //             bail!("Error getting transaction id");
+        //         };
+
+        //         let out_point = OutPoint { txid, out_idx: 0 };
+
+        //         let outcome: Outcome = args[2].to_string_lossy().parse()?;
+
+        //         let side =
+        // Side::try_from(args[3].to_string_lossy().as_ref())?;
+
+        //         let price =
+        //             Amount::from_str_in(&args[4].to_string_lossy(),
+        // Denomination::MilliSatoshi)?;
+
+        //         let quantity =
+        // ContractOfOutcomeAmount(args[5].to_string_lossy().parse()?);
+
+        //         Ok(serde_json::to_value(
+        //             self.new_order(out_point, outcome, side, price, quantity)
+        //                 .await?,
+        //         )?)
+        //     }
+
+        //     "list-orders" => {
+        //         if args.len() < 1 || args.len() > 3 {
+        //             bail!("`list-orders` command has 2 optional arguments:
+        // (market_txid) (outcome)")         }
+
+        //         let mut market: Option<OutPoint> = None;
+        //         if let Some(arg_tx_id) = args.get(1) {
+        //             market = Some(OutPoint {
+        //                 txid:
+        // TransactionId::from_str(&arg_tx_id.to_string_lossy())?,
+        //                 out_idx: 0,
+        //             });
+        //         };
+
+        //         let mut outcome: Option<Outcome> = None;
+        //         if let Some(arg_outcome) = args.get(2) {
+        //             outcome =
+        // Some(Outcome::from_str(&arg_outcome.to_string_lossy())?);
+        //         }
+
+        //         Ok(serde_json::to_value(
+        //             self.get_orders_from_db(market, outcome).await,
+        //         )?)
+        //     }
+
+        //     "get-order" => {
+        //         if args.len() != 2 {
+        //             bail!("`get-order` command expects 1 argument:
+        // <order_id>")         }
+
+        //         let id = OrderId(args[1].to_string_lossy().parse()?);
+
+        //         Ok(serde_json::to_value(self.get_order(id, false).await?)?)
+        //     }
+
+        //     "cancel-order" => {
+        //         if args.len() != 2 {
+        //             bail!("`cancel-order` command expects 1 argument:
+        // <order_id>")         }
+
+        //         let id = OrderId(args[1].to_string_lossy().parse()?);
+
+        //         Ok(serde_json::to_value(self.cancel_order(id).await?)?)
+        //     }
+
+        //     "withdraw-available-bitcoin" => {
+        //         if args.len() != 1 {
+        //             bail!("`withdraw-available-bitcoin` command expects 0
+        // arguments")         }
+
+        //         let mut m = HashMap::new();
+        //         m.insert(
+        //             "withdrawed_from_orders",
+        //
+        // self.send_order_bitcoin_balance_to_primary_module().await?,
+        //         );
+        //         m.insert(
+        //             "withdrawed_from_payout_control",
+        //
+        // self.send_payout_control_bitcoin_balance_to_primary_module()
+        //                 .await?,
+        //         );
+
+        //         Ok(serde_json::to_value(m)?)
+        //     }
+
+        //     "sync-orders" => {
+        //         if args.len() < 1 || args.len() > 3 {
+        //             bail!("`sync-order` command accepts 2 optional arguments:
+        // (market_txid) (outcome)")         }
+
+        //         let mut market: Option<OutPoint> = None;
+        //         if let Some(arg_tx_id) = args.get(1) {
+        //             market = Some(OutPoint {
+        //                 txid:
+        // TransactionId::from_str(&arg_tx_id.to_string_lossy())?,
+        //                 out_idx: 0,
+        //             });
+        //         };
+
+        //         let mut outcome: Option<Outcome> = None;
+        //         if let Some(arg_outcome) = args.get(2) {
+        //             outcome =
+        // Some(Outcome::from_str(&arg_outcome.to_string_lossy())?);
+        //         }
+
+        //         Ok(serde_json::to_value(
+        //             self.sync_orders(true, market, outcome).await?,
+        //         )?)
+        //     }
+
+        //     "recover-orders" => {
+        //         if args.len() != 1 && args.len() != 2 {
+        //             bail!(
+        //                 "`recover-orders` command accepts 1 optional
+        // argument: (gap_size_checked)"             )
+        //         }
+
+        //         let mut gap_size_to_check = 20u16;
+        //         if let Some(s) = args.get(1) {
+        //             gap_size_to_check = s.to_string_lossy().parse()?;
+        //         }
+
+        //         Ok(serde_json::to_value(
+        //             self.resync_order_slots(gap_size_to_check).await?,
+        //         )?)
+        //     }
+
+        //     "get-candlesticks" => {
+        //         if args.len() != 4 && args.len() != 5 {
+        //             bail!("`get-candlesticks` command expects 3 arguments and
+        // has 1 optional argument: <market_txid> <outcome>
+        // <candlestick_interval_seconds> (min_candlestick_timestamp)")
+        //         }
+
+        //         let Ok(txid) =
+        // TransactionId::from_str(&args[1].to_string_lossy()) else {
+        //             bail!("Error getting transaction id");
+        //         };
+        //         let market = OutPoint { txid, out_idx: 0 };
+
+        //         let outcome: Outcome = args[2].to_string_lossy().parse()?;
+
+        //         let candlestick_interval: Seconds =
+        // args[3].to_string_lossy().parse()?;
+
+        //         let mut min_candlestick_timestamp = UnixTimestamp::ZERO;
+        //         if let Some(s) = args.get(4) {
+        //             min_candlestick_timestamp =
+        // UnixTimestamp(s.to_string_lossy().parse()?)         }
+
+        //         let candlesticks = self
+        //             .get_candlesticks(
+        //                 market,
+        //                 outcome,
+        //                 candlestick_interval,
+        //                 min_candlestick_timestamp,
+        //             )
+        //             .await?
+        //             .into_iter()
+        //             .map(|(key, value)| (key.0.to_string(), value))
+        //             .collect::<BTreeMap<String, Candlestick>>();
+
+        //         Ok(serde_json::to_value(candlesticks)?)
+        //     }
+
+        //     "help" => {
+        //         let mut m = HashMap::new();
+        //         m.insert("supported_commands", SUPPORTED_COMMANDS);
+
+        //         Ok(serde_json::to_value(m)?)
+        //     }
+
+        //     command => {
+        //         bail!("Unknown command: {command}, supported commands:
+        // {SUPPORTED_COMMANDS}")     }
+        // }
     }
 
     fn supports_backup(&self) -> bool {
