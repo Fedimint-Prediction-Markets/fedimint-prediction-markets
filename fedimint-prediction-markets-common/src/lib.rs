@@ -248,15 +248,19 @@ impl Market {
             return Err(());
         }
 
-        // validate nostr public key weight
+        // validate payout_control_weight_map
         if payout_control_weight_map.len() == 0
             || payout_control_weight_map.len() > usize::from(gc.max_payout_control_keys)
         {
             return Err(());
         }
 
-        for (_, weight) in payout_control_weight_map.iter() {
-            if weight == &0 {
+        for (payout_control, weight) in payout_control_weight_map.iter() {
+            if !prediction_market_event::nostr::NostrPublicKeyHex::is_valid_format(&payout_control) {
+                return Err(());
+            }
+
+            if weight < &1 {
                 return Err(());
             }
         }
