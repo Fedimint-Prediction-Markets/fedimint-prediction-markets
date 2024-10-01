@@ -6,7 +6,7 @@ use anyhow::bail;
 use clap::Parser;
 use fedimint_core::{Amount, TransactionId};
 use fedimint_prediction_markets_common::{
-    ContractOfOutcomeAmount, EventJson, NostrPublicKeyHex, Seconds, Side, UnixTimestamp, WeightRequiredForPayout,
+    ContractOfOutcomeAmount, EventJson, Seconds, Side, UnixTimestamp, WeightRequiredForPayout,
 };
 use prediction_market_event::Outcome;
 use prediction_market_event_nostr_client::nostr_sdk::JsonUtil;
@@ -20,7 +20,7 @@ enum Opts {
     NewMarket {
         event_json: EventJson,
         contract_price: Amount,
-        payout_control: NostrPublicKeyHex,
+        payout_control: prediction_market_event_nostr_client::nostr_sdk::nostr::PublicKey,
     },
     GetMarket {
         market_txid: TransactionId,
@@ -86,7 +86,8 @@ pub async fn handle_cli_command(
             contract_price,
             payout_control,
         } => {
-            let payout_control_weight_map = vec![(payout_control, 1u16)].into_iter().collect();
+            let payout_control_weight_map =
+                vec![(payout_control.to_hex(), 1u16)].into_iter().collect();
             let weight_required_for_payout = 1;
 
             let res = prediction_markets
@@ -136,10 +137,7 @@ pub async fn handle_cli_command(
             > = HashSet::new();
             let mut event_payout_stats: HashMap<
                 prediction_market_event_nostr_client::prediction_market_event::EventPayout,
-                (
-                    Vec<EventJson>,
-                    WeightRequiredForPayout,
-                ),
+                (Vec<EventJson>, WeightRequiredForPayout),
             > = HashMap::new();
 
             for (nostr_event, (payout_control, event_payout)) in event_payout_attestation_result {
@@ -158,7 +156,8 @@ pub async fn handle_cli_command(
                 event_payout_stats_value.1 += WeightRequiredForPayout::from(*weight);
             }
             let mut found_payout = None;
-            for (event_payout, (event_payout_attestations_json, total_weight)) in event_payout_stats {
+            for (event_payout, (event_payout_attestations_json, total_weight)) in event_payout_stats
+            {
                 if market.0.weight_required_for_payout > total_weight {
                     continue;
                 }
@@ -166,25 +165,26 @@ pub async fn handle_cli_command(
                 found_payout = Some((event_payout, event_payout_attestations_json));
                 break;
             }
-            
+
             match found_payout {
                 Some((event_payout, event_payout_attestations_json)) => {
-                    prediction_markets.payout_market(
-                        market_outpoint_from_txid(market_txid),
-                        event_payout_attestations_json,
-                    ).await?;
-        
+                    prediction_markets
+                        .payout_market(
+                            market_outpoint_from_txid(market_txid),
+                            event_payout_attestations_json,
+                        )
+                        .await?;
+
                     json!({
                         "payout_submitted": true,
                         "event_payout": event_payout
                     })
-                    
-                },
+                }
                 None => {
                     json!({
                         "payout_submitted": false,
                     })
-                },
+                }
             }
         }
         Opts::GetEventPayoutAttestationsUsedToPermitPayout { market_txid } => {
