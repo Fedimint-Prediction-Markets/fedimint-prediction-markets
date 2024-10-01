@@ -14,21 +14,24 @@ name = "fedimint_prediction_markets_server"
 path = "src/lib.rs"
 
 [dependencies]
-anyhow = "1.0.66"
-async-trait = "0.1.73"
-bitcoin_hashes = "0.11.0"
-erased-serde = "0.4"
-futures = "0.3.30"
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+erased-serde = { workspace = true }
+futures = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+secp256k1 = { workspace = true }
+strum = { workspace = true }
+strum_macros = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+prediction-market-event = { workspace = true }
+
+# Fedimint dependencies
 fedimint-core = { workspace = true }
-fedimint-prediction-markets-common = { path = "../fedimint-prediction-markets-common" }
-rand = "0.8"
-serde = { version = "1.0.149", features = [ "derive" ] }
-secp256k1 = "0.24.2"
-strum = "0.24"
-strum_macros = "0.24"
-thiserror = "1.0.39"
 fedimint-server = { workspace = true }
-tracing = "0.1.37"
-tokio = { version = "1.26.0", features = ["sync"] }
+fedimint-prediction-markets-common = { path = "../fedimint-prediction-markets-common" }
 
 

@@ -3,8 +3,8 @@ use fedimint_client::DynGlobalClientContext;
 use fedimint_core::core::{IntoDynInstance, ModuleInstanceId, OperationId};
 use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::TransactionId;
-use fedimint_prediction_markets_common::OrderIdClientSide;
 
+use crate::OrderId;
 // use serde::{Deserialize, Serialize};
 // use thiserror::Error;
 use crate::{PredictionMarketsClientContext, PredictionMarketsClientModule};
@@ -24,39 +24,33 @@ pub enum PredictionMarketState {
     NewMarketAccepted,
     NewMarketFailed,
 
-    ProposePayout {
+    PayoutMarket {
         tx_id: TransactionId,
     },
-    ProposePayoutAccepted,
-    ProposePayoutFailed,
+    PayoutMarketAccepted,
+    PayoutMarketFailed,
 
     NewOrder {
         tx_id: TransactionId,
-        order: OrderIdClientSide,
-        sources: Vec<OrderIdClientSide>,
+        order: OrderId,
+        sources: Vec<OrderId>,
     },
     NewOrderAccepted,
     NewOrderFailed,
 
     CancelOrder {
         tx_id: TransactionId,
-        order: OrderIdClientSide,
+        order: OrderId,
     },
     CancelOrderAccepted,
     CancelOrderFailed,
 
     ConsumeOrderBitcoinBalance {
         tx_id: TransactionId,
-        order: OrderIdClientSide,
+        order: OrderId,
     },
     ConsumeOrderBitcoinBalanceAccepted,
     ConsumeOrderBitcoinBalanceFailed,
-
-    ConsumePayoutControlBitcoinBalance {
-        tx_id: TransactionId,
-    },
-    ConsumePayoutControlBitcoinBalanceAccepted,
-    ConsumePayoutControlBitcoinBalanceFailed,
 }
 
 impl State for PredictionMarketsStateMachine {
@@ -94,7 +88,7 @@ impl State for PredictionMarketsStateMachine {
             PredictionMarketState::NewMarketAccepted => vec![],
             PredictionMarketState::NewMarketFailed => vec![],
 
-            PredictionMarketState::ProposePayout { tx_id } => {
+            PredictionMarketState::PayoutMarket { tx_id } => {
                 vec![StateTransition::new(
                     await_tx_accepted(global_context.clone(), operation_id, tx_id),
                     move |_dbtx, res, _state: Self| match res {
@@ -102,21 +96,21 @@ impl State for PredictionMarketsStateMachine {
                         Ok(_) => Box::pin(async move {
                             Self {
                                 operation_id,
-                                state: PredictionMarketState::ProposePayoutAccepted,
+                                state: PredictionMarketState::PayoutMarketAccepted,
                             }
                         }),
                         // tx rejected
                         Err(_) => Box::pin(async move {
                             Self {
                                 operation_id,
-                                state: PredictionMarketState::ProposePayoutFailed,
+                                state: PredictionMarketState::PayoutMarketFailed,
                             }
                         }),
                     },
                 )]
             }
-            PredictionMarketState::ProposePayoutAccepted => vec![],
-            PredictionMarketState::ProposePayoutFailed => vec![],
+            PredictionMarketState::PayoutMarketAccepted => vec![],
+            PredictionMarketState::PayoutMarketFailed => vec![],
 
             PredictionMarketState::NewOrder {
                 tx_id,
@@ -219,31 +213,6 @@ impl State for PredictionMarketsStateMachine {
             }
             PredictionMarketState::ConsumeOrderBitcoinBalanceAccepted => vec![],
             PredictionMarketState::ConsumeOrderBitcoinBalanceFailed => vec![],
-
-            PredictionMarketState::ConsumePayoutControlBitcoinBalance { tx_id } => {
-                vec![StateTransition::new(
-                    await_tx_accepted(global_context.clone(), operation_id, tx_id),
-                    move |_dbtx, res, _state: Self| match res {
-                        // tx accepted
-                        Ok(_) => Box::pin(async move {
-                            Self {
-                                operation_id,
-                                state: PredictionMarketState::ConsumePayoutControlBitcoinBalanceAccepted,
-                            }
-                        }),
-                        // tx rejected
-                        Err(_) => Box::pin(async move {
-                            Self {
-                                operation_id,
-                                state:
-                                    PredictionMarketState::ConsumePayoutControlBitcoinBalanceFailed,
-                            }
-                        }),
-                    },
-                )]
-            }
-            PredictionMarketState::ConsumePayoutControlBitcoinBalanceAccepted => vec![],
-            PredictionMarketState::ConsumePayoutControlBitcoinBalanceFailed => vec![],
         }
     }
 
@@ -252,7 +221,6 @@ impl State for PredictionMarketsStateMachine {
     }
 }
 
-// TODO: Boiler-plate, should return OutputOutcome
 async fn await_tx_accepted(
     context: DynGlobalClientContext,
     _id: OperationId,
@@ -261,7 +229,6 @@ async fn await_tx_accepted(
     context.await_tx_accepted(txid).await
 }
 
-// TODO: Boiler-plate
 impl IntoDynInstance for PredictionMarketsStateMachine {
     type DynType = DynState;
 

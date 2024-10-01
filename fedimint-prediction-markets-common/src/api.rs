@@ -1,18 +1,16 @@
-use std::collections::BTreeMap;
-
 use fedimint_core::encoding::{Decodable, Encodable};
-use fedimint_core::{Amount, OutPoint};
+use fedimint_core::OutPoint;
 use secp256k1::PublicKey;
 use serde::{Deserialize, Serialize};
 
-use crate::{Candlestick, ContractOfOutcomeAmount, Market, Order, Outcome, Seconds, UnixTimestamp};
+use crate::{Candlestick, ContractOfOutcomeAmount, Market, MarketDynamic, NostrEventJson, Order, Outcome, Seconds, UnixTimestamp};
 
 //
 // Get Market
 //
 
 pub const GET_MARKET_ENDPOINT: &str = "get_market";
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct GetMarketParams {
     pub market: OutPoint,
 }
@@ -22,11 +20,39 @@ pub struct GetMarketResult {
 }
 
 //
+// Get Market Dynamic
+//
+
+pub const GET_MARKET_DYNAMIC_ENDPOINT: &str = "get_market_dynamic";
+#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+pub struct GetMarketDynamicParams {
+    pub market: OutPoint,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+pub struct GetMarketDynamicResult {
+    pub market_dynamic: Option<MarketDynamic>,
+}
+
+//
+// Get Event Payout Attestation Vec
+//
+
+pub const GET_EVENT_PAYOUT_ATTESTATIONS_USED_TO_PERMIT_PAYOUT_ENDPOINT: &str = "get_event_payout_attestations_used_to_permit_payout";
+#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+pub struct GetEventPayoutAttestationsUsedToPermitPayoutParams {
+    pub market: OutPoint,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+pub struct GetEventPayoutAttestationsUsedToPermitPayoutResult {
+    pub event_payout_attestations: Option<Vec<NostrEventJson>>,
+}
+
+//
 // Get Order
 //
 
 pub const GET_ORDER_ENDPOINT: &str = "get_order";
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct GetOrderParams {
     pub order: PublicKey,
 }
@@ -36,40 +62,11 @@ pub struct GetOrderResult {
 }
 
 //
-// Get Payout Control Markets
-//
-
-pub const GET_PAYOUT_CONTROL_MARKETS_ENDPOINT: &str = "get_payout_control_markets";
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
-pub struct GetPayoutControlMarketsParams {
-    pub payout_control: PublicKey,
-    pub markets_created_after_and_including: UnixTimestamp,
-}
-#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
-pub struct GetPayoutControlMarketsResult {
-    pub markets: Vec<OutPoint>,
-}
-
-//
-// Get Market Payout Control Proposals
-//
-
-pub const GET_MARKET_PAYOUT_CONTROL_PROPOSALS_ENDPOINT: &str = "get_market_payout_control_proposals";
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
-pub struct GetMarketPayoutControlProposalsParams {
-    pub market: OutPoint,
-}
-#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
-pub struct GetMarketPayoutControlProposalsResult {
-    pub payout_control_proposals: BTreeMap<PublicKey, Vec<Amount>>,
-}
-
-//
 // Get Market Outcome Candlesticks
 //
 
 pub const GET_MARKET_OUTCOME_CANDLESTICKS_ENDPOINT: &str = "get_market_outcome_candlesticks";
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct GetMarketOutcomeCandlesticksParams {
     pub market: OutPoint,
     pub outcome: Outcome,
@@ -86,7 +83,7 @@ pub struct GetMarketOutcomeCandlesticksResult {
 //
 
 pub const WAIT_MARKET_OUTCOME_CANDLESTICKS_ENDPOINT: &str = "wait_market_outcome_candlesticks";
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct WaitMarketOutcomeCandlesticksParams {
     pub market: OutPoint,
     pub outcome: Outcome,
@@ -97,18 +94,4 @@ pub struct WaitMarketOutcomeCandlesticksParams {
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct WaitMarketOutcomeCandlesticksResult {
     pub candlesticks: Vec<(UnixTimestamp, Candlestick)>,
-}
-
-//
-// Get Payout Control Balances
-//
-
-pub const GET_PAYOUT_CONTROL_BALANCE_ENDPOINT: &str = "get_payout_control_balance";
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
-pub struct GetPayoutControlBalanceParams {
-    pub payout_control: PublicKey,
-}
-#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
-pub struct GetPayoutControlBalanceResult {
-    pub balance: Amount,
 }

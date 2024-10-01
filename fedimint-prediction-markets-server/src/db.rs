@@ -1,84 +1,64 @@
 use fedimint_core::encoding::{Decodable, Encodable};
-
-use fedimint_core::{impl_db_lookup, impl_db_record, Amount, OutPoint, PeerId};
-
-#[allow(unused_imports)]
+use fedimint_core::{impl_db_lookup, impl_db_record, OutPoint, PeerId};
 use fedimint_prediction_markets_common::{
-    Candlestick, ContractAmount, Market, Order, Outcome, Payout, Seconds, Side, TimeOrdering,
-    UnixTimestamp, ContractOfOutcomeAmount
+    Candlestick, ContractOfOutcomeAmount, MarketDynamic, MarketStatic, NostrEventJson, Order,
+    PredictionMarketsOutputOutcome, Seconds, Side, TimeOrdering, UnixTimestamp,
 };
-
+use prediction_market_event::Outcome;
 use secp256k1::PublicKey;
 use serde::Serialize;
 use strum_macros::EnumIter;
 
-#[allow(unused_imports)]
-use crate::{
-    PredictionMarketsOutput, PredictionMarketsOutput::NewBuyOrder,
-    PredictionMarketsOutput::NewMarket, PredictionMarketsOutputOutcome,
-};
+use crate::MarketSpecificationsNeededForNewOrders;
 
 /// Namespaces DB keys for this module
 #[repr(u8)]
 #[derive(Clone, EnumIter, Debug)]
 pub enum DbKeyPrefix {
-    /// ----- 00-1f reserved for general information storage -----
-
-    /// [PredictionMarketsOutput] [OutPoint] to [PredictionMarketsOutputOutcome]
+    /// [OutPoint] to [PredictionMarketsOutputOutcome]
     Outcome = 0x00,
 
-    /// [NewMarket] [OutPoint] to [Market]
-    Market = 0x01,
+    /// Market's [OutPoint] to [MarketStatic]
+    MarketStatic = 0x01,
+
+    /// Market's [OutPoint] to [MarketDynamic]
+    MarketDynamic = 0x02,
 
     /// Owner's [PublicKey] to [Order]
-    Order = 0x02,
+    Order = 0x03,
 
-    /// Payout Control's [PublicKey] to [Amount]
-    PayoutControlBalance = 0x03,
-
-    /// ----- 20-3f reserved for market operation -----
-
-    /// Used to produce time priority for new orders
+    /// Information needed to process new orders
     ///
-    /// Market's [OutPoint] to [TimeOrdering]
-    NextOrderTimeOrdering = 0x20,
+    /// Market's [OutPoint] to [MarketSpecificationsNeededForNewOrders]
+    MarketSpecificationsNeededForNewOrders = 0x20,
 
     /// Used for payouts
     ///
     /// (Market's [OutPoint], Order's [OutPoint]) to ()
     OrdersByMarket = 0x21,
 
-    /// Used to implement orderbook. Only holds orders with non-zero quantity_waiting_for_match.
+    /// Used to implement orderbook. Only holds orders with non-zero
+    /// quantity_waiting_for_match.
     ///
     /// Amount is (contract_price - price of order) for buys
     /// Amount is (price of order) for sells
     ///
-    /// (Market's [OutPoint], [Outcome], [Side], [Amount], [TimeOrdering]) to (Order's [PublicKey])
+    /// (Market's [OutPoint], [Outcome], [Side], Price priority [u64],
+    /// [TimeOrdering]) to (Order's [PublicKey])
     OrderPriceTimePriority = 0x22,
 
-    /// Used to implement threshold payouts.
-    ///
-    /// (Market's [OutPoint], [PublicKey]) to [Vec<Amount>]
-    MarketPayoutControlProposal = 0x23,
-    /// (Market's [OutPoint], [Vec<Amount>], [PublicKey]) to ()
-    MarketOutcomePayoutsProposals = 0x24,
+    /// (Market's [OutPoint]) to
+    /// (Vec<[prediction_market_event::nostr::EventPayoutAttestation] as json>)
+    EventPayoutAttestationsUsedToPermitPayout = 0x23,
 
     /// Used to implement candlestick data
     ///
-    /// (Market's [OutPoint], [Outcome], candlestick interval [Seconds], Candle's [UnixTimestamp]) to [Candlestick]
-    MarketOutcomeCandlesticks = 0x25,
-    /// (Market's [OutPoint], [Outcome], candlestick interval [Seconds]) to (Candle's [UnixTimestamp], [ContractOfOutcomeAmount]) 
-    MarketOutcomeNewestCandlestickVolume = 0x26,
-
-    /// ----- 40-4f reserved for api lookup indexes -----
-
-    /// Indexes payout control keys to the markets they belong to
-    /// Used by client for data recovery in case of data loss
-    ///
-    /// ([PublicKey], Market's consensus creation [UnixTimestamp], Market's [OutPoint]) to ()
-    PayoutControlMarkets = 0x40,
-
-    /// ----- 60-6f reserved for consensus items -----
+    /// (Market's [OutPoint], [Outcome], candlestick interval [Seconds],
+    /// Candle's [UnixTimestamp]) to [Candlestick]
+    MarketOutcomeCandlesticks = 0x24,
+    /// (Market's [OutPoint], [Outcome], candlestick interval [Seconds]) to
+    /// (Candle's [UnixTimestamp], [ContractOfOutcomeAmount])
+    MarketOutcomeNewestCandlestickVolume = 0x25,
 
     /// Stores timestamps proposed by peers.
     /// Used to create consensus timestamps.
@@ -108,20 +88,38 @@ impl_db_record!(
 
 impl_db_lookup!(key = OutcomeKey, query_prefix = OutcomePrefixAll);
 
-/// Market
+/// MarketStatic
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
-pub struct MarketKey(pub OutPoint);
+pub struct MarketStaticKey(pub OutPoint);
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct MarketPrefixAll;
+pub struct MarketStaticPrefixAll;
 
 impl_db_record!(
-    key = MarketKey,
-    value = Market,
-    db_prefix = DbKeyPrefix::Market,
+    key = MarketStaticKey,
+    value = MarketStatic,
+    db_prefix = DbKeyPrefix::MarketStatic,
 );
 
-impl_db_lookup!(key = MarketKey, query_prefix = MarketPrefixAll);
+impl_db_lookup!(key = MarketStaticKey, query_prefix = MarketStaticPrefixAll);
+
+/// MarketDynamic
+#[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
+pub struct MarketDynamicKey(pub OutPoint);
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct MarketDynamicPrefixAll;
+
+impl_db_record!(
+    key = MarketDynamicKey,
+    value = MarketDynamic,
+    db_prefix = DbKeyPrefix::MarketDynamic,
+);
+
+impl_db_lookup!(
+    key = MarketDynamicKey,
+    query_prefix = MarketDynamicPrefixAll
+);
 
 /// Order
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
@@ -138,24 +136,22 @@ impl_db_record!(
 
 impl_db_lookup!(key = OrderKey, query_prefix = OrderPrefixAll,);
 
-/// NextOrderTimePriority
+/// MarketSpecificationsNeededForNewOrders
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
-pub struct NextOrderTimeOrderingKey {
-    pub market: OutPoint,
-}
+pub struct MarketSpecificationsNeededForNewOrdersKey(pub OutPoint);
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct NextOrderTimeOrderingPrefixAll;
+pub struct MarketSpecificationsNeededForNewOrdersPrefixAll;
 
 impl_db_record!(
-    key = NextOrderTimeOrderingKey,
-    value = TimeOrdering,
-    db_prefix = DbKeyPrefix::NextOrderTimeOrdering,
+    key = MarketSpecificationsNeededForNewOrdersKey,
+    value = MarketSpecificationsNeededForNewOrders,
+    db_prefix = DbKeyPrefix::MarketSpecificationsNeededForNewOrders,
 );
 
 impl_db_lookup!(
-    key = NextOrderTimeOrderingKey,
-    query_prefix = NextOrderTimeOrderingPrefixAll
+    key = MarketSpecificationsNeededForNewOrdersKey,
+    query_prefix = MarketSpecificationsNeededForNewOrdersPrefixAll
 );
 
 /// OrdersByMarket
@@ -191,15 +187,15 @@ pub struct OrderPriceTimePriorityKey {
     pub market: OutPoint,
     pub outcome: Outcome,
     pub side: Side,
-    pub price_priority: Amount,
+    pub price_priority: u64,
     pub time_priority: TimeOrdering,
 }
 
 impl OrderPriceTimePriorityKey {
-    pub fn from_market_and_order(market: &Market, order: &Order) -> Self {
+    pub fn from_order(order: &Order) -> Self {
         let price_priority = match order.side {
-            Side::Buy => market.contract_price - order.price,
-            Side::Sell => order.price,
+            Side::Buy => u64::MAX - order.price.msats,
+            Side::Sell => order.price.msats,
         };
 
         OrderPriceTimePriorityKey {
@@ -234,118 +230,25 @@ impl_db_lookup!(
     query_prefix = OrderPriceTimePriorityPrefixAll
 );
 
-/// PayoutControlMarkets
+/// EventPayoutAttestationsUsedToPermitPayout
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
-pub struct PayoutControlMarketsKey {
-    pub payout_control: PublicKey,
-    pub market_created: UnixTimestamp,
-    pub market: OutPoint,
-}
+pub struct EventPayoutAttestationsUsedToPermitPayoutKey(pub OutPoint);
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct PayoutControlMarketsPrefixAll;
-
-#[derive(Debug, Encodable, Decodable)]
-pub struct PayoutControlMarketsPrefix1 {
-    pub payout_control: PublicKey,
-}
-
-#[derive(Debug, Encodable, Decodable)]
-pub struct PayoutControlMarketsPrefix2 {
-    pub payout_control: PublicKey,
-    pub market_created: UnixTimestamp,
-}
+pub struct EventPayoutAttestationsUsedToPermitPayoutPrefixAll;
 
 impl_db_record!(
-    key = PayoutControlMarketsKey,
-    value = (),
-    db_prefix = DbKeyPrefix::PayoutControlMarkets,
+    key = EventPayoutAttestationsUsedToPermitPayoutKey,
+    value = Vec<NostrEventJson>,
+    db_prefix = DbKeyPrefix::EventPayoutAttestationsUsedToPermitPayout,
 );
 
 impl_db_lookup!(
-    key = PayoutControlMarketsKey,
-    query_prefix = PayoutControlMarketsPrefixAll,
-    query_prefix = PayoutControlMarketsPrefix1,
-    query_prefix = PayoutControlMarketsPrefix2
+    key = EventPayoutAttestationsUsedToPermitPayoutKey,
+    query_prefix = EventPayoutAttestationsUsedToPermitPayoutPrefixAll
 );
 
-/// PeersProposedTimestamp
-#[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
-pub struct PeersProposedTimestampKey {
-    pub peer_id: PeerId,
-}
-
-#[derive(Debug, Encodable, Decodable)]
-pub struct PeersProposedTimestampPrefixAll;
-
-impl_db_record!(
-    key = PeersProposedTimestampKey,
-    value = UnixTimestamp,
-    db_prefix = DbKeyPrefix::PeersProposedTimestamp,
-);
-
-impl_db_lookup!(
-    key = PeersProposedTimestampKey,
-    query_prefix = PeersProposedTimestampPrefixAll
-);
-
-// MarketPayoutControlProposal
-#[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
-pub struct MarketPayoutControlProposalKey {
-    pub market: OutPoint,
-    pub payout_control: PublicKey,
-}
-
-#[derive(Debug, Encodable, Decodable)]
-pub struct MarketPayoutControlProposalPrefixAll;
-
-#[derive(Debug, Encodable, Decodable)]
-pub struct MarketPayoutControlProposalPrefix1 {
-    pub market: OutPoint,
-}
-
-impl_db_record!(
-    key = MarketPayoutControlProposalKey,
-    value = Vec<Amount>,
-    db_prefix = DbKeyPrefix::MarketPayoutControlProposal,
-);
-
-impl_db_lookup!(
-    key = MarketPayoutControlProposalKey,
-    query_prefix = MarketPayoutControlProposalPrefixAll,
-    query_prefix = MarketPayoutControlProposalPrefix1
-);
-
-// MarketOutcomePayoutsProposals
-#[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
-pub struct MarketOutcomePayoutsProposalsKey {
-    pub market: OutPoint,
-    pub outcome_payouts: Vec<Amount>,
-    pub payout_control: PublicKey,
-}
-
-#[derive(Debug, Encodable, Decodable)]
-pub struct MarketOutcomePayoutsProposalsPrefixAll;
-
-#[derive(Debug, Encodable, Decodable)]
-pub struct MarketOutcomePayoutsProposalsPrefix2 {
-    pub market: OutPoint,
-    pub outcome_payouts: Vec<Amount>,
-}
-
-impl_db_record!(
-    key = MarketOutcomePayoutsProposalsKey,
-    value = (),
-    db_prefix = DbKeyPrefix::MarketOutcomePayoutsProposals,
-);
-
-impl_db_lookup!(
-    key = MarketOutcomePayoutsProposalsKey,
-    query_prefix = MarketOutcomePayoutsProposalsPrefixAll,
-    query_prefix = MarketOutcomePayoutsProposalsPrefix2
-);
-
-// MarketOutcomeCandlesticks
+/// MarketOutcomeCandlesticks
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
 pub struct MarketOutcomeCandlesticksKey {
     pub market: OutPoint,
@@ -376,7 +279,7 @@ impl_db_lookup!(
     query_prefix = MarketOutcomeCandlesticksPrefix3,
 );
 
-// MarketOutcomeNewestCandlestickVolume
+/// MarketOutcomeNewestCandlestickVolume
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
 pub struct MarketOutcomeNewestCandlestickVolumeKey {
     pub market: OutPoint,
@@ -399,24 +302,24 @@ impl_db_lookup!(
     query_prefix = MarketOutcomeNewestCandlestickVolumePrefixAll
 );
 
-// PayoutControlBalance
+/// PeersProposedTimestamp
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
-pub struct PayoutControlBalanceKey {
-    pub payout_control: PublicKey,
+pub struct PeersProposedTimestampKey {
+    pub peer_id: PeerId,
 }
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct PayoutControlBalancePrefixAll;
+pub struct PeersProposedTimestampPrefixAll;
 
 impl_db_record!(
-    key = PayoutControlBalanceKey,
-    value = Amount,
-    db_prefix = DbKeyPrefix::PayoutControlBalance,
+    key = PeersProposedTimestampKey,
+    value = UnixTimestamp,
+    db_prefix = DbKeyPrefix::PeersProposedTimestamp,
 );
 
 impl_db_lookup!(
-    key = PayoutControlBalanceKey,
-    query_prefix = PayoutControlBalancePrefixAll
+    key = PeersProposedTimestampKey,
+    query_prefix = PeersProposedTimestampPrefixAll
 );
 
 // template

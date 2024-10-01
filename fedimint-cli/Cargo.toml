@@ -10,11 +10,13 @@ name = "fedimint-cli"
 path = "src/main.rs"
 
 [dependencies]
-anyhow = "1.0.66"
-fedimint-cli = { workspace = true }
-fedimint-prediction-markets-client = { path = "../fedimint-prediction-markets-client" }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+
+# Fedimint dependencies
 fedimint-core = { workspace = true }
-tokio = { version = "1.25.0", features = ["full", "tracing"] }
+fedimint-cli = { workspace = true }
+fedimint-prediction-markets-client = { path = "../fedimint-prediction-markets-client", features = ["cli"] }
 
 [build-dependencies]
 fedimint-build = { git = "https://github.com/fedimint/fedimint" }

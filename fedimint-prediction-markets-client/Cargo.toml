@@ -6,28 +6,37 @@ edition = "2021"
 description = "fedimint-dummy is a dummy example fedimint module."
 license = "MIT"
 
+[features]
+default = []
+cli = ["dep:clap", "dep:serde_json", "dep:prediction-market-event-nostr-client"]
+
 [lib]
 name = "fedimint_prediction_markets_client"
 path = "src/lib.rs"
 
 [dependencies]
-async-trait = "0.1"
-anyhow = "1.0.66"
-fedimint-prediction-markets-common ={ path = "../fedimint-prediction-markets-common" }
+async-trait = { workspace = true }
+anyhow = { workspace = true }
+futures = { workspace = true }
+erased-serde = { workspace = true }
+rand = { workspace = true }
+secp256k1 = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+prediction-market-event = { workspace = true }
+
+# Cli deps
+clap = { version = "4.5.18", optional = true }
+serde_json = { workspace = true, optional = true }
+prediction-market-event-nostr-client = { git = "https://github.com/Prediction-Market-Event/prediction-market-event-nostr-client", optional = true }
+
+
+# Fedimint dependencies
+fedimint-core = { workspace = true }
 fedimint-client = { workspace = true }
-fedimint-core ={ workspace = true }
-futures = "0.3.30"
-erased-serde = "0.4"
-rand = "0.8.5"
-secp256k1 = "0.24.2"
-serde = {version = "1.0.149", features = [ "derive" ] }
-serde_json = { version = "1.0.91", features = ["preserve_order"] }
-tracing = "0.1.37"
-thiserror = "1.0.39"
-bitcoin = "0.29.2"
-async-stream = "0.3.5"
-tokio = { version = "1.26.0", features = ["sync"] }
-# threshold_crypto = { workspace = true }
+fedimint-prediction-markets-common = { path = "../fedimint-prediction-markets-common" }
 
 [build-dependencies]
 fedimint-build = { git = "https://github.com/fedimint/fedimint" }

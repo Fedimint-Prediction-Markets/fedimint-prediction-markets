@@ -1,15 +1,16 @@
-use fedimint_prediction_markets_common::{Market, Outcome};
+use fedimint_prediction_markets_common::Outcome;
 use secp256k1::PublicKey;
 
+use crate::MarketSpecificationsNeededForNewOrders;
 
 pub struct HighestPriorityOrderCache {
     v: Vec<Option<PublicKey>>,
 }
 
 impl HighestPriorityOrderCache {
-    pub fn new(market: &Market) -> Self {
+    pub fn new(market_specifications: &MarketSpecificationsNeededForNewOrders) -> Self {
         Self {
-            v: vec![None; market.outcomes.into()],
+            v: vec![None; market_specifications.outcome_count.into()],
         }
     }
 

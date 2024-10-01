@@ -1,16 +1,14 @@
 use fedimint_core::encoding::{Decodable, Encodable};
-use fedimint_core::{impl_db_lookup, impl_db_record, OutPoint, Amount};
-#[allow(unused_imports)]
+use fedimint_core::{impl_db_lookup, impl_db_record, OutPoint};
 use fedimint_prediction_markets_common::{
-    Market, Order, OrderIdClientSide, Outcome, UnixTimestamp,
+    Market, NostrPublicKeyHex, Order, Outcome, UnixTimestamp,
 };
-use secp256k1::PublicKey;
+
+use crate::OrderId;
 
 #[repr(u8)]
 #[derive(Clone, Debug)]
 pub enum DbKeyPrefix {
-    /// ----- 00-1f reserved for caches -----
-
     /// Cache for markets
     ///
     /// Market's [OutPoint] to [Market]
@@ -18,51 +16,35 @@ pub enum DbKeyPrefix {
 
     /// Cache for orders
     ///
-    /// [OrderIdClientSide] to [Order]
+    /// [OrderId] to [Order]
     Order = 0x01,
-
-    /// Cache for market payout control proposals
-    /// 
-    /// (Market's [OutPoint], [PublicKey]) to [Vec<Amount>]
-    MarketPayoutControlProposal = 0x02, 
-
-    /// ----- 20-3f reserved for indexes -----
-
-    /// Markets that our payout control key has some portion of control over.
-    ///
-    /// (Market's creation time [UnixTimestamp], Market's [OutPoint]) to ()
-    ClientPayoutControlMarkets = 0x20,
 
     /// Orders by market outcome
     ///
-    /// (Market's [OutPoint], [Outcome], [OrderIdClientSide]) to ()
+    /// (Market's [OutPoint], [Outcome], [OrderId]) to ()
     OrdersByMarketOutcome = 0x21,
 
     /// Orders with some kind of balance.
     ///
-    /// (Market's [OutPoint], [Outcome], [OrderIdClientSide]) to ()
+    /// (Market's [OutPoint], [Outcome], [OrderId]) to ()
     NonZeroOrdersByMarketOutcome = 0x22,
 
-    /// ----- 40-4f reserved for client operation -----
-
-    /// Order ids are added to this set when the order in local db is known 
+    /// Order ids are added to this set when the order in local db is known
     /// to be out of sync with the order on server
     ///
-    /// ([OrderIdClientSide]) to ()
+    /// ([OrderId]) to ()
     OrderNeedsUpdate = 0x40,
 
     /// (Market's [OutPoint]) to (Saved to db [UnixTimestamp])
     ClientSavedMarkets = 0x41,
 
-    /// (Name [String]) to (Payout control [PublicKey])
+    /// (Name [String]) to (Payout control [NostrPublicKeyHex])
     ClientNamedPayoutControls = 0x42,
 }
 
 // Market
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash)]
-pub struct MarketKey {
-    pub market: OutPoint,
-}
+pub struct MarketKey(pub OutPoint);
 
 #[derive(Debug, Encodable, Decodable)]
 pub struct MarketPrefixAll;
@@ -83,9 +65,7 @@ pub enum OrderIdSlot {
 }
 
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash)]
-pub struct OrderKey {
-    pub id: OrderIdClientSide,
-}
+pub struct OrderKey(pub OrderId);
 
 #[derive(Debug, Encodable, Decodable)]
 pub struct OrderPrefixAll;
@@ -98,60 +78,12 @@ impl_db_record!(
 
 impl_db_lookup!(key = OrderKey, query_prefix = OrderPrefixAll);
 
-// MarketPayoutControlProposal
-#[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash)]
-pub struct MarketPayoutControlProposalKey {
-    pub market: OutPoint,
-    pub payout_control: PublicKey,
-}
-
-#[derive(Debug, Encodable, Decodable)]
-pub struct MarketPayoutControlProposalPrefixAll;
-
-#[derive(Debug, Encodable, Decodable)]
-pub struct MarketPayoutControlProposalPrefix1 {
-    pub market: OutPoint,
-}
-
-impl_db_record!(
-    key = MarketPayoutControlProposalKey,
-    value = Vec<Amount>,
-    db_prefix = DbKeyPrefix::MarketPayoutControlProposal,
-);
-
-impl_db_lookup!(
-    key = MarketPayoutControlProposalKey,
-    query_prefix = MarketPayoutControlProposalPrefixAll,
-    query_prefix = MarketPayoutControlProposalPrefix1
-);
-
-// ClientPayoutControlMarkets
-#[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash)]
-pub struct ClientPayoutControlMarketsKey {
-    pub market_created: UnixTimestamp,
-    pub market: OutPoint,
-}
-
-#[derive(Debug, Encodable, Decodable)]
-pub struct ClientPayoutControlMarketsPrefixAll;
-
-impl_db_record!(
-    key = ClientPayoutControlMarketsKey,
-    value = (),
-    db_prefix = DbKeyPrefix::ClientPayoutControlMarkets,
-);
-
-impl_db_lookup!(
-    key = ClientPayoutControlMarketsKey,
-    query_prefix = ClientPayoutControlMarketsPrefixAll
-);
-
 // OrdersByMarketOutcome
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash)]
 pub struct OrdersByMarketOutcomeKey {
     pub market: OutPoint,
     pub outcome: Outcome,
-    pub order: OrderIdClientSide,
+    pub order: OrderId,
 }
 
 #[derive(Debug, Encodable, Decodable)]
@@ -186,7 +118,7 @@ impl_db_lookup!(
 pub struct NonZeroOrdersByMarketOutcomeKey {
     pub market: OutPoint,
     pub outcome: Outcome,
-    pub order: OrderIdClientSide,
+    pub order: OrderId,
 }
 
 #[derive(Debug, Encodable, Decodable)]
@@ -218,9 +150,7 @@ impl_db_lookup!(
 
 // OrderNeedsUpdate
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash)]
-pub struct OrderNeedsUpdateKey {
-    pub order: OrderIdClientSide,
-}
+pub struct OrderNeedsUpdateKey(pub OrderId);
 
 #[derive(Debug, Encodable, Decodable)]
 pub struct OrderNeedsUpdatePrefixAll;
@@ -267,7 +197,7 @@ pub struct ClientNamedPayoutControlsPrefixAll;
 
 impl_db_record!(
     key = ClientNamedPayoutControlsKey,
-    value = PublicKey,
+    value = NostrPublicKeyHex,
     db_prefix = DbKeyPrefix::ClientNamedPayoutControls,
 );
 

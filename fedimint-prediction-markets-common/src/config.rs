@@ -1,6 +1,7 @@
 use fedimint_core::core::ModuleKind;
 use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::{plugin_types_trait_impl_config, Amount};
+use prediction_market_event::information::Information;
 use serde::{Deserialize, Serialize};
 
 use crate::{ContractOfOutcomeAmount, Outcome, PredictionMarketsCommonInit, Seconds};
@@ -32,16 +33,19 @@ impl Default for PredictionMarketsGenParams {
                     new_market_fee: Amount::from_msats(0),
                     new_order_fee: Amount::from_msats(0),
                     consume_order_bitcoin_balance_fee: Amount::from_msats(0),
-                    payout_proposal_fee: Amount::from_msats(0),
-                    consume_payout_control_bitcoin_balance_fee: Amount::from_msats(0),
 
                     // markets
+                    accepted_event_information_variant_ids: Information::ALL_VARIANT_IDS
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect(),
                     max_contract_price: Amount::from_sats(100_000_000),
                     max_market_outcomes: 50,
                     max_payout_control_keys: 25,
 
                     // orders
                     max_order_quantity: ContractOfOutcomeAmount(1000000),
+                    max_sell_order_sources: 50,
 
                     // timestamp creation
                     timestamp_interval: 15,
@@ -115,21 +119,21 @@ pub struct GeneralConsensus {
     pub new_market_fee: Amount,
     pub new_order_fee: Amount,
     pub consume_order_bitcoin_balance_fee: Amount,
-    pub payout_proposal_fee: Amount,
-    pub consume_payout_control_bitcoin_balance_fee: Amount,
 
     // markets
+    pub accepted_event_information_variant_ids: Vec<String>,
     pub max_contract_price: Amount,
     pub max_market_outcomes: Outcome,
     pub max_payout_control_keys: u16,
 
     // orders
     pub max_order_quantity: ContractOfOutcomeAmount,
+    pub max_sell_order_sources: u16,
 
     // timestamp creation
     pub timestamp_interval: Seconds,
 
     // match data
     pub candlestick_intervals: Vec<Seconds>,
-    pub max_candlesticks_kept_per_market_outcome_interval: u64
+    pub max_candlesticks_kept_per_market_outcome_interval: u64,
 }
