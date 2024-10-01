@@ -8,7 +8,7 @@ license = "MIT"
 
 [features]
 default = []
-cli = ["dep:clap","dep:serde_json"]
+cli = ["dep:clap", "dep:serde_json", "dep:prediction-market-event-nostr-client"]
 
 [lib]
 name = "fedimint_prediction_markets_client"
@@ -30,6 +30,7 @@ prediction-market-event = { workspace = true }
 # Cli deps
 clap = { version = "4.5.18", optional = true }
 serde_json = { workspace = true, optional = true }
+prediction-market-event-nostr-client = { git = "https://github.com/Prediction-Market-Event/prediction-market-event-nostr-client", optional = true }
 
 
 # Fedimint dependencies

@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::ffi;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail};
@@ -19,7 +20,7 @@ use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::module::{
     ApiVersion, CommonModuleInit, ModuleCommon, ModuleInit, MultiApiVersion, TransactionItemAmount,
 };
-use fedimint_core::{apply, async_trait_maybe_send, Amount, OutPoint};
+use fedimint_core::{apply, async_trait_maybe_send, Amount, OutPoint, TransactionId};
 use fedimint_prediction_markets_common::api::{
     GetEventPayoutAttestationsUsedToPermitPayoutParams, GetMarketDynamicParams,
     GetMarketOutcomeCandlesticksParams, GetMarketOutcomeCandlesticksResult, GetMarketParams,
@@ -726,9 +727,9 @@ impl PredictionMarketsClientModule {
     }
 
     /// Scans for all orders that the client owns.
-    pub async fn resync_order_slots(&self, gap_size_to_check: u16) -> anyhow::Result<()> {
+    pub async fn resync_order_slots(&self, gap_size_to_check: usize) -> anyhow::Result<()> {
         let mut order_id = OrderId(0);
-        let mut slots_without_order = 0u16;
+        let mut slots_without_order = 0;
         loop {
             if let Some(_) = self.get_order(order_id, false).await? {
                 slots_without_order = 0;
@@ -1381,3 +1382,15 @@ impl ClientModule for PredictionMarketsClientModule {
     Ord,
 )]
 pub struct OrderId(pub u64);
+
+impl FromStr for OrderId {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(u64::from_str(s)?))
+    }
+}
+
+pub fn market_outpoint_from_txid(txid: TransactionId) -> OutPoint {
+    OutPoint { txid, out_idx: 0 }
+}
