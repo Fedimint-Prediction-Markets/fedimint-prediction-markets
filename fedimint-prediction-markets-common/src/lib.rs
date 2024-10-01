@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use std::fmt::{self, Display};
 use std::hash::Hash;
 use std::ops::{Add, AddAssign, Mul, Sub, SubAssign};
+use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::bail;
@@ -389,11 +390,11 @@ impl Side {
     }
 }
 
-impl TryFrom<&str> for Side {
-    type Error = anyhow::Error;
+impl FromStr for Side {
+    type Err = anyhow::Error;
 
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value.to_lowercase().as_str() {
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
             "buy" => Ok(Self::Buy),
             "sell" => Ok(Self::Sell),
             _ => bail!("could not parse side"),
@@ -510,6 +511,14 @@ impl Sub for ContractOfOutcomeAmount {
 impl SubAssign for ContractOfOutcomeAmount {
     fn sub_assign(&mut self, rhs: Self) {
         *self = *self - rhs;
+    }
+}
+
+impl FromStr for ContractOfOutcomeAmount {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(u64::from_str(s)?))
     }
 }
 
@@ -692,6 +701,14 @@ impl UnixTimestamp {
 
     pub fn divisible(&self, seconds: Seconds) -> bool {
         self.0 % seconds == 0
+    }
+}
+
+impl FromStr for UnixTimestamp {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(Seconds::from_str(s)?))
     }
 }
 
