@@ -215,7 +215,8 @@ impl fmt::Display for PredictionMarketsConsensusItem {
     }
 }
 
-/// Markets are identified by the [PredictionMarketsOutput::NewMarket] [OutPoint] they were created in.
+/// Markets are identified by the [PredictionMarketsOutput::NewMarket]
+/// [OutPoint] they were created in.
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct Market(pub MarketStatic, pub MarketDynamic);
 
@@ -256,7 +257,9 @@ impl Market {
         }
 
         for (payout_control, weight) in payout_control_weight_map.iter() {
-            if !prediction_market_event::nostr::NostrPublicKeyHex::is_valid_format(&payout_control) {
+            if !prediction_market_event::nostr_event_types::NostrPublicKeyHex::is_valid_format(
+                &payout_control,
+            ) {
                 return Err(());
             }
 

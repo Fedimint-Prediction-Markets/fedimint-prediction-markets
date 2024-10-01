@@ -31,6 +31,7 @@ prediction-market-event = { workspace = true }
 clap = { version = "4.5.18", optional = true }
 serde_json = { workspace = true, optional = true }
 
+
 # Fedimint dependencies
 fedimint-core = { workspace = true }
 fedimint-client = { workspace = true }

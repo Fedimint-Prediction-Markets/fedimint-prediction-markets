@@ -36,6 +36,7 @@ use fedimint_server::config::CORE_CONSENSUS_VERSION;
 use futures::{future, StreamExt};
 use highest_priority_order_cache::HighestPriorityOrderCache;
 use order_cache::OrderCache;
+use prediction_market_event::nostr_event_types::NostrEventUtils;
 use prediction_market_event::Event;
 use secp256k1::PublicKey;
 use serde::Serialize;
@@ -652,14 +653,14 @@ impl ServerModule for PredictionMarkets {
                 // validate payout
                 let event = market_static.event().unwrap();
                 let mut sum_weight: WeightRequiredForPayout = 0;
-                let mut used_keys_set: HashSet<prediction_market_event::nostr::NostrPublicKeyHex> =
+                let mut used_keys_set: HashSet<prediction_market_event::nostr_event_types::NostrPublicKeyHex> =
                     HashSet::new();
                 let mut event_payout: Option<prediction_market_event::EventPayout> = None;
                 let mut event_payout_attestations_json_ensured_compact: Vec<String> = Vec::new();
 
                 for event_json in event_payout_attestations_json {
                     let Ok((loop_nostr_public_key_hex, loop_event_payout)) =
-                        prediction_market_event::nostr::EventPayoutAttestation::interpret_nostr_event_json(event_json)
+                        prediction_market_event::nostr_event_types::EventPayoutAttestation::interpret_nostr_event_json(event_json)
                     else {
                         return Err(PredictionMarketsOutputError::PayoutValidationFailed)
                     };

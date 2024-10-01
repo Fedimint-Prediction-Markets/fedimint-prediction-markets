@@ -34,7 +34,7 @@ erased-serde = "0.4"
 thiserror = "1.0.39"
 strum = "0.24"
 strum_macros = "0.24"
-prediction-market-event = "0.7.0"
+prediction-market-event = "0.14.0"
 
 # Fedimint dependencies
 fedimintd = { git = "https://github.com/fedimint/fedimint", tag = "v0.3.0" }
