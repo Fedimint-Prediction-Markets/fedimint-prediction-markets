@@ -28,9 +28,10 @@ use fedimint_prediction_markets_common::api::{
 };
 use fedimint_prediction_markets_common::config::{GeneralConsensus, PredictionMarketsClientConfig};
 use fedimint_prediction_markets_common::{
-    Candlestick, ContractOfOutcomeAmount, EventJson, Market, NostrPublicKeyHex, Order, Outcome,
-    PredictionMarketsCommonInit, PredictionMarketsInput, PredictionMarketsModuleTypes,
-    PredictionMarketsOutput, Seconds, Side, UnixTimestamp, Weight, WeightRequiredForPayout,
+    Candlestick, ContractOfOutcomeAmount, EventJson, Market, NostrPublicKeyHex,
+    Order, Outcome, PredictionMarketsCommonInit, PredictionMarketsInput,
+    PredictionMarketsModuleTypes, PredictionMarketsOutput, Seconds, Side, UnixTimestamp, Weight,
+    WeightRequiredForPayout,
 };
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;

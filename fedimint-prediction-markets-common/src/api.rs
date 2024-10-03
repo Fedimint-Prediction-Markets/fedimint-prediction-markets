@@ -3,7 +3,10 @@ use fedimint_core::OutPoint;
 use secp256k1::PublicKey;
 use serde::{Deserialize, Serialize};
 
-use crate::{Candlestick, ContractOfOutcomeAmount, Market, MarketDynamic, NostrEventJson, Order, Outcome, Seconds, UnixTimestamp};
+use crate::{
+    Candlestick, ContractOfOutcomeAmount, Market, MarketDynamic, NostrEventJson, Order, Outcome,
+    Seconds, UnixTimestamp,
+};
 
 //
 // Get Market
@@ -37,7 +40,8 @@ pub struct GetMarketDynamicResult {
 // Get Event Payout Attestation Vec
 //
 
-pub const GET_EVENT_PAYOUT_ATTESTATIONS_USED_TO_PERMIT_PAYOUT_ENDPOINT: &str = "get_event_payout_attestations_used_to_permit_payout";
+pub const GET_EVENT_PAYOUT_ATTESTATIONS_USED_TO_PERMIT_PAYOUT_ENDPOINT: &str =
+    "get_event_payout_attestations_used_to_permit_payout";
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct GetEventPayoutAttestationsUsedToPermitPayoutParams {
     pub market: OutPoint,

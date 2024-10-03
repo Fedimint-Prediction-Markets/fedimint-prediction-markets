@@ -6,7 +6,8 @@ use anyhow::bail;
 use clap::Parser;
 use fedimint_core::{Amount, TransactionId};
 use fedimint_prediction_markets_common::{
-    ContractOfOutcomeAmount, EventJson, Seconds, Side, UnixTimestamp, WeightRequiredForPayout,
+    ContractOfOutcomeAmount, EventHashHex, EventJson, Seconds, Side, UnixTimestamp,
+    WeightRequiredForPayout,
 };
 use prediction_market_event::Outcome;
 use prediction_market_event_nostr_client::nostr_sdk::JsonUtil;
@@ -18,7 +19,7 @@ use crate::{market_outpoint_from_txid, OrderId, PredictionMarketsClientModule};
 #[derive(Parser, Serialize)]
 enum Opts {
     NewMarket {
-        event_json: EventJson,
+        event_hash_hex: EventHashHex,
         contract_price: Amount,
         payout_control: prediction_market_event_nostr_client::nostr_sdk::nostr::PublicKey,
     },
@@ -82,13 +83,27 @@ pub async fn handle_cli_command(
 
     let value = match opts {
         Opts::NewMarket {
-            event_json,
+            event_hash_hex,
             contract_price,
             payout_control,
         } => {
             let payout_control_weight_map =
                 vec![(payout_control.to_hex(), 1u16)].into_iter().collect();
             let weight_required_for_payout = 1;
+
+            if !prediction_market_event::EventHashHex::is_valid_format(&event_hash_hex) {
+                bail!("event_hash_hex: invalid format")
+            }
+            let nostr_client = get_nostr_client().await?;
+            let Some((_, event)) = nostr_client
+                .get::<prediction_market_event_nostr_client::prediction_market_event::nostr_event_types::NewEvent>(|f| vec![f.hashtag(event_hash_hex)], None)
+                .await?
+                .into_iter()
+                .next()
+            else {
+                bail!("could not find event on nostr")
+            };
+            let event_json = event.try_to_json_string()?;
 
             let res = prediction_markets
                 .new_market(
@@ -117,16 +132,8 @@ pub async fn handle_cli_command(
                 bail!("market does not exist")
             };
             let event_hash_hex = market.0.event()?.hash_hex()?;
-            let relays = RECOMMENDED_RELAY_LIST
-                .iter()
-                .map(|s| prediction_market_event_nostr_client::nostr_sdk::Url::from_str(s).unwrap())
-                .collect();
-            let client =
-                prediction_market_event_nostr_client::Client::new_initialized_client_query_only(
-                    relays,
-                )
-                .await?;
-            let event_payout_attestation_result = client.get::<prediction_market_event_nostr_client::prediction_market_event::nostr_event_types::EventPayoutAttestation>(|f| {
+            let nostr_client = get_nostr_client().await?;
+            let event_payout_attestation_result = nostr_client.get::<prediction_market_event_nostr_client::prediction_market_event::nostr_event_types::EventPayoutAttestation>(|f| {
                 market.0.payout_control_weight_map.iter().map(|(pk, _)| {
                     let author = prediction_market_event_nostr_client::nostr_sdk::PublicKey::parse(pk).unwrap();
                     f.clone().author(author).hashtag(&event_hash_hex.0)
@@ -302,3 +309,15 @@ const RECOMMENDED_RELAY_LIST: &[&str] = &[
     "wss://relay.primal.net",
     "wss://nostrrelay.com",
 ];
+
+async fn get_nostr_client() -> anyhow::Result<prediction_market_event_nostr_client::Client> {
+    let relays = RECOMMENDED_RELAY_LIST
+        .iter()
+        .map(|s| prediction_market_event_nostr_client::nostr_sdk::Url::from_str(s).unwrap())
+        .collect();
+    let client =
+        prediction_market_event_nostr_client::Client::new_initialized_client_query_only(relays)
+            .await?;
+
+    Ok(client)
+}

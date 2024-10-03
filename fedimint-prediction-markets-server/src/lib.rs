@@ -653,8 +653,9 @@ impl ServerModule for PredictionMarkets {
                 // validate payout
                 let event = market_static.event().unwrap();
                 let mut sum_weight: WeightRequiredForPayout = 0;
-                let mut used_keys_set: HashSet<prediction_market_event::nostr_event_types::NostrPublicKeyHex> =
-                    HashSet::new();
+                let mut used_keys_set: HashSet<
+                    prediction_market_event::nostr_event_types::NostrPublicKeyHex,
+                > = HashSet::new();
                 let mut event_payout: Option<prediction_market_event::EventPayout> = None;
                 let mut event_payout_attestations_json_ensured_compact: Vec<String> = Vec::new();
 
