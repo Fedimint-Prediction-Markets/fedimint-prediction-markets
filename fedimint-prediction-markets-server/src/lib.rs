@@ -967,20 +967,18 @@ impl PredictionMarkets {
         );
         _ = future.await;
 
-        let mut dbtx = self.db.begin_transaction_nc().await;
-        let candlesticks = dbtx
-            .find_by_prefix_sorted_descending(&db::MarketOutcomeCandlesticksPrefix3 {
-                market: params.market,
-                outcome: params.outcome,
-                candlestick_interval: params.candlestick_interval,
-            })
-            .await
-            .take_while(|(k, _)| {
-                future::ready(k.candlestick_timestamp >= params.candlestick_timestamp)
-            })
-            .map(|(k, v)| (k.candlestick_timestamp, v))
-            .collect::<Vec<(UnixTimestamp, Candlestick)>>()
-            .await;
+        let api::GetMarketOutcomeCandlesticksResult { candlesticks } =
+            Self::api_get_market_outcome_candlesticks(
+                &self,
+                &mut self.db.begin_transaction().await,
+                api::GetMarketOutcomeCandlesticksParams {
+                    market: params.market,
+                    outcome: params.outcome,
+                    candlestick_interval: params.candlestick_interval,
+                    min_candlestick_timestamp: params.candlestick_timestamp,
+                },
+            )
+            .await?;
 
         Ok(api::WaitMarketOutcomeCandlesticksResult { candlesticks })
     }
@@ -1006,8 +1004,7 @@ impl PredictionMarkets {
         let mut source_order_public_keys_combined: Option<PublicKey> = None;
 
         for (order_owner, contracts_to_source_from_order) in sources {
-            let Some(mut order) = dbtx.get_value(&db::OrderKey(*order_owner)).await
-            else {
+            let Some(mut order) = dbtx.get_value(&db::OrderKey(*order_owner)).await else {
                 return Err(());
             };
 
@@ -1020,8 +1017,7 @@ impl PredictionMarkets {
             }
 
             order.contract_of_outcome_balance -= *contracts_to_source_from_order;
-            dbtx.insert_entry(&db::OrderKey(*order_owner), &order)
-                .await;
+            dbtx.insert_entry(&db::OrderKey(*order_owner), &order).await;
             total_contracts_sourced += *contracts_to_source_from_order;
 
             if let Some(p1) = source_order_public_keys_combined.as_mut() {
