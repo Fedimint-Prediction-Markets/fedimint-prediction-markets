@@ -472,7 +472,7 @@ impl ServerModule for PredictionMarkets {
                 // set input meta
                 amount = Amount::ZERO;
                 fee = Amount::ZERO;
-                pub_key = order_owner.to_owned();
+                pub_key = *order_owner;
 
                 // cancel order
                 Self::cancel_order(dbtx, order_owner, &mut order).await;
@@ -530,16 +530,16 @@ impl ServerModule for PredictionMarkets {
                 // save market static
                 let event_json = ensure_compact_json(event_json)
                     .map_err(|e| PredictionMarketsOutputError::Other(e.to_string()))?;
-                let consensus_timestamp = self.get_consensus_timestamp(dbtx).await;
+                let created_consensus_timestamp = self.get_consensus_timestamp(dbtx).await;
 
                 dbtx.insert_new_entry(
                     &db::MarketStaticKey(out_point),
                     &MarketStatic {
                         event_json,
-                        contract_price: contract_price.to_owned(),
+                        contract_price: *contract_price,
                         payout_control_weight_map: payout_control_weight_map.to_owned(),
-                        weight_required_for_payout: weight_required_for_payout.to_owned(),
-                        created_consensus_timestamp: consensus_timestamp,
+                        weight_required_for_payout: *weight_required_for_payout,
+                        created_consensus_timestamp,
                     },
                 )
                 .await;
@@ -559,7 +559,7 @@ impl ServerModule for PredictionMarkets {
                     &db::MarketSpecificationsNeededForNewOrdersKey(out_point),
                     &MarketSpecificationsNeededForNewOrders {
                         outcome_count: event.outcome_count,
-                        contract_price: contract_price.to_owned(),
+                        contract_price: *contract_price,
                         next_time_ordering: 0,
                     },
                 )
@@ -666,7 +666,7 @@ impl ServerModule for PredictionMarkets {
                         return Err(PredictionMarketsOutputError::PayoutValidationFailed)
                     };
 
-                    if !used_keys_set.insert(loop_nostr_public_key_hex.to_owned()) {
+                    if !used_keys_set.insert(loop_nostr_public_key_hex.clone()) {
                         return Err(PredictionMarketsOutputError::PayoutValidationFailed);
                     }
 
@@ -1006,7 +1006,7 @@ impl PredictionMarkets {
         let mut source_order_public_keys_combined: Option<PublicKey> = None;
 
         for (order_owner, contracts_to_source_from_order) in sources {
-            let Some(mut order) = dbtx.get_value(&db::OrderKey(order_owner.to_owned())).await
+            let Some(mut order) = dbtx.get_value(&db::OrderKey(*order_owner)).await
             else {
                 return Err(());
             };
@@ -1019,10 +1019,10 @@ impl PredictionMarkets {
                 return Err(());
             }
 
-            order.contract_of_outcome_balance -= contracts_to_source_from_order.to_owned();
-            dbtx.insert_entry(&db::OrderKey(order_owner.to_owned()), &order)
+            order.contract_of_outcome_balance -= *contracts_to_source_from_order;
+            dbtx.insert_entry(&db::OrderKey(*order_owner), &order)
                 .await;
-            total_contracts_sourced += contracts_to_source_from_order.to_owned();
+            total_contracts_sourced += *contracts_to_source_from_order;
 
             if let Some(p1) = source_order_public_keys_combined.as_mut() {
                 let Ok(p2) = p1.combine(order_owner) else {
@@ -1031,7 +1031,7 @@ impl PredictionMarkets {
 
                 *p1 = p2;
             } else {
-                source_order_public_keys_combined = Some(order_owner.to_owned());
+                source_order_public_keys_combined = Some(*order_owner);
             }
         }
 

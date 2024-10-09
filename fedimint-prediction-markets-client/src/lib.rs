@@ -967,7 +967,7 @@ impl ClientModule for PredictionMarketsClientModule {
                 order: _,
                 amount: amount_to_free,
             } => {
-                amount = amount_to_free.to_owned();
+                amount = *amount_to_free;
                 fee = self.cfg.gc.consume_order_bitcoin_balance_fee;
             }
             PredictionMarketsInput::NewSellOrder {
@@ -1009,7 +1009,7 @@ impl ClientModule for PredictionMarketsClientModule {
                 price,
                 quantity,
             } => {
-                amount = price.to_owned() * quantity.0;
+                amount = *price * quantity.0;
                 fee = self.cfg.gc.new_order_fee;
             }
             PredictionMarketsOutput::PayoutMarket {
