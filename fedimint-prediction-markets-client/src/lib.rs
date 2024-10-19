@@ -4,6 +4,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail};
+use async_stream::stream;
 use db::OrderIdSlot;
 use fedimint_client::derivable_secret::{ChildId, DerivableSecret};
 use fedimint_client::module::init::{ClientModuleInit, ClientModuleInitArgs};
@@ -20,6 +21,7 @@ use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::module::{
     ApiVersion, CommonModuleInit, ModuleCommon, ModuleInit, MultiApiVersion, TransactionItemAmount,
 };
+use fedimint_core::util::BoxStream;
 use fedimint_core::{apply, async_trait_maybe_send, Amount, OutPoint, TransactionId};
 use fedimint_prediction_markets_common::api::{
     GetEventPayoutAttestationsUsedToPermitPayoutParams, GetMarketDynamicParams,
@@ -28,10 +30,9 @@ use fedimint_prediction_markets_common::api::{
 };
 use fedimint_prediction_markets_common::config::{GeneralConsensus, PredictionMarketsClientConfig};
 use fedimint_prediction_markets_common::{
-    Candlestick, ContractOfOutcomeAmount, EventJson, Market, NostrPublicKeyHex,
-    Order, Outcome, PredictionMarketsCommonInit, PredictionMarketsInput,
-    PredictionMarketsModuleTypes, PredictionMarketsOutput, Seconds, Side, UnixTimestamp, Weight,
-    WeightRequiredForPayout,
+    Candlestick, ContractOfOutcomeAmount, EventJson, Market, NostrPublicKeyHex, Order, Outcome,
+    PredictionMarketsCommonInit, PredictionMarketsInput, PredictionMarketsModuleTypes,
+    PredictionMarketsOutput, Seconds, Side, UnixTimestamp, Weight, WeightRequiredForPayout,
 };
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
@@ -793,6 +794,41 @@ impl PredictionMarketsClientModule {
         let candlesticks = candlesticks.into_iter().collect::<BTreeMap<_, _>>();
 
         Ok(candlesticks)
+    }
+
+    pub async fn stream_candlesticks<'a>(
+        &'a self,
+        market: OutPoint,
+        outcome: Outcome,
+        candlestick_interval: Seconds,
+        min_candlestick_timestamp: UnixTimestamp,
+    ) -> BoxStream<'a, anyhow::Result<Vec<(UnixTimestamp, Candlestick)>>> {
+        let mut candlestick_timestamp = min_candlestick_timestamp;
+        let mut candlestick_volume = ContractOfOutcomeAmount::ZERO;
+
+        Box::pin(stream! {
+            loop {
+                let res = self
+                    .wait_candlesticks(
+                        market,
+                        outcome,
+                        candlestick_interval,
+                        candlestick_timestamp,
+                        candlestick_volume,
+                    )
+                    .await
+                    .map(|c| c.into_iter().collect::<Vec<_>>());
+
+                if let Ok(v) = &res {
+                    if let Some(newest_candle) = v.last() {
+                        candlestick_timestamp = newest_candle.0;
+                        candlestick_volume = newest_candle.1.volume;
+                    }
+                }
+
+                yield res;
+            }
+        })
     }
 
     /// Interacts with client saved markets.

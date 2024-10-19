@@ -26,6 +26,8 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 prediction-market-event = { workspace = true }
+async-stream = "0.3.6"
+
 
 # Cli deps
 clap = { version = "4.5.18", optional = true }
