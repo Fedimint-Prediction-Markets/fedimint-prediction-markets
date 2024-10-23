@@ -85,6 +85,7 @@ pub enum PredictionMarketsOutput {
 pub enum PredictionMarketsOutputOutcome {
     NewMarket,
     NewBuyOrder,
+    PayoutMarket
 }
 
 /// Errors that might be returned by the server

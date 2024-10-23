@@ -705,6 +705,13 @@ impl ServerModule for PredictionMarkets {
                 amount = Amount::ZERO;
                 fee = Amount::ZERO;
 
+                // save outcome
+                dbtx.insert_new_entry(
+                    &db::OutcomeKey(out_point),
+                    &PredictionMarketsOutputOutcome::PayoutMarket,
+                )
+                .await;
+
                 let mut assert_test_total_orders_payout = Amount::ZERO;
                 let event_payout = event_payout.unwrap();
                 let payout_scaling_factor =
