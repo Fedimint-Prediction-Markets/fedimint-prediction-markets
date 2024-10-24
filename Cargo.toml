@@ -34,7 +34,10 @@ erased-serde = "0.4"
 thiserror = "1.0.39"
 strum = "0.24"
 strum_macros = "0.24"
+async-stream = "0.3.6"
+
 prediction-market-event = "0.14.0"
+prediction-market-event-nostr-client = "0.2.0"
 
 # Fedimint dependencies
 fedimintd = { git = "https://github.com/fedimint/fedimint", tag = "v0.3.0" }
@@ -47,6 +50,8 @@ fedimint-testing = { git = "https://github.com/fedimint/fedimint", tag = "v0.3.0
 devimint = { git = "https://github.com/fedimint/fedimint", tag = "v0.3.0" }
 aead = { git = "https://github.com/fedimint/fedimint", tag = "v0.3.0" }
 tbs = { git = "https://github.com/fedimint/fedimint", tag = "v0.3.0" }
+fedimint-dummy-client = { git = "https://github.com/fedimint/fedimint", tag = "v0.3.0" }
+fedimint-dummy-server = { git = "https://github.com/fedimint/fedimint", tag = "v0.3.0" }
 
 # Comment above lines and uncomment these to work with local fedimint dependencies
 # fedimintd = { path = "../fedimint/fedimintd" }

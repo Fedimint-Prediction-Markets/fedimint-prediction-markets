@@ -6,7 +6,7 @@ use anyhow::bail;
 use clap::Parser;
 use fedimint_core::{Amount, TransactionId};
 use fedimint_prediction_markets_common::{
-    ContractOfOutcomeAmount, EventHashHex, EventJson, Seconds, Side, UnixTimestamp,
+    ContractOfOutcomeAmount, PredictionMarketEventHashHex, PredictionMarketEventJson, Seconds, Side, UnixTimestamp,
     WeightRequiredForPayout,
 };
 use prediction_market_event::Outcome;
@@ -19,7 +19,7 @@ use crate::{market_outpoint_from_txid, OrderId, PredictionMarketsClientModule};
 #[derive(Parser, Serialize)]
 enum Opts {
     NewMarket {
-        event_hash_hex: EventHashHex,
+        event_hash_hex: PredictionMarketEventHashHex,
         contract_price: Amount,
         payout_control: prediction_market_event_nostr_client::nostr_sdk::nostr::PublicKey,
     },
@@ -144,7 +144,7 @@ pub async fn handle_cli_command(
             > = HashSet::new();
             let mut event_payout_stats: HashMap<
                 prediction_market_event_nostr_client::prediction_market_event::EventPayout,
-                (Vec<EventJson>, WeightRequiredForPayout),
+                (Vec<PredictionMarketEventJson>, WeightRequiredForPayout),
             > = HashMap::new();
 
             for (nostr_event, (payout_control, event_payout)) in event_payout_attestation_result {

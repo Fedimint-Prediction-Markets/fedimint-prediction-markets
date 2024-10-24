@@ -26,13 +26,13 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 prediction-market-event = { workspace = true }
-async-stream = "0.3.6"
+async-stream = { workspace = true }
 
 
 # Cli deps
 clap = { version = "4.5.18", optional = true }
 serde_json = { workspace = true, optional = true }
-prediction-market-event-nostr-client = { git = "https://github.com/Prediction-Market-Event/prediction-market-event-nostr-client", optional = true }
+prediction-market-event-nostr-client = { workspace = true, optional = true }
 
 
 # Fedimint dependencies

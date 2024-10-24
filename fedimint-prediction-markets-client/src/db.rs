@@ -58,7 +58,7 @@ impl_db_record!(
 impl_db_lookup!(key = MarketKey, query_prefix = MarketPrefixAll);
 
 // Order
-#[derive(Debug, Encodable, Decodable)]
+#[derive(Debug, Encodable, Decodable, PartialEq, Eq, Clone)]
 pub enum OrderIdSlot {
     Reserved,
     Order(Order),
@@ -74,6 +74,7 @@ impl_db_record!(
     key = OrderKey,
     value = OrderIdSlot,
     db_prefix = DbKeyPrefix::Order,
+    notify_on_modify = true
 );
 
 impl_db_lookup!(key = OrderKey, query_prefix = OrderPrefixAll);

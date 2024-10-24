@@ -62,7 +62,7 @@ pub enum PredictionMarketsInput {
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Deserialize, Serialize, Encodable, Decodable)]
 pub enum PredictionMarketsOutput {
     NewMarket {
-        event_json: EventJson,
+        event_json: PredictionMarketEventJson,
         contract_price: Amount,
         payout_control_weight_map: BTreeMap<NostrPublicKeyHex, Weight>,
         weight_required_for_payout: WeightRequiredForPayout,
@@ -282,7 +282,7 @@ impl Market {
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct MarketStatic {
     // set by market creator
-    pub event_json: EventJson,
+    pub event_json: PredictionMarketEventJson,
     pub contract_price: Amount,
     pub payout_control_weight_map: BTreeMap<NostrPublicKeyHex, Weight>,
     pub weight_required_for_payout: WeightRequiredForPayout,
@@ -713,8 +713,11 @@ impl FromStr for UnixTimestamp {
     }
 }
 
-pub type EventJson = String;
-pub type EventHashHex = String;
+/// See crate `prediction-market-event`
+pub type PredictionMarketEventJson = String;
+/// See crate `prediction-market-event`
+pub type PredictionMarketEventHashHex = String;
+
 pub type NostrPublicKeyHex = String;
 pub type NostrEventJson = String;
 

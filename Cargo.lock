@@ -1643,6 +1643,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "fedimint-dummy-server"
+version = "0.3.0"
+source = "git+https://github.com/fedimint/fedimint?tag=v0.3.0#a41e3a7e31ce0f26058206a04f1cd49ef2b12fe3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bitcoin_hashes 0.11.0",
+ "erased-serde",
+ "fedimint-core",
+ "fedimint-dummy-common",
+ "futures",
+ "rand",
+ "secp256k1 0.24.3",
+ "serde",
+ "strum 0.26.3",
+ "strum_macros 0.26.4",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "fedimint-hkdf"
 version = "0.3.0"
 source = "git+https://github.com/fedimint/fedimint?tag=v0.3.0#a41e3a7e31ce0f26058206a04f1cd49ef2b12fe3"
@@ -2071,12 +2093,16 @@ dependencies = [
  "anyhow",
  "fedimint-client",
  "fedimint-core",
+ "fedimint-dummy-client",
+ "fedimint-dummy-server",
  "fedimint-logging",
  "fedimint-prediction-markets-client",
  "fedimint-prediction-markets-common",
  "fedimint-prediction-markets-server",
  "fedimint-server",
  "fedimint-testing",
+ "prediction-market-event",
+ "prediction-market-event-nostr-client",
  "rand",
  "secp256k1 0.24.3",
  "tokio",
@@ -4153,8 +4179,9 @@ dependencies = [
 
 [[package]]
 name = "prediction-market-event-nostr-client"
-version = "0.1.0"
-source = "git+https://github.com/Prediction-Market-Event/prediction-market-event-nostr-client#80f03837ebcbdb272741cc3f08f1cd5b6f58da2f"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca282b31999a9c1f3f649f1f3e869813899fc7be2bd4673be8be56a198b2f9b0"
 dependencies = [
  "anyhow",
  "nostr-sdk",

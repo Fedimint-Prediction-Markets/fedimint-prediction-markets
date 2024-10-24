@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
-use std::ffi;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail};
 use async_stream::stream;
@@ -21,6 +21,7 @@ use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::module::{
     ApiVersion, CommonModuleInit, ModuleCommon, ModuleInit, MultiApiVersion, TransactionItemAmount,
 };
+use fedimint_core::task::sleep_until;
 use fedimint_core::util::BoxStream;
 use fedimint_core::{apply, async_trait_maybe_send, Amount, OutPoint, TransactionId};
 use fedimint_prediction_markets_common::api::{
@@ -30,9 +31,10 @@ use fedimint_prediction_markets_common::api::{
 };
 use fedimint_prediction_markets_common::config::{GeneralConsensus, PredictionMarketsClientConfig};
 use fedimint_prediction_markets_common::{
-    Candlestick, ContractOfOutcomeAmount, EventJson, Market, NostrPublicKeyHex, Order, Outcome,
-    PredictionMarketsCommonInit, PredictionMarketsInput, PredictionMarketsModuleTypes,
-    PredictionMarketsOutput, Seconds, Side, UnixTimestamp, Weight, WeightRequiredForPayout,
+    Candlestick, ContractOfOutcomeAmount, Market, NostrPublicKeyHex, Order, Outcome,
+    PredictionMarketEventJson, PredictionMarketsCommonInit, PredictionMarketsInput,
+    PredictionMarketsModuleTypes, PredictionMarketsOutput, Seconds, Side, UnixTimestamp, Weight,
+    WeightRequiredForPayout,
 };
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
@@ -112,7 +114,7 @@ impl PredictionMarketsClientModule {
 
     pub async fn new_market(
         &self,
-        event_json: EventJson,
+        event_json: PredictionMarketEventJson,
         contract_price: Amount,
         payout_control_weight_map: BTreeMap<NostrPublicKeyHex, Weight>,
         weight_required_for_payout: WeightRequiredForPayout,
@@ -214,7 +216,7 @@ impl PredictionMarketsClientModule {
     pub async fn payout_market(
         &self,
         market: OutPoint,
-        event_payout_attestations_json: Vec<EventJson>,
+        event_payout_attestations_json: Vec<PredictionMarketEventJson>,
     ) -> anyhow::Result<()> {
         let operation_id = OperationId::new_random();
 
@@ -255,7 +257,7 @@ impl PredictionMarketsClientModule {
     pub async fn get_event_payout_attestations_used_to_permit_payout(
         &self,
         market: OutPoint,
-    ) -> anyhow::Result<Option<Vec<EventJson>>> {
+    ) -> anyhow::Result<Option<Vec<PredictionMarketEventJson>>> {
         let result = self
             .module_api
             .get_event_payout_attestations_used_to_permit_payout(
@@ -454,6 +456,29 @@ impl PredictionMarketsClientModule {
                 Ok(result.order)
             }
         }
+    }
+
+    pub async fn stream_order_from_db<'a>(&'a self, id: OrderId) -> BoxStream<'a, Option<Order>> {
+        Box::pin(stream! {
+            let mut prev_yield_value = None;
+            loop {
+                let (value, _) = self
+                    .db
+                    .wait_key_check(&db::OrderKey(id), |db_value| Some(db_value))
+                    .await;
+    
+                let yield_value = match value {
+                    Some(db::OrderIdSlot::Order(order)) => Some(order),
+                    Some(db::OrderIdSlot::Reserved) => None,
+                    None => None,
+                };
+    
+                if yield_value != prev_yield_value {
+                    prev_yield_value = yield_value.clone();
+                    yield yield_value;
+                }
+            }
+        })
     }
 
     pub async fn cancel_order(&self, id: OrderId) -> anyhow::Result<()> {
@@ -802,22 +827,25 @@ impl PredictionMarketsClientModule {
         outcome: Outcome,
         candlestick_interval: Seconds,
         min_candlestick_timestamp: UnixTimestamp,
+        min_time_between_requests: Duration,
     ) -> BoxStream<'a, anyhow::Result<Vec<(UnixTimestamp, Candlestick)>>> {
         let mut candlestick_timestamp = min_candlestick_timestamp;
         let mut candlestick_volume = ContractOfOutcomeAmount::ZERO;
 
         Box::pin(stream! {
             loop {
+                let now = Instant::now();
+
                 let res = self
-                    .wait_candlesticks(
-                        market,
-                        outcome,
-                        candlestick_interval,
-                        candlestick_timestamp,
-                        candlestick_volume,
-                    )
-                    .await
-                    .map(|c| c.into_iter().collect::<Vec<_>>());
+                .wait_candlesticks(
+                    market,
+                    outcome,
+                    candlestick_interval,
+                    candlestick_timestamp,
+                    candlestick_volume,
+                )
+                .await
+                .map(|c| c.into_iter().collect::<Vec<_>>());
 
                 if let Ok(v) = &res {
                     if let Some(newest_candle) = v.last() {
@@ -827,6 +855,8 @@ impl PredictionMarketsClientModule {
                 }
 
                 yield res;
+
+                sleep_until(now + min_time_between_requests).await;
             }
         })
     }
@@ -1063,7 +1093,7 @@ impl ClientModule for PredictionMarketsClientModule {
     #[cfg(feature = "cli")]
     async fn handle_cli_command(
         &self,
-        args: &[ffi::OsString],
+        args: &[std::ffi::OsString],
     ) -> anyhow::Result<serde_json::Value> {
         cli::handle_cli_command(self, args).await
     }

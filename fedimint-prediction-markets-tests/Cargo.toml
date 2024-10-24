@@ -17,6 +17,8 @@ rand = { workspace = true }
 secp256k1 = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+prediction-market-event = { workspace = true }
+prediction-market-event-nostr-client = { workspace = true }
 
 # Fedimint dependencies
 fedimint-client = { workspace = true }
@@ -27,4 +29,5 @@ fedimint-core = { workspace = true }
 fedimint-prediction-markets-client = { path = "../fedimint-prediction-markets-client" }
 fedimint-prediction-markets-common = { path = "../fedimint-prediction-markets-common" }
 fedimint-prediction-markets-server = { path = "../fedimint-prediction-markets-server" }
-
+fedimint-dummy-client = { workspace = true }
+fedimint-dummy-server = { workspace = true }
