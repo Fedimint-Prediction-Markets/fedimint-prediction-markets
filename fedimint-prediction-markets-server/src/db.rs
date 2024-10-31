@@ -132,6 +132,7 @@ impl_db_record!(
     key = OrderKey,
     value = Order,
     db_prefix = DbKeyPrefix::Order,
+    notify_on_modify = true
 );
 
 impl_db_lookup!(key = OrderKey, query_prefix = OrderPrefixAll,);

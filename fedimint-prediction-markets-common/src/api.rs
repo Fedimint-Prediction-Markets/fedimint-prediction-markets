@@ -66,6 +66,20 @@ pub struct GetOrderResult {
 }
 
 //
+// Wait Order Match
+//
+pub const WAIT_ORDER_MATCH_ENDPOINT: &str = "wait_order_match";
+#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+pub struct WaitOrderMatchParams {
+    pub order: PublicKey,
+    pub current_quantity_waiting_for_match: ContractOfOutcomeAmount,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+pub struct WaitOrderMatchResult {
+    pub order: Order,
+}
+
+//
 // Get Market Outcome Candlesticks
 //
 

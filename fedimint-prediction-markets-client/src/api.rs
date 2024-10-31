@@ -7,10 +7,10 @@ use fedimint_prediction_markets_common::api::{
     GetEventPayoutAttestationsUsedToPermitPayoutResult, GetMarketDynamicParams,
     GetMarketDynamicResult, GetMarketOutcomeCandlesticksParams, GetMarketOutcomeCandlesticksResult,
     GetMarketParams, GetMarketResult, GetOrderParams, GetOrderResult,
-    WaitMarketOutcomeCandlesticksParams, WaitMarketOutcomeCandlesticksResult,
-    GET_EVENT_PAYOUT_ATTESTATIONS_USED_TO_PERMIT_PAYOUT_ENDPOINT, GET_MARKET_DYNAMIC_ENDPOINT,
-    GET_MARKET_ENDPOINT, GET_MARKET_OUTCOME_CANDLESTICKS_ENDPOINT, GET_ORDER_ENDPOINT,
-    WAIT_MARKET_OUTCOME_CANDLESTICKS_ENDPOINT,
+    WaitMarketOutcomeCandlesticksParams, WaitMarketOutcomeCandlesticksResult, WaitOrderMatchParams,
+    WaitOrderMatchResult, GET_EVENT_PAYOUT_ATTESTATIONS_USED_TO_PERMIT_PAYOUT_ENDPOINT,
+    GET_MARKET_DYNAMIC_ENDPOINT, GET_MARKET_ENDPOINT, GET_MARKET_OUTCOME_CANDLESTICKS_ENDPOINT,
+    GET_ORDER_ENDPOINT, WAIT_MARKET_OUTCOME_CANDLESTICKS_ENDPOINT, WAIT_ORDER_MATCH_ENDPOINT,
 };
 
 #[apply(async_trait_maybe_send!)]
@@ -25,6 +25,10 @@ pub trait PredictionMarketsFederationApi {
         params: GetEventPayoutAttestationsUsedToPermitPayoutParams,
     ) -> FederationResult<GetEventPayoutAttestationsUsedToPermitPayoutResult>;
     async fn get_order(&self, params: GetOrderParams) -> FederationResult<GetOrderResult>;
+    async fn wait_order_match(
+        &self,
+        params: WaitOrderMatchParams,
+    ) -> FederationResult<WaitOrderMatchResult>;
     async fn get_market_outcome_candlesticks(
         &self,
         params: GetMarketOutcomeCandlesticksParams,
@@ -70,6 +74,17 @@ where
     async fn get_order(&self, params: GetOrderParams) -> FederationResult<GetOrderResult> {
         self.request_current_consensus(GET_ORDER_ENDPOINT.into(), ApiRequestErased::new(params))
             .await
+    }
+
+    async fn wait_order_match(
+        &self,
+        params: WaitOrderMatchParams,
+    ) -> FederationResult<WaitOrderMatchResult> {
+        self.request_current_consensus(
+            WAIT_ORDER_MATCH_ENDPOINT.into(),
+            ApiRequestErased::new(params),
+        )
+        .await
     }
 
     async fn get_market_outcome_candlesticks(

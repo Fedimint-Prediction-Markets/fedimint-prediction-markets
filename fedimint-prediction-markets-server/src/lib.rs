@@ -743,7 +743,6 @@ impl ServerModule for PredictionMarkets {
                     let payout =
                         *payout_per_contract_of_outcome * order.contract_of_outcome_balance.0;
 
-                    order.contract_of_outcome_balance = ContractOfOutcomeAmount::ZERO;
                     order.bitcoin_balance += payout;
                     order.bitcoin_acquired_from_payout = payout;
 
@@ -861,6 +860,13 @@ impl ServerModule for PredictionMarkets {
                 }
             },
             api_endpoint! {
+                api::WAIT_ORDER_MATCH_ENDPOINT,
+                ApiVersion::new(0, 0),
+                async |module: &PredictionMarkets, context, params: api::WaitOrderMatchParams| -> api::WaitOrderMatchResult {
+                    module.api_wait_order_match(context, params).await
+                }
+            },
+            api_endpoint! {
                 api::GET_MARKET_OUTCOME_CANDLESTICKS_ENDPOINT,
                 ApiVersion::new(0, 0),
                 async |module: &PredictionMarkets, context, params: api::GetMarketOutcomeCandlesticksParams| -> api::GetMarketOutcomeCandlesticksResult {
@@ -934,6 +940,20 @@ impl PredictionMarkets {
         })
     }
 
+    async fn api_wait_order_match(
+        &self,
+        context: &mut ApiEndpointContext<'_>,
+        params: api::WaitOrderMatchParams,
+    ) -> Result<api::WaitOrderMatchResult, ApiError> {
+        Ok(api::WaitOrderMatchResult {
+            order: context
+                .wait_value_matches(db::OrderKey(params.order), |order| {
+                    order.quantity_waiting_for_match != params.current_quantity_waiting_for_match
+                })
+                .await,
+        })
+    }
+
     async fn api_get_market_outcome_candlesticks(
         &self,
         dbtx: &mut DatabaseTransaction<'_, Committable>,
@@ -961,18 +981,19 @@ impl PredictionMarkets {
         context: &mut ApiEndpointContext<'_>,
         params: api::WaitMarketOutcomeCandlesticksParams,
     ) -> Result<api::WaitMarketOutcomeCandlesticksResult, ApiError> {
-        let future = context.wait_value_matches(
-            db::MarketOutcomeNewestCandlestickVolumeKey {
-                market: params.market,
-                outcome: params.outcome,
-                candlestick_interval: params.candlestick_interval,
-            },
-            |(current_timestamp, current_volume)| {
-                current_volume != &params.candlestick_volume
-                    || current_timestamp != &params.candlestick_timestamp
-            },
-        );
-        _ = future.await;
+        context
+            .wait_value_matches(
+                db::MarketOutcomeNewestCandlestickVolumeKey {
+                    market: params.market,
+                    outcome: params.outcome,
+                    candlestick_interval: params.candlestick_interval,
+                },
+                |(current_timestamp, current_volume)| {
+                    current_volume != &params.candlestick_volume
+                        || current_timestamp != &params.candlestick_timestamp
+                },
+            )
+            .await;
 
         let api::GetMarketOutcomeCandlesticksResult { candlesticks } =
             Self::api_get_market_outcome_candlesticks(

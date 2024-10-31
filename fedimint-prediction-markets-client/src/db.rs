@@ -1,7 +1,7 @@
 use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::{impl_db_lookup, impl_db_record, OutPoint};
 use fedimint_prediction_markets_common::{
-    Market, NostrPublicKeyHex, Order, Outcome, UnixTimestamp,
+    Market, NostrPublicKeyHex, Order, Outcome, Side, TimeOrdering, UnixTimestamp,
 };
 
 use crate::OrderId;
@@ -21,19 +21,17 @@ pub enum DbKeyPrefix {
 
     /// Orders by market outcome
     ///
-    /// (Market's [OutPoint], [Outcome], [OrderId]) to ()
-    OrdersByMarketOutcome = 0x21,
+    /// (Market's [OutPoint], [Outcome], [OrderId], [Side]) to ()
+    OrdersByMarketOutcomeSide = 0x21,
 
     /// Orders with some kind of balance.
     ///
-    /// (Market's [OutPoint], [Outcome], [OrderId]) to ()
-    NonZeroOrdersByMarketOutcome = 0x22,
+    /// (Market's [OutPoint], [Outcome], [OrderId], [Side]) to ()
+    NonZeroOrdersByMarketOutcomeSide = 0x22,
 
-    /// Order ids are added to this set when the order in local db is known
-    /// to be out of sync with the order on server
-    ///
-    /// ([OrderId]) to ()
-    OrderNeedsUpdate = 0x40,
+    /// (Market's [OutPoint], [Outcome], [Side], Price priority [u64],
+    /// [TimeOrdering]) to ([OrderId])
+    OrderPriceTimePriority = 0x23,
 
     /// (Market's [OutPoint]) to (Saved to db [UnixTimestamp])
     ClientSavedMarkets = 0x41,
@@ -64,6 +62,15 @@ pub enum OrderIdSlot {
     Order(Order),
 }
 
+impl OrderIdSlot {
+    pub fn to_order(self) -> Option<Order> {
+        match self {
+            Self::Reserved => None,
+            Self::Order(order) => Some(order),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash)]
 pub struct OrderKey(pub OrderId);
 
@@ -84,6 +91,7 @@ impl_db_lookup!(key = OrderKey, query_prefix = OrderPrefixAll);
 pub struct OrdersByMarketOutcomeKey {
     pub market: OutPoint,
     pub outcome: Outcome,
+    pub side: Side,
     pub order: OrderId,
 }
 
@@ -101,17 +109,25 @@ pub struct OrdersByMarketOutcomePrefix2 {
     pub outcome: Outcome,
 }
 
+#[derive(Debug, Encodable, Decodable)]
+pub struct OrdersByMarketOutcomePrefix3 {
+    pub market: OutPoint,
+    pub outcome: Outcome,
+    pub side: Side,
+}
+
 impl_db_record!(
     key = OrdersByMarketOutcomeKey,
     value = (),
-    db_prefix = DbKeyPrefix::OrdersByMarketOutcome,
+    db_prefix = DbKeyPrefix::OrdersByMarketOutcomeSide,
 );
 
 impl_db_lookup!(
     key = OrdersByMarketOutcomeKey,
     query_prefix = OrdersByMarketOutcomePrefixAll,
     query_prefix = OrdersByMarketOutcomePrefix1,
-    query_prefix = OrdersByMarketOutcomePrefix2
+    query_prefix = OrdersByMarketOutcomePrefix2,
+    query_prefix = OrdersByMarketOutcomePrefix3
 );
 
 // NonZeroOrdersByMarketOutcome
@@ -119,6 +135,7 @@ impl_db_lookup!(
 pub struct NonZeroOrdersByMarketOutcomeKey {
     pub market: OutPoint,
     pub outcome: Outcome,
+    pub side: Side,
     pub order: OrderId,
 }
 
@@ -136,35 +153,25 @@ pub struct NonZeroOrdersByMarketOutcomePrefix2 {
     pub outcome: Outcome,
 }
 
+#[derive(Debug, Encodable, Decodable)]
+pub struct NonZeroOrdersByMarketOutcomePrefix3 {
+    pub market: OutPoint,
+    pub outcome: Outcome,
+    pub side: Side,
+}
+
 impl_db_record!(
     key = NonZeroOrdersByMarketOutcomeKey,
     value = (),
-    db_prefix = DbKeyPrefix::NonZeroOrdersByMarketOutcome,
+    db_prefix = DbKeyPrefix::NonZeroOrdersByMarketOutcomeSide,
 );
 
 impl_db_lookup!(
     key = NonZeroOrdersByMarketOutcomeKey,
     query_prefix = NonZeroOrdersByMarketOutcomePrefixAll,
     query_prefix = NonZeroOrdersByMarketOutcomePrefix1,
-    query_prefix = NonZeroOrdersByMarketOutcomePrefix2
-);
-
-// OrderNeedsUpdate
-#[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash)]
-pub struct OrderNeedsUpdateKey(pub OrderId);
-
-#[derive(Debug, Encodable, Decodable)]
-pub struct OrderNeedsUpdatePrefixAll;
-
-impl_db_record!(
-    key = OrderNeedsUpdateKey,
-    value = (),
-    db_prefix = DbKeyPrefix::OrderNeedsUpdate,
-);
-
-impl_db_lookup!(
-    key = OrderNeedsUpdateKey,
-    query_prefix = OrderNeedsUpdatePrefixAll
+    query_prefix = NonZeroOrdersByMarketOutcomePrefix2,
+    query_prefix = NonZeroOrdersByMarketOutcomePrefix3
 );
 
 // ClientSavedMarkets
@@ -205,6 +212,55 @@ impl_db_record!(
 impl_db_lookup!(
     key = ClientNamedPayoutControlsKey,
     query_prefix = ClientNamedPayoutControlsPrefixAll
+);
+
+/// OrderPriceTimePriority
+#[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash)]
+pub struct OrderPriceTimePriorityKey {
+    pub market: OutPoint,
+    pub outcome: Outcome,
+    pub side: Side,
+    pub price_priority: u64,
+    pub time_priority: TimeOrdering,
+}
+
+impl OrderPriceTimePriorityKey {
+    pub fn from_order(order: &Order) -> Self {
+        let price_priority = match order.side {
+            Side::Buy => u64::MAX - order.price.msats,
+            Side::Sell => order.price.msats,
+        };
+
+        OrderPriceTimePriorityKey {
+            market: order.market,
+            outcome: order.outcome,
+            side: order.side,
+            price_priority,
+            time_priority: order.time_ordering,
+        }
+    }
+}
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct OrderPriceTimePriorityPrefix3 {
+    pub market: OutPoint,
+    pub outcome: Outcome,
+    pub side: Side,
+}
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct OrderPriceTimePriorityPrefixAll;
+
+impl_db_record!(
+    key = OrderPriceTimePriorityKey,
+    value = OrderId,
+    db_prefix = DbKeyPrefix::OrderPriceTimePriority,
+);
+
+impl_db_lookup!(
+    key = OrderPriceTimePriorityKey,
+    query_prefix = OrderPriceTimePriorityPrefix3,
+    query_prefix = OrderPriceTimePriorityPrefixAll
 );
 
 // template

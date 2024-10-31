@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::str::FromStr;
 use std::{ffi, iter};
 
@@ -6,15 +6,15 @@ use anyhow::bail;
 use clap::Parser;
 use fedimint_core::{Amount, TransactionId};
 use fedimint_prediction_markets_common::{
-    ContractOfOutcomeAmount, PredictionMarketEventHashHex, PredictionMarketEventJson, Seconds, Side, UnixTimestamp,
-    WeightRequiredForPayout,
+    ContractOfOutcomeAmount, PredictionMarketEventHashHex, PredictionMarketEventJson, Seconds,
+    Side, UnixTimestamp, WeightRequiredForPayout,
 };
 use prediction_market_event::Outcome;
 use prediction_market_event_nostr_client::nostr_sdk::JsonUtil;
 use serde::Serialize;
 use serde_json::json;
 
-use crate::{market_outpoint_from_txid, OrderId, PredictionMarketsClientModule};
+use crate::{market_outpoint_from_tx_id, OrderId, PredictionMarketsClientModule};
 
 #[derive(Parser, Serialize)]
 enum Opts {
@@ -50,11 +50,9 @@ enum Opts {
         id: OrderId,
     },
     WithdrawAvailableBitcoin,
-    SyncOrders {
+    SyncPossiblePayouts {
         #[clap(short, long)]
         market_txid: Option<TransactionId>,
-        #[clap(short, long)]
-        outcome: Option<Outcome>,
     },
     ListOrders {
         #[clap(short, long)]
@@ -112,7 +110,8 @@ pub async fn handle_cli_command(
                     payout_control_weight_map,
                     weight_required_for_payout,
                 )
-                .await?;
+                .await?
+                .txid;
             json!(res)
         }
         Opts::GetMarket {
@@ -120,13 +119,13 @@ pub async fn handle_cli_command(
             from_local_cache,
         } => {
             let res = prediction_markets
-                .get_market(market_outpoint_from_txid(market_txid), from_local_cache)
+                .get_market(market_outpoint_from_tx_id(market_txid), from_local_cache)
                 .await?;
             json!(res)
         }
         Opts::PayoutMarket { market_txid } => {
             let Some(market) = prediction_markets
-                .get_market(market_outpoint_from_txid(market_txid), false)
+                .get_market(market_outpoint_from_tx_id(market_txid), false)
                 .await?
             else {
                 bail!("market does not exist")
@@ -177,7 +176,7 @@ pub async fn handle_cli_command(
                 Some((event_payout, event_payout_attestations_json)) => {
                     prediction_markets
                         .payout_market(
-                            market_outpoint_from_txid(market_txid),
+                            market_outpoint_from_tx_id(market_txid),
                             event_payout_attestations_json,
                         )
                         .await?;
@@ -196,7 +195,7 @@ pub async fn handle_cli_command(
         }
         Opts::GetEventPayoutAttestationsUsedToPermitPayout { market_txid } => {
             let res = prediction_markets
-                .get_event_payout_attestations_used_to_permit_payout(market_outpoint_from_txid(
+                .get_event_payout_attestations_used_to_permit_payout(market_outpoint_from_tx_id(
                     market_txid,
                 ))
                 .await?;
@@ -213,7 +212,7 @@ pub async fn handle_cli_command(
         } => {
             let res = prediction_markets
                 .new_order(
-                    market_outpoint_from_txid(market_txid),
+                    market_outpoint_from_tx_id(market_txid),
                     outcome,
                     side,
                     price,
@@ -243,16 +242,9 @@ pub async fn handle_cli_command(
 
             json!(res)
         }
-        Opts::SyncOrders {
-            market_txid,
-            outcome,
-        } => {
+        Opts::SyncPossiblePayouts { market_txid } => {
             let res = prediction_markets
-                .sync_orders(
-                    true,
-                    market_txid.map(|txid| market_outpoint_from_txid(txid)),
-                    outcome,
-                )
+                .sync_possible_payouts(market_txid.map(|v| market_outpoint_from_tx_id(v)))
                 .await?;
 
             json!(res)
@@ -261,12 +253,22 @@ pub async fn handle_cli_command(
             market_txid,
             outcome,
         } => {
-            let res = prediction_markets
-                .get_orders_from_db(
-                    market_txid.map(|txid| market_outpoint_from_txid(txid)),
-                    outcome,
-                )
-                .await;
+            let filter = match market_txid {
+                None => crate::OrderFilter::All,
+                Some(market_txid) => match outcome {
+                    None => crate::OrderFilter::Market(market_outpoint_from_tx_id(market_txid)),
+                    Some(outcome) => crate::OrderFilter::MarketOutcome(
+                        market_outpoint_from_tx_id(market_txid),
+                        outcome,
+                    ),
+                },
+            };
+            let order_ids = prediction_markets.get_order_ids(filter).await;
+            let mut res = BTreeMap::new();
+            for id in order_ids {
+                let order = prediction_markets.get_order(id, true).await?.unwrap();
+                res.insert(id, order);
+            }
 
             json!(res)
         }
@@ -285,7 +287,7 @@ pub async fn handle_cli_command(
         } => {
             let res = prediction_markets
                 .get_candlesticks(
-                    market_outpoint_from_txid(market_txid),
+                    market_outpoint_from_tx_id(market_txid),
                     outcome,
                     candlestick_interval,
                     min_candlestick_timestamp,
