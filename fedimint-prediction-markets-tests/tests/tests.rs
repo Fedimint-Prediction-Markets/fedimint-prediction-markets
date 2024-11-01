@@ -7,7 +7,8 @@ use fedimint_dummy_client::common::config::DummyGenParams;
 use fedimint_dummy_client::{DummyClientInit, DummyClientModule};
 use fedimint_dummy_server::DummyInit;
 use fedimint_prediction_markets_client::{
-    OrderId, PredictionMarketsClientInit, PredictionMarketsClientModule,
+    block_till_reciever_closed, OrderFilter, PredictionMarketsClientInit,
+    PredictionMarketsClientModule,
 };
 use fedimint_prediction_markets_common::config::PredictionMarketsGenParams;
 use fedimint_prediction_markets_common::{ContractOfOutcomeAmount, Side, UnixTimestamp};
@@ -17,6 +18,7 @@ use prediction_market_event::information::Information;
 use prediction_market_event::Event;
 use prediction_market_event_nostr_client::nostr_sdk::Keys;
 use tokio::spawn;
+use tracing::info;
 
 fn fixtures() -> Fixtures {
     Fixtures::new_primary(DummyClientInit, DummyInit, DummyGenParams::default()).with_module(
@@ -129,27 +131,25 @@ async fn order_stream() -> anyhow::Result<()> {
         )
         .await?;
 
-    let mut stream = client1_pm.stream_order_from_db(OrderId(0)).await;
-    spawn(async move {
-        loop {
-            dbg!(stream
-                .ok()
-                .await
-                .unwrap()
-                .map(|o| o.quantity_waiting_for_match));
-        }
-    });
-
-    let close = client1_pm
+    let stop_watch_order_matches = client1_pm
         .watch_orders_on_market_outcome_side(market, 0, Side::Buy)
-        .await;
+        .await?;
+
+    // let mut order_0_stream = client1_pm.stream_order_from_db(OrderId(0)).await;
+    // spawn(async move {
+    //     loop {
+    //         let order = order_0_stream.next_or_pending().await;
+    //         dbg!(order);
+    //     }
+    // });
+
     client1_pm
         .new_order(
             market,
             0,
             Side::Buy,
             Amount::from_msats(60),
-            ContractOfOutcomeAmount(10),
+            ContractOfOutcomeAmount(1000),
         )
         .await?;
 
@@ -165,7 +165,43 @@ async fn order_stream() -> anyhow::Result<()> {
             .await?;
     }
 
-    sleep(Duration::from_secs(3)).await;
+    let (mut stream_of_order_streams, stop_order_streams) =
+        client1_pm.stream_orders_from_db(OrderFilter::All).await;
+    spawn(async move {
+        loop {
+            let (order_id, mut order_stream) = stream_of_order_streams.next_or_pending().await;
+            spawn(async move {
+                loop {
+                    let order = order_stream.next_or_pending().await;
+                    info!(
+                        "{}: {}",
+                        order_id.0,
+                        order.unwrap().quantity_waiting_for_match.0
+                    );
+                }
+            });
+        }
+    });
+
+    for _ in 0..1000 {
+        let res =  client1_pm
+            .new_order(
+                market,
+                1,
+                Side::Buy,
+                Amount::from_msats(40),
+                ContractOfOutcomeAmount(1),
+            )
+            .await;
+
+        info!("order create: {res:?}");
+
+        sleep(Duration::from_millis(10)).await;
+    }
+
+    block_till_reciever_closed(stop_watch_order_matches).await?;
+    block_till_reciever_closed(stop_order_streams).await?;
+    info!("test_main end");
 
     Ok(())
 }

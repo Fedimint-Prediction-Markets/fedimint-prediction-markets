@@ -32,11 +32,12 @@ pub async fn await_orders_from_federation(
     orders
         .into_iter()
         .map(|(order_id, order_owner)| {
-            let context = global_context.clone();
+            let global_context = global_context.clone();
+
             async move {
                 (
                     order_id,
-                    await_order_from_federation(context, order_owner).await,
+                    await_order_from_federation(global_context, order_owner).await,
                 )
             }
         })

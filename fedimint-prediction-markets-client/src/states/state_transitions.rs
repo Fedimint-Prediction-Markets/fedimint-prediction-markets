@@ -6,6 +6,7 @@ use fedimint_core::core::OperationId;
 use fedimint_core::db::IDatabaseTransactionOpsCoreTyped;
 use fedimint_core::{OutPoint, TransactionId};
 use secp256k1::PublicKey;
+use tracing::info;
 
 use super::triggers::{await_market_from_federation, await_orders_from_federation};
 use super::{PredictionMarketState, PredictionMarketsStateMachine};
@@ -59,6 +60,7 @@ pub fn sync_orders(
 
             Box::pin(async move {
                 for (order_id, order) in orders {
+                    info!("saving order: {order_id:?}");
                     crate::PredictionMarketsClientModule::save_order_to_db(
                         &mut dbtx.module_tx(),
                         order_id,
@@ -66,6 +68,8 @@ pub fn sync_orders(
                     )
                     .await;
                 }
+
+
                 PredictionMarketsStateMachine {
                     operation_id,
                     state: next,

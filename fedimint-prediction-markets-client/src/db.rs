@@ -242,14 +242,25 @@ impl OrderPriceTimePriorityKey {
 }
 
 #[derive(Debug, Encodable, Decodable)]
+pub struct OrderPriceTimePriorityPrefixAll;
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct OrderPriceTimePriorityPrefix1 {
+    pub market: OutPoint,
+}
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct OrderPriceTimePriorityPrefix2 {
+    pub market: OutPoint,
+    pub outcome: Outcome,
+}
+
+#[derive(Debug, Encodable, Decodable)]
 pub struct OrderPriceTimePriorityPrefix3 {
     pub market: OutPoint,
     pub outcome: Outcome,
     pub side: Side,
 }
-
-#[derive(Debug, Encodable, Decodable)]
-pub struct OrderPriceTimePriorityPrefixAll;
 
 impl_db_record!(
     key = OrderPriceTimePriorityKey,
@@ -259,8 +270,10 @@ impl_db_record!(
 
 impl_db_lookup!(
     key = OrderPriceTimePriorityKey,
+    query_prefix = OrderPriceTimePriorityPrefixAll,
+    query_prefix = OrderPriceTimePriorityPrefix1,
+    query_prefix = OrderPriceTimePriorityPrefix2,
     query_prefix = OrderPriceTimePriorityPrefix3,
-    query_prefix = OrderPriceTimePriorityPrefixAll
 );
 
 // template

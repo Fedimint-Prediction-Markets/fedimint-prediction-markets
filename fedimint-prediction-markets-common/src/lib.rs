@@ -85,7 +85,7 @@ pub enum PredictionMarketsOutput {
 pub enum PredictionMarketsOutputOutcome {
     NewMarket,
     NewBuyOrder,
-    PayoutMarket
+    PayoutMarket,
 }
 
 /// Errors that might be returned by the server
@@ -334,7 +334,7 @@ pub struct Order {
     // fulfilled buys add to this balance
     // sells use this balance for funding
     // during payout, the payout amount is found by multiplying this by the order's outcome's
-    // payout amount. 
+    // payout amount.
     pub contract_of_outcome_balance: ContractOfOutcomeAmount,
 
     // spendable by ConsumeOrderBitcoinBalance input
@@ -376,10 +376,23 @@ impl Order {
 }
 
 /// Side of order
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    Encodable,
+    Decodable,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+)]
 pub enum Side {
-    Buy,
-    Sell,
+    Buy = 0,
+    Sell = 1,
 }
 
 impl Side {
