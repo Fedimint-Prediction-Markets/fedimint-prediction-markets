@@ -11,15 +11,15 @@ use fedimint_core::config::{
 };
 use fedimint_core::core::ModuleInstanceId;
 use fedimint_core::db::{
-    Committable, Database, DatabaseTransaction, DatabaseVersion, IDatabaseTransactionOpsCoreTyped,
-    ServerMigrationFn,
+    Committable, CoreMigrationFn, Database, DatabaseTransaction, DatabaseVersion, IDatabaseTransactionOpsCoreTyped
+    
 };
 use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::module::audit::Audit;
 use fedimint_core::module::{
     api_endpoint, ApiEndpoint, ApiEndpointContext, ApiError, ApiVersion, CoreConsensusVersion,
     InputMeta, ModuleConsensusVersion, ModuleInit, MultiApiVersion, PeerHandle, ServerModuleInit,
-    ServerModuleInitArgs, SupportedModuleApiVersions, TransactionItemAmount,
+    ServerModuleInitArgs, SupportedModuleApiVersions, TransactionItemAmount, CORE_CONSENSUS_VERSION,
 };
 use fedimint_core::server::DynServerModule;
 use fedimint_core::{push_db_pair_items, Amount, OutPoint, PeerId, ServerModule};
@@ -32,7 +32,6 @@ use fedimint_prediction_markets_common::{
     PredictionMarketsOutputOutcome, Side, SignedAmount, TimeOrdering, UnixTimestamp,
     WeightRequiredForPayout, MODULE_CONSENSUS_VERSION,
 };
-use fedimint_server::config::CORE_CONSENSUS_VERSION;
 use futures::{future, StreamExt};
 use highest_priority_order_cache::HighestPriorityOrderCache;
 use order_cache::OrderCache;
@@ -51,7 +50,6 @@ mod order_cache;
 #[derive(Debug, Clone)]
 pub struct PredictionMarketsInit;
 
-#[async_trait]
 impl ModuleInit for PredictionMarketsInit {
     type Common = PredictionMarketsCommonInit;
     const DATABASE_VERSION: DatabaseVersion = DatabaseVersion(0);
@@ -211,8 +209,8 @@ impl ServerModuleInit for PredictionMarketsInit {
     }
 
     /// DB migrations to move from old to newer versions
-    fn get_database_migrations(&self) -> BTreeMap<DatabaseVersion, ServerMigrationFn> {
-        let migrations: BTreeMap<DatabaseVersion, ServerMigrationFn> = BTreeMap::new();
+    fn get_database_migrations(&self) -> BTreeMap<DatabaseVersion, CoreMigrationFn> {
+        let migrations = BTreeMap::new();
         migrations
     }
 

@@ -5,6 +5,7 @@ use fedimint_core::{task::sleep, OutPoint};
 use fedimint_prediction_markets_common::{api::{GetMarketParams, GetMarketResult, GetOrderParams, GetOrderResult}, Market, Order};
 use futures::{stream::FuturesUnordered, StreamExt};
 use secp256k1::PublicKey;
+use tracing::info;
 
 use crate::{api::PredictionMarketsFederationApi, OrderId};
 
@@ -29,6 +30,8 @@ pub async fn await_orders_from_federation(
     global_context: DynGlobalClientContext,
     orders: BTreeMap<OrderId, PublicKey>,
 ) -> BTreeMap<OrderId, Order> {
+    info!("awaiting orders: {orders:?}");
+
     orders
         .into_iter()
         .map(|(order_id, order_owner)| {

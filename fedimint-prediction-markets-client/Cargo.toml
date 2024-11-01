@@ -36,6 +36,7 @@ prediction-market-event-nostr-client = { workspace = true, optional = true }
 
 
 # Fedimint dependencies
+fedimint-api-client = { workspace = true }
 fedimint-core = { workspace = true }
 fedimint-client = { workspace = true }
 fedimint-prediction-markets-common = { path = "../fedimint-prediction-markets-common" }

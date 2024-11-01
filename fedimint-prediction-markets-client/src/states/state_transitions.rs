@@ -53,6 +53,8 @@ pub fn sync_orders(
 ) -> StateTransition<PredictionMarketsStateMachine> {
     let next = next.into();
 
+    info!("syncing: {orders:?}");
+
     StateTransition::new(
         await_orders_from_federation(global_context.clone(), orders),
         move |dbtx, orders, _state| {
@@ -60,7 +62,6 @@ pub fn sync_orders(
 
             Box::pin(async move {
                 for (order_id, order) in orders {
-                    info!("saving order: {order_id:?}");
                     crate::PredictionMarketsClientModule::save_order_to_db(
                         &mut dbtx.module_tx(),
                         order_id,
@@ -68,7 +69,6 @@ pub fn sync_orders(
                     )
                     .await;
                 }
-
 
                 PredictionMarketsStateMachine {
                     operation_id,

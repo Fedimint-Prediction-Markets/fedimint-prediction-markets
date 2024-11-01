@@ -11,8 +11,6 @@ use fedimint_prediction_markets_common::UnixTimestamp;
 use secp256k1::PublicKey;
 use state_transitions::{await_tx_accepted, do_nothing, sync_market, sync_orders};
 
-// use serde::{Deserialize, Serialize};
-// use thiserror::Error;
 use crate::PredictionMarketsClientContext;
 use crate::{db, market_outpoint_from_tx_id, OrderId};
 
@@ -207,12 +205,14 @@ impl StateCategoryTrait for NewOrderState {
             NewOrderState::Accepted {
                 order_id,
                 orders_to_sync_on_accepted,
-            } => vec![sync_orders(
-                operation_id,
-                global_context,
-                orders_to_sync_on_accepted,
-                Self::SyncDone { order_id },
-            )],
+            } => {
+                vec![sync_orders(
+                    operation_id,
+                    global_context,
+                    orders_to_sync_on_accepted,
+                    Self::SyncDone { order_id },
+                )]
+            }
             NewOrderState::SyncDone { order_id } => {
                 let new_order_broadcast_sender = context.new_order_broadcast_sender.clone();
                 vec![StateTransition::new(async {}, move |_, _, _| {

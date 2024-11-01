@@ -2,25 +2,25 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::iter;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::{anyhow, bail};
 use async_stream::stream;
 use db::OrderIdSlot;
+use fedimint_api_client::api::DynModuleApi;
 use fedimint_client::derivable_secret::{ChildId, DerivableSecret};
 use fedimint_client::module::init::{ClientModuleInit, ClientModuleInitArgs};
 use fedimint_client::module::recovery::NoModuleBackup;
 use fedimint_client::module::{ClientContext, ClientModule, IClientModule};
 use fedimint_client::sm::{Context, ModuleNotifier};
 use fedimint_client::transaction::{ClientInput, ClientOutput, TransactionBuilder};
-use fedimint_core::api::DynModuleApi;
 use fedimint_core::core::{Decoder, OperationId};
 use fedimint_core::db::{
     Database, DatabaseTransaction, DatabaseVersion, IDatabaseTransactionOpsCoreTyped,
 };
 use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::module::{
-    ApiVersion, CommonModuleInit, ModuleCommon, ModuleInit, MultiApiVersion, TransactionItemAmount,
+    ApiVersion, CommonModuleInit, ModuleCommon, ModuleInit, MultiApiVersion,
 };
 use fedimint_core::task::{sleep_until, spawn};
 use fedimint_core::util::BoxStream;
@@ -48,6 +48,8 @@ use states::{
 };
 use tokio::select;
 use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::time::Instant;
+use tracing::info;
 
 use crate::api::PredictionMarketsFederationApi;
 
@@ -81,7 +83,6 @@ impl Context for PredictionMarketsClientContext {}
 #[derive(Debug, Clone)]
 pub struct PredictionMarketsClientInit;
 
-#[apply(async_trait_maybe_send!)]
 impl ModuleInit for PredictionMarketsClientInit {
     type Common = PredictionMarketsCommonInit;
     const DATABASE_VERSION: DatabaseVersion = DatabaseVersion(0);
@@ -91,7 +92,7 @@ impl ModuleInit for PredictionMarketsClientInit {
         _dbtx: &mut DatabaseTransaction<'_>,
         _prefix_names: Vec<String>,
     ) -> Box<dyn Iterator<Item = (String, Box<dyn erased_serde::Serialize + Send>)> + '_> {
-        unimplemented!();
+        Box::new(iter::empty())
     }
 }
 
@@ -142,6 +143,7 @@ impl PredictionMarketsClientModule {
                 payout_control_weight_map,
                 weight_required_for_payout,
             },
+            amount: Amount::ZERO,
             state_machines: Arc::new(move |tx_id, _| {
                 vec![PredictionMarketsStateMachine {
                     operation_id,
@@ -242,6 +244,7 @@ impl PredictionMarketsClientModule {
                 market,
                 event_payout_attestations_json,
             },
+            amount: Amount::ZERO,
             state_machines: Arc::new(move |tx_id, _| {
                 vec![PredictionMarketsStateMachine {
                     operation_id,
@@ -330,6 +333,7 @@ impl PredictionMarketsClientModule {
                         price,
                         quantity,
                     },
+                    amount: price * quantity.0,
                     state_machines: Arc::new(move |tx_id, _| {
                         vec![PredictionMarketsStateMachine {
                             operation_id,
@@ -405,6 +409,7 @@ impl PredictionMarketsClientModule {
                         price,
                         sources,
                     },
+                    amount: Amount::ZERO,
                     state_machines: Arc::new(move |tx_id, _| {
                         vec![PredictionMarketsStateMachine {
                             operation_id,
@@ -554,6 +559,7 @@ impl PredictionMarketsClientModule {
                     .into(),
                 }]
             }),
+            amount: Amount::ZERO,
             keys: vec![order_key],
         };
 
@@ -617,6 +623,7 @@ impl PredictionMarketsClientModule {
                     order: PublicKey::from_keypair(&order_key),
                     amount: order.bitcoin_balance,
                 },
+                amount: order.bitcoin_balance,
                 state_machines: Arc::new(move |tx_id, _| {
                     vec![PredictionMarketsStateMachine {
                         operation_id,
@@ -1266,6 +1273,7 @@ impl PredictionMarketsClientModule {
             state,
         }) = state_stream.next().await
         {
+            info!("{state:?}");
             if state_matcher(state) {
                 break;
             }
@@ -1311,77 +1319,30 @@ impl ClientModule for PredictionMarketsClientModule {
         }
     }
 
-    fn input_amount(
-        &self,
-        input: &<Self::Common as ModuleCommon>::Input,
-    ) -> Option<TransactionItemAmount> {
-        let amount;
-        let fee;
-
-        match input {
-            PredictionMarketsInput::CancelOrder { order: _ } => {
-                amount = Amount::ZERO;
-                fee = Amount::ZERO;
-            }
+    fn input_fee(&self, input: &<Self::Common as ModuleCommon>::Input) -> Option<Amount> {
+        Some(match input {
+            PredictionMarketsInput::CancelOrder { .. } => Amount::ZERO,
             PredictionMarketsInput::ConsumeOrderBitcoinBalance {
-                order: _,
-                amount: amount_to_free,
-            } => {
-                amount = *amount_to_free;
-                fee = self.cfg.gc.consume_order_bitcoin_balance_fee;
-            }
+                ..
+            } => self.cfg.gc.consume_order_bitcoin_balance_fee,
             PredictionMarketsInput::NewSellOrder {
-                owner: _,
-                market: _,
-                outcome: _,
-                price: _,
-                sources: _,
-            } => {
-                amount = Amount::ZERO;
-                fee = self.cfg.gc.new_order_fee;
-            }
-        }
-
-        Some(TransactionItemAmount { amount, fee })
+                ..
+            } => self.cfg.gc.new_order_fee,
+        })
     }
 
-    fn output_amount(
-        &self,
-        output: &<Self::Common as ModuleCommon>::Output,
-    ) -> Option<TransactionItemAmount> {
-        let amount;
-        let fee;
-
-        match output {
+    fn output_fee(&self, output: &<Self::Common as ModuleCommon>::Output) -> Option<Amount> {
+        Some(match output {
             PredictionMarketsOutput::NewMarket {
-                event_json: _,
-                contract_price: _,
-                payout_control_weight_map: _,
-                weight_required_for_payout: _,
-            } => {
-                amount = Amount::ZERO;
-                fee = self.cfg.gc.new_market_fee;
-            }
+                ..
+            } => self.cfg.gc.new_market_fee,
             PredictionMarketsOutput::NewBuyOrder {
-                owner: _,
-                market: _,
-                outcome: _,
-                price,
-                quantity,
-            } => {
-                amount = *price * quantity.0;
-                fee = self.cfg.gc.new_order_fee;
-            }
+                ..
+            } => self.cfg.gc.new_order_fee,
             PredictionMarketsOutput::PayoutMarket {
-                market: _,
-                event_payout_attestations_json: _,
-            } => {
-                amount = Amount::ZERO;
-                fee = Amount::ZERO;
-            }
-        }
-
-        Some(TransactionItemAmount { amount, fee })
+                ..
+            } => Amount::ZERO,
+        })
     }
 
     #[cfg(feature = "cli")]

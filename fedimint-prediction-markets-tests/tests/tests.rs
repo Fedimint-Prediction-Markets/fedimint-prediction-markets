@@ -30,7 +30,7 @@ fn fixtures() -> Fixtures {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn create_market_and_get_market() -> anyhow::Result<()> {
-    let fed = fixtures().new_fed().await;
+    let fed = fixtures().new_default_fed().await;
     let (client1, client2) = fed.two_clients().await;
 
     let client1_pm = client1.get_first_module::<PredictionMarketsClientModule>();
@@ -56,7 +56,7 @@ async fn create_market_and_get_market() -> anyhow::Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn candlestick_stream() -> anyhow::Result<()> {
-    let fed = fixtures().new_fed().await;
+    let fed = fixtures().new_default_fed().await;
     let (client1, client2) = fed.two_clients().await;
 
     let client1_dummy = client1.get_first_module::<DummyClientModule>();
@@ -112,7 +112,7 @@ async fn candlestick_stream() -> anyhow::Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn order_stream() -> anyhow::Result<()> {
-    let fed = fixtures().new_fed().await;
+    let fed = fixtures().new_default_fed().await;
     let client1 = fed.new_client().await;
 
     let client1_dummy = client1.get_first_module::<DummyClientModule>();
