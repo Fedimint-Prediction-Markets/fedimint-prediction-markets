@@ -2114,6 +2114,7 @@ dependencies = [
  "fedimint-prediction-markets-server",
  "fedimint-server",
  "fedimint-testing",
+ "futures",
  "prediction-market-event",
  "prediction-market-event-nostr-client",
  "rand",

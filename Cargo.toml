@@ -40,19 +40,19 @@ prediction-market-event = "0.14.0"
 prediction-market-event-nostr-client = "0.2.0"
 
 # Fedimint dependencies
-fedimintd = { git = "https://github.com/fedimint/fedimint", tag = "v0.4.4" }
+aead = { git = "https://github.com/fedimint/fedimint", tag = "v0.4.4" }
+devimint = { git = "https://github.com/fedimint/fedimint", tag = "v0.4.4" }
 fedimint-api-client = { git = "https://github.com/fedimint/fedimint", tag = "v0.4.4" }
 fedimint-cli = { git = "https://github.com/fedimint/fedimint", tag = "v0.4.4" }
-fedimint-core = { git = "https://github.com/fedimint/fedimint", tag = "v0.4.4" }
 fedimint-client = { git = "https://github.com/fedimint/fedimint", tag = "v0.4.4" }
+fedimint-core = { git = "https://github.com/fedimint/fedimint", tag = "v0.4.4" }
+fedimint-dummy-client = { git = "https://github.com/fedimint/fedimint", tag = "v0.4.4" }
+fedimint-dummy-server = { git = "https://github.com/fedimint/fedimint", tag = "v0.4.4" }
 fedimint-logging = { git = "https://github.com/fedimint/fedimint", tag = "v0.4.4" }
 fedimint-server = { git = "https://github.com/fedimint/fedimint", tag = "v0.4.4" }
 fedimint-testing = { git = "https://github.com/fedimint/fedimint", tag = "v0.4.4" }
-devimint = { git = "https://github.com/fedimint/fedimint", tag = "v0.4.4" }
-aead = { git = "https://github.com/fedimint/fedimint", tag = "v0.4.4" }
+fedimintd = { git = "https://github.com/fedimint/fedimint", tag = "v0.4.4" }
 tbs = { git = "https://github.com/fedimint/fedimint", tag = "v0.4.4" }
-fedimint-dummy-client = { git = "https://github.com/fedimint/fedimint", tag = "v0.4.4" }
-fedimint-dummy-server = { git = "https://github.com/fedimint/fedimint", tag = "v0.4.4" }
 
 # Comment above lines and uncomment these to work with local fedimint dependencies
 # fedimintd = { path = "../fedimint/fedimintd" }
@@ -67,18 +67,18 @@ split-debuginfo = "packed"
 
 # in dev mode optimize crates that are perf-critical (usually just crypto crates)
 [profile.dev.package]
-secp256k1 = { opt-level = 3 }
-secp256k1-zkp = { opt-level = 3 }
-secp256k1-sys = { opt-level = 3 }
-secp256k1-zkp-sys = { opt-level = 3 }
 bitcoin_hashes = { opt-level = 3 }
+bls12_381 = { opt-level = 3 }
+byteorder = { opt-level = 3 }
 ff = { opt-level = 3 }
 group = { opt-level = 3 }
 pairing = { opt-level = 3 }
 rand_core = { opt-level = 3 }
-byteorder = { opt-level = 3 }
-zeroize = { opt-level = 3 }
-bls12_381 = { opt-level = 3 }
-subtle = { opt-level = 3 }
 ring = { opt-level = 3 }
+secp256k1 = { opt-level = 3 }
+secp256k1-sys = { opt-level = 3 }
+secp256k1-zkp = { opt-level = 3 }
+secp256k1-zkp-sys = { opt-level = 3 }
+subtle = { opt-level = 3 }
 threshold_crypto = { opt-level = 3 }
+zeroize = { opt-level = 3 }

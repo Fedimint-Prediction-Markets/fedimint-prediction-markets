@@ -14,6 +14,7 @@ use prediction_market_event_nostr_client::nostr_sdk::JsonUtil;
 use serde::Serialize;
 use serde_json::json;
 
+use crate::order_filter::{self};
 use crate::{market_outpoint_from_tx_id, OrderId, PredictionMarketsClientModule};
 
 #[derive(Parser, Serialize)]
@@ -253,17 +254,24 @@ pub async fn handle_cli_command(
             market_txid,
             outcome,
         } => {
-            let filter = match market_txid {
-                None => crate::OrderFilter::All,
+            let order_path = match market_txid {
+                None => order_filter::OrderPath::All,
                 Some(market_txid) => match outcome {
-                    None => crate::OrderFilter::Market(market_outpoint_from_tx_id(market_txid)),
-                    Some(outcome) => crate::OrderFilter::MarketOutcome(
+                    None => {
+                        order_filter::OrderPath::Market(market_outpoint_from_tx_id(market_txid))
+                    }
+                    Some(outcome) => order_filter::OrderPath::MarketOutcome(
                         market_outpoint_from_tx_id(market_txid),
                         outcome,
                     ),
                 },
             };
-            let order_ids = prediction_markets.get_order_ids(filter).await;
+            let order_ids = prediction_markets
+                .get_order_ids(order_filter::OrderFilter(
+                    order_path,
+                    order_filter::OrderState::Any,
+                ))
+                .await;
             let mut res = BTreeMap::new();
             for id in order_ids {
                 let order = prediction_markets.get_order(id, true).await?.unwrap();

@@ -6,7 +6,6 @@ use fedimint_core::core::OperationId;
 use fedimint_core::db::IDatabaseTransactionOpsCoreTyped;
 use fedimint_core::{OutPoint, TransactionId};
 use secp256k1::PublicKey;
-use tracing::info;
 
 use super::triggers::{await_market_from_federation, await_orders_from_federation};
 use super::{PredictionMarketState, PredictionMarketsStateMachine};
@@ -52,8 +51,6 @@ pub fn sync_orders(
     next: impl Into<PredictionMarketState>,
 ) -> StateTransition<PredictionMarketsStateMachine> {
     let next = next.into();
-
-    info!("syncing: {orders:?}");
 
     StateTransition::new(
         await_orders_from_federation(global_context.clone(), orders),

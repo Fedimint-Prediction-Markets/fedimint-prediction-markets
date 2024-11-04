@@ -13,10 +13,12 @@ path = "tests/tests.rs"
 
 [dependencies]
 anyhow = { workspace = true }
+futures = { workspace = true }
 rand = { workspace = true }
 secp256k1 = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+
 prediction-market-event = { workspace = true }
 prediction-market-event-nostr-client = { workspace = true }
 
