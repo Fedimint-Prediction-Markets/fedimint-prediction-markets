@@ -740,6 +740,7 @@ impl ServerModule for PredictionMarkets {
                         .unwrap();
                     let payout =
                         *payout_per_contract_of_outcome * order.contract_of_outcome_balance.0;
+                    order.contract_of_outcome_balance = ContractOfOutcomeAmount::ZERO;
 
                     order.bitcoin_balance += payout;
                     order.bitcoin_acquired_from_payout = payout;

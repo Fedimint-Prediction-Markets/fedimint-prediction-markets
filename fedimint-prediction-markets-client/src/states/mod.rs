@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::iter;
 
 use fedimint_client::sm::{DynState, State, StateTransition};
@@ -8,11 +8,9 @@ use fedimint_core::db::IDatabaseTransactionOpsCoreTyped;
 use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::TransactionId;
 use fedimint_prediction_markets_common::UnixTimestamp;
-use secp256k1::PublicKey;
 use state_transitions::{await_tx_accepted, do_nothing, sync_market, sync_orders};
 
-use crate::PredictionMarketsClientContext;
-use crate::{db, market_outpoint_from_tx_id, OrderId};
+use crate::{db, market_outpoint_from_tx_id, OrderId, PredictionMarketsClientContext};
 
 pub mod state_transitions;
 pub mod triggers;
@@ -88,6 +86,7 @@ trait StateCategoryTrait: Into<PredictionMarketState> {
 pub enum NewMarketState {
     Pending { tx_id: TransactionId },
     Accepted { tx_id: TransactionId },
+    Accepted2 { tx_id: TransactionId },
     Complete,
 }
 
@@ -114,30 +113,30 @@ impl StateCategoryTrait for NewMarketState {
                 )]
             }
             NewMarketState::Accepted { tx_id } => {
-                vec![
-                    StateTransition::new(async {}, move |dbtx, _, _| {
-                        Box::pin(async move {
-                            dbtx.module_tx()
-                                .insert_entry(
-                                    &db::ClientSavedMarketsKey {
-                                        market: market_outpoint_from_tx_id(tx_id),
-                                    },
-                                    &UnixTimestamp::now(),
-                                )
-                                .await;
-                            PredictionMarketsStateMachine {
-                                operation_id,
-                                state: Self::Complete.into(),
-                            }
-                        })
-                    }),
-                    sync_market(
-                        operation_id,
-                        global_context,
-                        market_outpoint_from_tx_id(tx_id),
-                        NewMarketState::Complete,
-                    ),
-                ]
+                vec![sync_market(
+                    operation_id,
+                    global_context,
+                    market_outpoint_from_tx_id(tx_id),
+                    NewMarketState::Accepted2 { tx_id },
+                )]
+            }
+            NewMarketState::Accepted2 { tx_id } => {
+                vec![StateTransition::new(async {}, move |dbtx, _, _| {
+                    Box::pin(async move {
+                        dbtx.module_tx()
+                            .insert_entry(
+                                &db::ClientSavedMarketsKey {
+                                    market: market_outpoint_from_tx_id(tx_id),
+                                },
+                                &UnixTimestamp::now(),
+                            )
+                            .await;
+                        PredictionMarketsStateMachine {
+                            operation_id,
+                            state: Self::Complete.into(),
+                        }
+                    })
+                })]
             }
             NewMarketState::Complete => vec![],
         }
@@ -149,16 +148,21 @@ pub enum NewOrderState {
     Pending {
         tx_id: TransactionId,
         order_id: OrderId,
-        orders_to_sync_on_accepted: BTreeMap<OrderId, PublicKey>,
+        orders_to_sync_on_accepted: BTreeSet<OrderId>,
+        orders_to_sync_on_rejected: BTreeSet<OrderId>,
     },
     Rejected {
+        order_id: OrderId,
+        orders_to_sync_on_rejected: BTreeSet<OrderId>,
+    },
+    Rejected2 {
         order_id: OrderId,
     },
     Accepted {
         order_id: OrderId,
-        orders_to_sync_on_accepted: BTreeMap<OrderId, PublicKey>,
+        orders_to_sync_on_accepted: BTreeSet<OrderId>,
     },
-    SyncDone {
+    Accepted2 {
         order_id: OrderId,
     },
     Complete,
@@ -181,6 +185,7 @@ impl StateCategoryTrait for NewOrderState {
                 tx_id,
                 order_id,
                 orders_to_sync_on_accepted,
+                orders_to_sync_on_rejected,
             } => vec![await_tx_accepted(
                 operation_id,
                 global_context,
@@ -189,9 +194,24 @@ impl StateCategoryTrait for NewOrderState {
                     order_id,
                     orders_to_sync_on_accepted,
                 },
-                Self::Rejected { order_id },
+                Self::Rejected {
+                    order_id,
+                    orders_to_sync_on_rejected,
+                },
             )],
-            NewOrderState::Rejected { order_id } => {
+            NewOrderState::Rejected {
+                order_id,
+                orders_to_sync_on_rejected,
+            } => {
+                vec![sync_orders(
+                    operation_id,
+                    context,
+                    global_context,
+                    orders_to_sync_on_rejected,
+                    Self::Rejected2 { order_id },
+                )]
+            }
+            NewOrderState::Rejected2 { order_id } => {
                 vec![StateTransition::new(async {}, move |dbtx, _, _| {
                     Box::pin(async move {
                         dbtx.module_tx().remove_entry(&db::OrderKey(order_id)).await;
@@ -208,12 +228,13 @@ impl StateCategoryTrait for NewOrderState {
             } => {
                 vec![sync_orders(
                     operation_id,
+                    context,
                     global_context,
                     orders_to_sync_on_accepted,
-                    Self::SyncDone { order_id },
+                    Self::Accepted2 { order_id },
                 )]
             }
-            NewOrderState::SyncDone { order_id } => {
+            NewOrderState::Accepted2 { order_id } => {
                 let new_order_broadcast_sender = context.new_order_broadcast_sender.clone();
                 vec![StateTransition::new(async {}, move |_, _, _| {
                     let new_order_broadcast_sender = new_order_broadcast_sender.clone();
@@ -236,11 +257,11 @@ impl StateCategoryTrait for NewOrderState {
 pub enum CancelOrderState {
     Pending {
         tx_id: TransactionId,
-        order_to_sync_on_accepted: (OrderId, PublicKey),
+        order_to_sync_on_accepted: OrderId,
     },
     Rejected,
     Accepted {
-        order_to_sync_on_accepted: (OrderId, PublicKey),
+        order_to_sync_on_accepted: OrderId,
     },
     Complete,
 }
@@ -254,7 +275,7 @@ impl StateCategoryTrait for CancelOrderState {
     fn transitions(
         self,
         operation_id: OperationId,
-        _context: &PredictionMarketsClientContext,
+        context: &PredictionMarketsClientContext,
         global_context: &DynGlobalClientContext,
     ) -> Vec<StateTransition<PredictionMarketsStateMachine>> {
         match self {
@@ -275,6 +296,7 @@ impl StateCategoryTrait for CancelOrderState {
                 order_to_sync_on_accepted,
             } => vec![sync_orders(
                 operation_id,
+                context,
                 global_context,
                 iter::once(order_to_sync_on_accepted).collect(),
                 Self::Complete,
@@ -288,11 +310,11 @@ impl StateCategoryTrait for CancelOrderState {
 pub enum ConsumeOrderBitcoinBalanceState {
     Pending {
         tx_id: TransactionId,
-        order_to_sync_on_accepted: (OrderId, PublicKey),
+        order_to_sync_on_accepted: OrderId,
     },
     Rejected,
     Accepted {
-        order_to_sync_on_accepted: (OrderId, PublicKey),
+        order_to_sync_on_accepted: OrderId,
     },
     Complete,
 }
@@ -306,7 +328,7 @@ impl StateCategoryTrait for ConsumeOrderBitcoinBalanceState {
     fn transitions(
         self,
         operation_id: OperationId,
-        _context: &PredictionMarketsClientContext,
+        context: &PredictionMarketsClientContext,
         global_context: &DynGlobalClientContext,
     ) -> Vec<StateTransition<PredictionMarketsStateMachine>> {
         match self {
@@ -329,6 +351,7 @@ impl StateCategoryTrait for ConsumeOrderBitcoinBalanceState {
                 order_to_sync_on_accepted,
             } => vec![sync_orders(
                 operation_id,
+                context,
                 global_context,
                 iter::once(order_to_sync_on_accepted).collect(),
                 Self::Complete,

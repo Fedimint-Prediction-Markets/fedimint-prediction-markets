@@ -1,12 +1,14 @@
 use std::time::Duration;
 
+use fedimint_core::task::sleep;
 use fedimint_core::util::NextOrPending;
 use fedimint_core::Amount;
 use fedimint_dummy_client::common::config::DummyGenParams;
 use fedimint_dummy_client::{DummyClientInit, DummyClientModule};
 use fedimint_dummy_server::DummyInit;
+use fedimint_prediction_markets_client::order_filter::{OrderFilter, OrderPath, OrderState};
 use fedimint_prediction_markets_client::{
-    PredictionMarketsClientInit, PredictionMarketsClientModule,
+    order_filter, PredictionMarketsClientInit, PredictionMarketsClientModule,
 };
 use fedimint_prediction_markets_common::config::PredictionMarketsGenParams;
 use fedimint_prediction_markets_common::{ContractOfOutcomeAmount, Side, UnixTimestamp};
@@ -31,7 +33,8 @@ fn fixtures() -> Fixtures {
 #[tokio::test(flavor = "multi_thread")]
 async fn create_market_and_get_market() -> anyhow::Result<()> {
     let fed = fixtures().new_default_fed().await;
-    let (client1, client2) = fed.two_clients().await;
+    let client1 = fed.new_client_rocksdb().await;
+    let client2 = fed.new_client_rocksdb().await;
 
     let client1_pm = client1.get_first_module::<PredictionMarketsClientModule>();
     let client2_pm = client2.get_first_module::<PredictionMarketsClientModule>();
@@ -57,7 +60,7 @@ async fn create_market_and_get_market() -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn candlestick_stream() -> anyhow::Result<()> {
     let fed = fixtures().new_default_fed().await;
-    let (client1, client2) = fed.two_clients().await;
+    let client1 = fed.new_client_rocksdb().await;
 
     let client1_dummy = client1.get_first_module::<DummyClientModule>();
     client1_dummy.print_money(Amount::from_sats(1000)).await?;
@@ -76,13 +79,12 @@ async fn candlestick_stream() -> anyhow::Result<()> {
         )
         .await?;
 
+    let mut stream = client1_pm
+        .stream_candlesticks(market, 0, 15, UnixTimestamp::ZERO, Duration::ZERO)
+        .await;
     spawn(async move {
-        let client2_pm2 = client2.get_first_module::<PredictionMarketsClientModule>();
-        let mut stream = client2_pm2
-            .stream_candlesticks(market, 0, 15, UnixTimestamp::ZERO, Duration::from_secs(1))
-            .await;
         loop {
-            println!("{:?}", stream.ok().await);
+            info!("{:?}", stream.ok().await);
         }
     });
 
@@ -105,6 +107,7 @@ async fn candlestick_stream() -> anyhow::Result<()> {
                 ContractOfOutcomeAmount(1),
             )
             .await?;
+        sleep(Duration::from_millis(10)).await;
     }
 
     Ok(())
@@ -131,9 +134,9 @@ async fn order_stream() -> anyhow::Result<()> {
         )
         .await?;
 
-    // let stop_watch_orders_on_market_outcome_side = client1_pm
-    //     .watch_orders_on_market_outcome_side(market, 0, Side::Buy)
-    //     .await?;
+    let watch_for_order_matches_stop_future = client1_pm
+        .watch_for_order_matches(order_filter::OrderPath::Market { market })
+        .await?;
 
     client1_pm
         .new_order(
@@ -157,22 +160,24 @@ async fn order_stream() -> anyhow::Result<()> {
     //         .await?;
     // }
 
-    // let mut stream_of_order_streams =
-    // client1_pm.stream_orders_from_db(OrderFilter::All).await; spawn(async
-    // move {     loop {
-    //         let (order_id, mut order_stream) =
-    // stream_of_order_streams.next_or_pending().await;         spawn(async move
-    // {             loop {
-    //                 let order = order_stream.next_or_pending().await;
-    //                 info!(
-    //                     "{}: {}",
-    //                     order_id.0,
-    //                     order.unwrap().quantity_waiting_for_match.0
-    //                 );
-    //             }
-    //         });
-    //     }
-    // });
+    let mut stream_of_order_streams = client1_pm
+        .stream_orders_from_db(OrderFilter(OrderPath::All, OrderState::Any))
+        .await;
+    spawn(async move {
+        loop {
+            let (order_id, mut order_stream) = stream_of_order_streams.next_or_pending().await;
+            spawn(async move {
+                loop {
+                    let order = order_stream.next_or_pending().await;
+                    info!(
+                        "{}: {}",
+                        order_id.0,
+                        order.unwrap().quantity_waiting_for_match.0
+                    );
+                }
+            });
+        }
+    });
 
     let iter = 0..1000;
     iter.map(|_| async {
@@ -194,9 +199,7 @@ async fn order_stream() -> anyhow::Result<()> {
     .collect::<()>()
     .await;
 
-    // stop_watch_orders_on_market_outcome_side
-    //     .wait_close()
-    //     .await?;
+    watch_for_order_matches_stop_future.await?;
 
     info!("test_main end");
 

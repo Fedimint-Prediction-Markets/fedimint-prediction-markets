@@ -1,15 +1,14 @@
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 use fedimint_client::sm::StateTransition;
 use fedimint_client::DynGlobalClientContext;
 use fedimint_core::core::OperationId;
 use fedimint_core::db::IDatabaseTransactionOpsCoreTyped;
 use fedimint_core::{OutPoint, TransactionId};
-use secp256k1::PublicKey;
 
 use super::triggers::{await_market_from_federation, await_orders_from_federation};
 use super::{PredictionMarketState, PredictionMarketsStateMachine};
-use crate::{db, OrderId};
+use crate::{db, OrderId, PredictionMarketsClientContext};
 
 pub fn await_tx_accepted(
     operation_id: OperationId,
@@ -46,14 +45,15 @@ pub fn await_tx_accepted(
 
 pub fn sync_orders(
     operation_id: OperationId,
+    context: &PredictionMarketsClientContext,
     global_context: &DynGlobalClientContext,
-    orders: BTreeMap<OrderId, PublicKey>,
+    orders: BTreeSet<OrderId>,
     next: impl Into<PredictionMarketState>,
 ) -> StateTransition<PredictionMarketsStateMachine> {
     let next = next.into();
 
     StateTransition::new(
-        await_orders_from_federation(global_context.clone(), orders),
+        await_orders_from_federation(context.clone(), global_context.clone(), orders),
         move |dbtx, orders, _state| {
             let next = next.clone();
 

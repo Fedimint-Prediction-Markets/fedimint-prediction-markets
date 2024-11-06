@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::{ffi, iter};
 
@@ -257,26 +257,21 @@ pub async fn handle_cli_command(
             let order_path = match market_txid {
                 None => order_filter::OrderPath::All,
                 Some(market_txid) => match outcome {
-                    None => {
-                        order_filter::OrderPath::Market(market_outpoint_from_tx_id(market_txid))
-                    }
-                    Some(outcome) => order_filter::OrderPath::MarketOutcome(
-                        market_outpoint_from_tx_id(market_txid),
+                    None => order_filter::OrderPath::Market {
+                        market: market_outpoint_from_tx_id(market_txid),
+                    },
+                    Some(outcome) => order_filter::OrderPath::MarketOutcome {
+                        market: market_outpoint_from_tx_id(market_txid),
                         outcome,
-                    ),
+                    },
                 },
             };
-            let order_ids = prediction_markets
-                .get_order_ids(order_filter::OrderFilter(
+            let res = prediction_markets
+                .get_orders_from_db(order_filter::OrderFilter(
                     order_path,
                     order_filter::OrderState::Any,
                 ))
                 .await;
-            let mut res = BTreeMap::new();
-            for id in order_ids {
-                let order = prediction_markets.get_order(id, true).await?.unwrap();
-                res.insert(id, order);
-            }
 
             json!(res)
         }

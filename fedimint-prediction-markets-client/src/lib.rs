@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::future::Future;
 use std::iter;
+use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -40,8 +42,8 @@ use fedimint_prediction_markets_common::{
 };
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
-use order_filter::{OrderFilter, OrderState, OrderPath};
-use secp256k1::{KeyPair, PublicKey, Scalar, Secp256k1, SecretKey};
+use order_filter::{OrderFilter, OrderPath, OrderState};
+use secp256k1::{KeyPair, PublicKey, Scalar, Secp256k1};
 use serde::{Deserialize, Serialize};
 use states::{
     CancelOrderState, ConsumeOrderBitcoinBalanceState, NewMarketState, NewOrderState,
@@ -76,6 +78,7 @@ pub struct PredictionMarketsClientModule {
 pub struct PredictionMarketsClientContext {
     pub prediction_markets_decoder: Decoder,
     pub new_order_broadcast_sender: broadcast::Sender<OrderId>,
+    pub root_secret: DerivableSecret,
 }
 
 impl Context for PredictionMarketsClientContext {}
@@ -210,7 +213,7 @@ impl PredictionMarketsClientModule {
                     market.1 = market_dynamic;
                     dbtx.insert_entry(&db::MarketKey(market_out_point), &market)
                         .await;
-                    dbtx.commit_tx().await;
+                    dbtx.commit_tx_result().await?;
 
                     return Ok(Some(market));
                 }
@@ -224,7 +227,7 @@ impl PredictionMarketsClientModule {
                 if let Some(market) = result.market.as_ref() {
                     dbtx.insert_entry(&db::MarketKey(market_out_point), market)
                         .await;
-                    dbtx.commit_tx().await;
+                    dbtx.commit_tx_result().await?;
                 }
 
                 Ok(result.market)
@@ -322,10 +325,10 @@ impl PredictionMarketsClientModule {
         let order_key = self.order_id_to_key_pair(order_id);
         let owner = PublicKey::from_keypair(&order_key);
 
-        let mut orders_to_sync_on_accepted = BTreeMap::new();
-        orders_to_sync_on_accepted.insert(order_id, owner);
-
         let mut tx = TransactionBuilder::new();
+        let mut orders_to_sync_on_accepted = BTreeSet::new();
+        orders_to_sync_on_accepted.insert(order_id);
+        let mut orders_to_sync_on_rejected = BTreeSet::new();
         match side {
             Side::Buy => {
                 let output = ClientOutput {
@@ -344,6 +347,7 @@ impl PredictionMarketsClientModule {
                                 tx_id,
                                 order_id,
                                 orders_to_sync_on_accepted: orders_to_sync_on_accepted.clone(),
+                                orders_to_sync_on_rejected: orders_to_sync_on_rejected.clone(),
                             }
                             .into(),
                         }]
@@ -356,42 +360,67 @@ impl PredictionMarketsClientModule {
                 let mut sources = BTreeMap::new();
                 let mut sources_keys_combined = None;
 
-                let non_zero_market_outcome_orders = self
-                    .get_order_ids(OrderFilter(OrderPath::MarketOutcomeSide(market, outcome, side), OrderState::NonZero))
-                    .await;
+                let non_zero_market_outcome_orders = Self::get_order_ids(
+                    &mut dbtx.to_ref_nc(),
+                    OrderFilter(
+                        OrderPath::MarketOutcomeSide {
+                            market,
+                            outcome,
+                            side,
+                        },
+                        OrderState::NonZero,
+                    ),
+                )
+                .await;
 
                 let mut sourced_quantity = ContractOfOutcomeAmount::ZERO;
-                for (n, order_id) in non_zero_market_outcome_orders.into_iter().enumerate() {
-                    if n == usize::from(self.cfg.gc.max_sell_order_sources) {
+                for (i, loop_order_id) in non_zero_market_outcome_orders.into_iter().enumerate() {
+                    if i == usize::from(self.cfg.gc.max_sell_order_sources) {
                         bail!("max number of sell order sources reached. try again with a quantity less than or equal to {}", sourced_quantity.0)
                     }
 
-                    let order = self.get_order(order_id, true).await.unwrap().unwrap();
+                    let mut loop_order = dbtx
+                        .get_value(&db::OrderKey(loop_order_id))
+                        .await
+                        .unwrap()
+                        .to_order()
+                        .unwrap();
 
-                    if order.contract_of_outcome_balance == ContractOfOutcomeAmount::ZERO {
+                    if loop_order.contract_of_outcome_balance == ContractOfOutcomeAmount::ZERO {
                         continue;
                     }
 
-                    let order_key = self.order_id_to_key_pair(order_id);
-                    let quantity_sourced_from_order = order
+                    let loop_order_key = self.order_id_to_key_pair(loop_order_id);
+                    let loop_sourced_quantity_from_order = loop_order
                         .contract_of_outcome_balance
                         .min(quantity - sourced_quantity);
+                    loop_order.contract_of_outcome_balance -= loop_sourced_quantity_from_order;
+                    sourced_quantity += loop_sourced_quantity_from_order;
 
-                    sources.insert(order_key.public_key(), quantity_sourced_from_order);
-                    orders_to_sync_on_accepted.insert(order_id, order_key.public_key());
+                    sources.insert(
+                        loop_order_key.public_key(),
+                        loop_sourced_quantity_from_order,
+                    );
+
+                    dbtx.insert_entry(
+                        &db::OrderKey(loop_order_id),
+                        &OrderIdSlot::Order(loop_order),
+                    )
+                    .await;
+                    orders_to_sync_on_accepted.insert(loop_order_id);
+                    orders_to_sync_on_rejected.insert(loop_order_id);
 
                     sources_keys_combined = match sources_keys_combined {
-                        None => Some(order_key),
+                        None => Some(loop_order_key),
                         Some(combined_keys) => {
-                            let p1 = SecretKey::from_keypair(&combined_keys);
-                            let p2 = SecretKey::from_keypair(&order_key);
+                            let p1 = combined_keys.secret_key();
+                            let p2 = loop_order_key.secret_key();
                             let p3 = p1.add_tweak(&Scalar::from(p2))?;
 
-                            Some(KeyPair::from_secret_key(secp256k1::SECP256K1, &p3))
+                            Some(p3.keypair(secp256k1::SECP256K1))
                         }
                     };
 
-                    sourced_quantity += quantity_sourced_from_order;
                     if quantity == sourced_quantity {
                         break;
                     }
@@ -417,6 +446,7 @@ impl PredictionMarketsClientModule {
                                 tx_id,
                                 order_id,
                                 orders_to_sync_on_accepted: orders_to_sync_on_accepted.clone(),
+                                orders_to_sync_on_rejected: orders_to_sync_on_rejected.clone(),
                             }
                             .into(),
                         }]
@@ -489,6 +519,21 @@ impl PredictionMarketsClientModule {
         res
     }
 
+    pub async fn get_orders_from_db(&self, filter: OrderFilter) -> BTreeMap<OrderId, Order> {
+        Self::get_order_ids(&mut self.db.begin_transaction_nc().await, filter)
+            .await
+            .into_iter()
+            .map(|order_id| async move {
+                (
+                    order_id,
+                    self.get_order(order_id, true).await.unwrap().unwrap(),
+                )
+            })
+            .collect::<FuturesUnordered<_>>()
+            .collect()
+            .await
+    }
+
     pub async fn stream_order_from_db<'a>(&self, id: OrderId) -> BoxStream<'a, Option<Order>> {
         let db = self.db.clone();
 
@@ -502,7 +547,8 @@ impl PredictionMarketsClientModule {
         let db = self.db.clone();
         let mut new_order_reciever = self.new_order_broadcast.0.subscribe();
 
-        let mut orders_to_stream = self.get_order_ids(filter).await;
+        let mut orders_to_stream =
+            Self::get_order_ids(&mut db.begin_transaction_nc().await, filter).await;
         let stream = Box::pin(stream! {
             loop {
                 while let Some(order_id) = orders_to_stream.pop_first() {
@@ -528,10 +574,10 @@ impl PredictionMarketsClientModule {
         stream
     }
 
-    pub async fn cancel_order(&self, id: OrderId) -> anyhow::Result<()> {
+    pub async fn cancel_order(&self, order_id: OrderId) -> anyhow::Result<()> {
         let operation_id = OperationId::new_random();
 
-        let order_key = self.order_id_to_key_pair(id);
+        let order_key = self.order_id_to_key_pair(order_id);
         let order_owner = order_key.public_key();
 
         let input = ClientInput {
@@ -541,7 +587,7 @@ impl PredictionMarketsClientModule {
                     operation_id,
                     state: CancelOrderState::Pending {
                         tx_id,
-                        order_to_sync_on_accepted: (id, order_owner),
+                        order_to_sync_on_accepted: order_id,
                     }
                     .into(),
                 }]
@@ -603,7 +649,6 @@ impl PredictionMarketsClientModule {
         let mut tx = TransactionBuilder::new();
         for (order_id, order) in orders_with_non_zero_bitcoin_balance {
             let order_key = self.order_id_to_key_pair(order_id);
-            let order_owner = order_key.public_key();
 
             let input = ClientInput {
                 input: PredictionMarketsInput::ConsumeOrderBitcoinBalance {
@@ -616,7 +661,7 @@ impl PredictionMarketsClientModule {
                         operation_id,
                         state: ConsumeOrderBitcoinBalanceState::Pending {
                             tx_id,
-                            order_to_sync_on_accepted: (order_id, order_owner),
+                            order_to_sync_on_accepted: order_id,
                         }
                         .into(),
                     }]
@@ -704,7 +749,11 @@ impl PredictionMarketsClientModule {
     }
 
     pub async fn sync_possible_order_matches(&self, order_path: OrderPath) -> anyhow::Result<()> {
-        let active_quantiy_orders: BTreeSet<_> = self.get_order_ids(OrderFilter(order_path, OrderState::ActiveQuantity)).await;
+        let active_quantiy_orders: BTreeSet<_> = Self::get_order_ids(
+            &mut self.db.begin_transaction_nc().await,
+            OrderFilter(order_path, OrderState::NonZeroQuantityWaitingForMatch),
+        )
+        .await;
 
         self.sync_orders_from_federation_concurrent_with_self(
             active_quantiy_orders.into_iter().collect(),
@@ -714,231 +763,81 @@ impl PredictionMarketsClientModule {
         Ok(())
     }
 
-    pub async fn watch_orders_on_market_outcome_side(
+    pub async fn watch_for_order_matches(
         &self,
-        market: OutPoint,
-        outcome: Outcome,
-        side: Side,
-    ) -> anyhow::Result<stop_signal::Sender> {
-        let module_api = self.module_api.clone();
-        let db = self.db.clone();
-        let root_secret = self.root_secret.clone();
-        let mut new_order_reciever = self.new_order_broadcast.0.subscribe();
-        let (stop_tx, mut stop_rx) = stop_signal::new();
-
-        self.sync_possible_order_matches(OrderPath::MarketOutcomeSide(market, outcome, side))
-            .await?;
-
-        spawn(
-            &format!("watch_orders_on_{market}_{outcome}_{side:?}"),
-            async move {
-                let mut order_to_watch = None;
-                loop {
-                    let wait_order_match_request = {
-                        let mut dbtx = db.begin_transaction_nc().await;
-                        if order_to_watch == None {
-                            order_to_watch = dbtx
-                                .find_by_prefix(&db::OrderPriceTimePriorityPrefix3 {
-                                    market,
-                                    outcome,
-                                    side,
-                                })
-                                .await
-                                .map(|(_, order_id)| order_id)
-                                .next()
-                                .await;
-                        }
-
-                        let order = if let Some(order_id) = order_to_watch {
-                            Some(
-                                dbtx.get_value(&db::OrderKey(order_id))
-                                    .await
-                                    .unwrap()
-                                    .to_order()
-                                    .unwrap(),
-                            )
-                        } else {
-                            None
-                        };
-
-                        async {
-                            if let Some(order_id) = order_to_watch {
-                                module_api
-                                    .wait_order_match(WaitOrderMatchParams {
-                                        order: order_id
-                                            .into_key_pair(root_secret.clone())
-                                            .public_key(),
-                                        current_quantity_waiting_for_match: order
-                                            .unwrap()
-                                            .quantity_waiting_for_match,
-                                    })
-                                    .await
-                            } else {
-                                futures::future::pending().await
-                            }
-                        }
-                    };
-
-                    select! {
-                        _ = stop_rx.0.recv() => {
-                            return;
-                        }
-                        res = wait_order_match_request => {
-                            if let Ok(WaitOrderMatchResult {order}) = res {
-                                while let Err(_) = {
-                                    let mut dbtx = db.begin_transaction().await;
-                                    Self::save_order_to_db(&mut dbtx.to_ref_nc(), order_to_watch.unwrap(), &order).await;
-                                    dbtx.commit_tx_result().await
-                                } {}
-                                if order.quantity_waiting_for_match == ContractOfOutcomeAmount::ZERO {
-                                    order_to_watch = None;
-                                }
-                            }
-                        }
-                        _ = new_order_reciever.recv() => {
-                            let mut dbtx = db.begin_transaction_nc().await;
-                            let order_priority_stream = dbtx
-                                .find_by_prefix(&db::OrderPriceTimePriorityPrefix3 {
-                                    market,
-                                    outcome,
-                                    side,
-                                })
-                                .await;
-                            let highest_priority_orders_till_watched_order =
-                                order_priority_stream
-                                    .map(|(_, order_id)| order_id)
-                                    .take_while(|order_id| {
-                                        let order_id = *order_id;
-                                        async move { Some(order_id) != order_to_watch }
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .await;
-                            if highest_priority_orders_till_watched_order.len() == 0 {
-                                continue;
-                            }
-                            let new_order_to_watch = highest_priority_orders_till_watched_order
-                                .get(0)
-                                .map(|id| *id);
-                            let mut orders_to_sync = vec![];
-                            if let Some(watched_order) = new_order_to_watch {
-                                orders_to_sync.push(watched_order);
-                            }
-                            highest_priority_orders_till_watched_order
-                                .into_iter()
-                                    .skip(1)
-                                    .for_each(|order| orders_to_sync.push(order));
-
-                            while let Err(_) = {
-                                Self::sync_orders_from_federation_concurrent(
-                                    root_secret.clone(),
-                                    module_api.clone(),
-                                    db.clone(),
-                                    orders_to_sync.clone()
-                                )
-                                .await
-                            } {}
-                            order_to_watch = new_order_to_watch;
-                        }
-                    }
+        order_path: OrderPath,
+    ) -> anyhow::Result<Pin<Box<dyn Future<Output = anyhow::Result<()>>>>> {
+        let mut watch_args = Vec::new();
+        match order_path {
+            OrderPath::All => unimplemented!(),
+            OrderPath::Market { market } => {
+                let market_outcome_count = match self.get_market(market, true).await? {
+                    Some(market) => market,
+                    None => self
+                        .get_market(market, false)
+                        .await?
+                        .ok_or(anyhow!("market does not exist"))?,
                 }
-            },
-        );
+                .0
+                .event()?
+                .outcome_count;
 
-        Ok(stop_tx)
-    }
-
-    /// Get all orders in the db.
-    /// Optionally provide a market (and outcome) to get only orders belonging
-    /// to that market (and outcome)
-    async fn get_order_ids(&self, filter: OrderFilter) -> BTreeSet<OrderId> {
-        let mut dbtx = self.db.begin_transaction().await;
-
-        match filter.1 {
-            OrderState::Any => {
-                match filter.0 {
-                    OrderPath::All => {
-                        dbtx.find_by_prefix(&db::OrdersByMarketOutcomePrefixAll)
-                            .await
-                    }
-                    OrderPath::Market(market) => {
-                        dbtx.find_by_prefix(&db::OrdersByMarketOutcomePrefix1 { market })
-                            .await
-                    }
-                    OrderPath::MarketOutcome(market, outcome) => {
-                        dbtx.find_by_prefix(&db::OrdersByMarketOutcomePrefix2 { market, outcome })
-                            .await
-                    }
-                    OrderPath::MarketOutcomeSide(market, outcome, side) => {
-                        dbtx.find_by_prefix(&db::OrdersByMarketOutcomePrefix3 {
-                            market,
-                            outcome,
-                            side,
-                        })
-                        .await
-                    }
+                for outcome in 0..market_outcome_count {
+                    watch_args.push((market, outcome, Side::Buy));
+                    watch_args.push((market, outcome, Side::Sell));
                 }
-                .map(|(k, _)| k.order)
-                .collect()
-                .await
             }
-            OrderState::NonZero => {
-                match filter.0 {
-                    OrderPath::All => {
-                        dbtx.find_by_prefix(&db::NonZeroOrdersByMarketOutcomePrefixAll)
-                            .await
-                    }
-                    OrderPath::Market(market) => {
-                        dbtx.find_by_prefix(&db::NonZeroOrdersByMarketOutcomePrefix1 { market })
-                            .await
-                    }
-                    OrderPath::MarketOutcome(market, outcome) => {
-                        dbtx.find_by_prefix(&db::NonZeroOrdersByMarketOutcomePrefix2 {
-                            market,
-                            outcome,
-                        })
-                        .await
-                    }
-                    OrderPath::MarketOutcomeSide(market, outcome, side) => {
-                        dbtx.find_by_prefix(&db::NonZeroOrdersByMarketOutcomePrefix3 {
-                            market,
-                            outcome,
-                            side,
-                        })
-                        .await
-                    }
-                }
-                .map(|(k, _)| k.order)
-                .collect()
-                .await
+            OrderPath::MarketOutcome { market, outcome } => {
+                watch_args.push((market, outcome, Side::Buy));
+                watch_args.push((market, outcome, Side::Sell));
             }
-            OrderState::ActiveQuantity => {
-                match filter.0 {
-                    OrderPath::All => {
-                        dbtx.find_by_prefix(&db::OrderPriceTimePriorityPrefixAll)
-                            .await
-                    }
-                    OrderPath::Market(market) => {
-                        dbtx.find_by_prefix(&db::OrderPriceTimePriorityPrefix1 { market })
-                            .await
-                    }
-                    OrderPath::MarketOutcome(market, outcome) => {
-                        dbtx.find_by_prefix(&db::OrderPriceTimePriorityPrefix2 { market, outcome })
-                            .await
-                    }
-                    OrderPath::MarketOutcomeSide(market, outcome, side) => {
-                        dbtx.find_by_prefix(&db::OrderPriceTimePriorityPrefix3 {
-                            market,
-                            outcome,
-                            side,
-                        })
-                        .await
-                    }
-                }
-                .map(|(_, v)| v)
-                .collect()
-                .await
+            OrderPath::MarketOutcomeSide {
+                market,
+                outcome,
+                side,
+            } => {
+                watch_args.push((market, outcome, side));
+            }
+        };
+
+        let results = watch_args
+            .into_iter()
+            .map(|(market, outcome, side)| async move {
+                self.watch_for_order_matches_on_market_outcome_side(market, outcome, side)
+                    .await
+            })
+            .collect::<FuturesUnordered<_>>()
+            .collect::<Vec<_>>()
+            .await;
+        let mut close_signals = Vec::new();
+        let mut close_all_and_error = false;
+        for result in results {
+            match result {
+                Ok(s) => close_signals.push(s),
+                Err(_) => close_all_and_error = true,
             }
         }
+        if close_all_and_error {
+            for s in close_signals {
+                s.wait_close().await?;
+            }
+            bail!("failed initialization of order match watchers")
+        }
+        let stop_future = Box::pin(async move {
+            let mut last_error = None;
+            for s in close_signals {
+                if let Err(e) = s.wait_close().await {
+                    last_error = Some(e);
+                }
+            }
+            if let Some(e) = last_error {
+                bail!("failed to stop 1 or more watchers: {e}")
+            }
+
+            Ok(())
+        });
+
+        Ok(stop_future)
     }
 
     /// Scans for all orders that the client owns.
@@ -1286,6 +1185,247 @@ impl PredictionMarketsClientModule {
             }
         })
     }
+
+    async fn get_order_ids<'a>(
+        dbtx: &mut DatabaseTransaction<'a>,
+        filter: OrderFilter,
+    ) -> BTreeSet<OrderId> {
+        match filter.1 {
+            OrderState::Any => {
+                match filter.0 {
+                    OrderPath::All => {
+                        dbtx.find_by_prefix(&db::OrdersByMarketOutcomePrefixAll)
+                            .await
+                    }
+                    OrderPath::Market { market } => {
+                        dbtx.find_by_prefix(&db::OrdersByMarketOutcomePrefix1 { market })
+                            .await
+                    }
+                    OrderPath::MarketOutcome { market, outcome } => {
+                        dbtx.find_by_prefix(&db::OrdersByMarketOutcomePrefix2 { market, outcome })
+                            .await
+                    }
+                    OrderPath::MarketOutcomeSide {
+                        market,
+                        outcome,
+                        side,
+                    } => {
+                        dbtx.find_by_prefix(&db::OrdersByMarketOutcomePrefix3 {
+                            market,
+                            outcome,
+                            side,
+                        })
+                        .await
+                    }
+                }
+                .map(|(k, _)| k.order)
+                .collect()
+                .await
+            }
+            OrderState::NonZero => {
+                match filter.0 {
+                    OrderPath::All => {
+                        dbtx.find_by_prefix(&db::NonZeroOrdersByMarketOutcomePrefixAll)
+                            .await
+                    }
+                    OrderPath::Market { market } => {
+                        dbtx.find_by_prefix(&db::NonZeroOrdersByMarketOutcomePrefix1 { market })
+                            .await
+                    }
+                    OrderPath::MarketOutcome { market, outcome } => {
+                        dbtx.find_by_prefix(&db::NonZeroOrdersByMarketOutcomePrefix2 {
+                            market,
+                            outcome,
+                        })
+                        .await
+                    }
+                    OrderPath::MarketOutcomeSide {
+                        market,
+                        outcome,
+                        side,
+                    } => {
+                        dbtx.find_by_prefix(&db::NonZeroOrdersByMarketOutcomePrefix3 {
+                            market,
+                            outcome,
+                            side,
+                        })
+                        .await
+                    }
+                }
+                .map(|(k, _)| k.order)
+                .collect()
+                .await
+            }
+            OrderState::NonZeroQuantityWaitingForMatch => {
+                match filter.0 {
+                    OrderPath::All => {
+                        dbtx.find_by_prefix(&db::OrderPriceTimePriorityPrefixAll)
+                            .await
+                    }
+                    OrderPath::Market { market } => {
+                        dbtx.find_by_prefix(&db::OrderPriceTimePriorityPrefix1 { market })
+                            .await
+                    }
+                    OrderPath::MarketOutcome { market, outcome } => {
+                        dbtx.find_by_prefix(&db::OrderPriceTimePriorityPrefix2 { market, outcome })
+                            .await
+                    }
+                    OrderPath::MarketOutcomeSide {
+                        market,
+                        outcome,
+                        side,
+                    } => {
+                        dbtx.find_by_prefix(&db::OrderPriceTimePriorityPrefix3 {
+                            market,
+                            outcome,
+                            side,
+                        })
+                        .await
+                    }
+                }
+                .map(|(_, v)| v)
+                .collect()
+                .await
+            }
+        }
+    }
+
+    async fn watch_for_order_matches_on_market_outcome_side(
+        &self,
+        market: OutPoint,
+        outcome: Outcome,
+        side: Side,
+    ) -> anyhow::Result<stop_signal::Sender> {
+        let module_api = self.module_api.clone();
+        let db = self.db.clone();
+        let root_secret = self.root_secret.clone();
+        let mut new_order_reciever = self.new_order_broadcast.0.subscribe();
+        let (stop_tx, mut stop_rx) = stop_signal::new();
+
+        self.sync_possible_order_matches(OrderPath::MarketOutcomeSide {
+            market,
+            outcome,
+            side,
+        })
+        .await?;
+
+        spawn(
+            &format!("watch_orders_on_{market}_{outcome}_{side:?}"),
+            async move {
+                let mut order_to_watch = None;
+                loop {
+                    let wait_order_match_request = {
+                        let mut dbtx = db.begin_transaction_nc().await;
+                        if order_to_watch == None {
+                            order_to_watch = dbtx
+                                .find_by_prefix(&db::OrderPriceTimePriorityPrefix3 {
+                                    market,
+                                    outcome,
+                                    side,
+                                })
+                                .await
+                                .map(|(_, order_id)| order_id)
+                                .next()
+                                .await;
+                        }
+
+                        let order = if let Some(order_id) = order_to_watch {
+                            Some(
+                                dbtx.get_value(&db::OrderKey(order_id))
+                                    .await
+                                    .unwrap()
+                                    .to_order()
+                                    .unwrap(),
+                            )
+                        } else {
+                            None
+                        };
+
+                        async {
+                            if let Some(order_id) = order_to_watch {
+                                module_api
+                                    .wait_order_match(WaitOrderMatchParams {
+                                        order: order_id
+                                            .into_key_pair(root_secret.clone())
+                                            .public_key(),
+                                        current_quantity_waiting_for_match: order
+                                            .unwrap()
+                                            .quantity_waiting_for_match,
+                                    })
+                                    .await
+                            } else {
+                                futures::future::pending().await
+                            }
+                        }
+                    };
+
+                    select! {
+                        _ = stop_rx.0.recv() => {
+                            return;
+                        }
+                        res = wait_order_match_request => {
+                            if let Ok(WaitOrderMatchResult {order}) = res {
+                                while let Err(_) = {
+                                    let mut dbtx = db.begin_transaction().await;
+                                    Self::save_order_to_db(&mut dbtx.to_ref_nc(), order_to_watch.unwrap(), &order).await;
+                                    dbtx.commit_tx_result().await
+                                } {}
+                                if order.quantity_waiting_for_match == ContractOfOutcomeAmount::ZERO {
+                                    order_to_watch = None;
+                                }
+                            }
+                        }
+                        _ = new_order_reciever.recv() => {
+                            let mut dbtx = db.begin_transaction_nc().await;
+                            let order_priority_stream = dbtx
+                                .find_by_prefix(&db::OrderPriceTimePriorityPrefix3 {
+                                    market,
+                                    outcome,
+                                    side,
+                                })
+                                .await;
+                            let highest_priority_orders_till_watched_order =
+                                order_priority_stream
+                                    .map(|(_, order_id)| order_id)
+                                    .take_while(|order_id| {
+                                        let order_id = *order_id;
+                                        async move { Some(order_id) != order_to_watch }
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .await;
+                            if highest_priority_orders_till_watched_order.len() == 0 {
+                                continue;
+                            }
+                            let new_order_to_watch = highest_priority_orders_till_watched_order
+                                .get(0)
+                                .map(|id| *id);
+                            let mut orders_to_sync = vec![];
+                            if let Some(watched_order) = new_order_to_watch {
+                                orders_to_sync.push(watched_order);
+                            }
+                            highest_priority_orders_till_watched_order
+                                .into_iter()
+                                    .skip(1)
+                                    .for_each(|order| orders_to_sync.push(order));
+
+                            while let Err(_) = {
+                                Self::sync_orders_from_federation_concurrent(
+                                    root_secret.clone(),
+                                    module_api.clone(),
+                                    db.clone(),
+                                    orders_to_sync.clone()
+                                )
+                                .await
+                            } {}
+                            order_to_watch = new_order_to_watch;
+                        }
+                    }
+                }
+            },
+        );
+
+        Ok(stop_tx)
+    }
 }
 
 #[apply(async_trait_maybe_send!)]
@@ -1300,6 +1440,7 @@ impl ClientModule for PredictionMarketsClientModule {
         PredictionMarketsClientContext {
             prediction_markets_decoder: self.decoder(),
             new_order_broadcast_sender: self.new_order_broadcast.0.clone(),
+            root_secret: self.root_secret.clone(),
         }
     }
 
@@ -1393,13 +1534,15 @@ pub mod order_filter {
         pub fn filter(&self, order: &Order) -> bool {
             let res = match &self.0 {
                 OrderPath::All => true,
-                OrderPath::Market(market) => &order.market == market,
-                OrderPath::MarketOutcome(market, outcome) => {
+                OrderPath::Market { market } => &order.market == market,
+                OrderPath::MarketOutcome { market, outcome } => {
                     &order.market == market && &order.outcome == outcome
                 }
-                OrderPath::MarketOutcomeSide(market, outcome, side) => {
-                    &order.market == market && &order.outcome == outcome && &order.side == side
-                }
+                OrderPath::MarketOutcomeSide {
+                    market,
+                    outcome,
+                    side,
+                } => &order.market == market && &order.outcome == outcome && &order.side == side,
             } && match &self.1 {
                 OrderState::Any => true,
                 OrderState::NonZero => {
@@ -1407,7 +1550,7 @@ pub mod order_filter {
                         && order.contract_of_outcome_balance != ContractOfOutcomeAmount::ZERO
                         && order.bitcoin_balance != Amount::ZERO
                 }
-                OrderState::ActiveQuantity => {
+                OrderState::NonZeroQuantityWaitingForMatch => {
                     order.quantity_waiting_for_match != ContractOfOutcomeAmount::ZERO
                 }
             };
@@ -1421,9 +1564,18 @@ pub mod order_filter {
     )]
     pub enum OrderPath {
         All,
-        Market(OutPoint),
-        MarketOutcome(OutPoint, Outcome),
-        MarketOutcomeSide(OutPoint, Outcome, Side),
+        Market {
+            market: OutPoint,
+        },
+        MarketOutcome {
+            market: OutPoint,
+            outcome: Outcome,
+        },
+        MarketOutcomeSide {
+            market: OutPoint,
+            outcome: Outcome,
+            side: Side,
+        },
     }
 
     #[derive(
@@ -1432,7 +1584,7 @@ pub mod order_filter {
     pub enum OrderState {
         Any,
         NonZero,
-        ActiveQuantity,
+        NonZeroQuantityWaitingForMatch,
     }
 }
 
