@@ -61,6 +61,9 @@ mod cli;
 mod db;
 mod states;
 
+pub mod order_filter;
+pub mod stop_signal;
+
 #[derive(Debug)]
 pub struct PredictionMarketsClientModule {
     cfg: PredictionMarketsClientConfig,
@@ -1515,109 +1518,5 @@ pub fn market_outpoint_from_tx_id(tx_id: TransactionId) -> OutPoint {
     OutPoint {
         txid: tx_id,
         out_idx: 0,
-    }
-}
-
-pub mod order_filter {
-    use fedimint_core::encoding::{Decodable, Encodable};
-    use fedimint_core::{Amount, OutPoint};
-    use fedimint_prediction_markets_common::{ContractOfOutcomeAmount, Order, Side};
-    use prediction_market_event::Outcome;
-    use serde::{Deserialize, Serialize};
-
-    #[derive(
-        Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash,
-    )]
-    pub struct OrderFilter(pub OrderPath, pub OrderState);
-
-    impl OrderFilter {
-        pub fn filter(&self, order: &Order) -> bool {
-            let res = match &self.0 {
-                OrderPath::All => true,
-                OrderPath::Market { market } => &order.market == market,
-                OrderPath::MarketOutcome { market, outcome } => {
-                    &order.market == market && &order.outcome == outcome
-                }
-                OrderPath::MarketOutcomeSide {
-                    market,
-                    outcome,
-                    side,
-                } => &order.market == market && &order.outcome == outcome && &order.side == side,
-            } && match &self.1 {
-                OrderState::Any => true,
-                OrderState::NonZero => {
-                    order.quantity_waiting_for_match != ContractOfOutcomeAmount::ZERO
-                        && order.contract_of_outcome_balance != ContractOfOutcomeAmount::ZERO
-                        && order.bitcoin_balance != Amount::ZERO
-                }
-                OrderState::NonZeroQuantityWaitingForMatch => {
-                    order.quantity_waiting_for_match != ContractOfOutcomeAmount::ZERO
-                }
-            };
-
-            res
-        }
-    }
-
-    #[derive(
-        Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash,
-    )]
-    pub enum OrderPath {
-        All,
-        Market {
-            market: OutPoint,
-        },
-        MarketOutcome {
-            market: OutPoint,
-            outcome: Outcome,
-        },
-        MarketOutcomeSide {
-            market: OutPoint,
-            outcome: Outcome,
-            side: Side,
-        },
-    }
-
-    #[derive(
-        Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash,
-    )]
-    pub enum OrderState {
-        Any,
-        NonZero,
-        NonZeroQuantityWaitingForMatch,
-    }
-}
-
-mod stop_signal {
-    use tokio::spawn;
-    use tokio::sync::mpsc;
-
-    pub fn new() -> (Sender, Reciever) {
-        let (tx, rx) = mpsc::channel::<CloseConfirmationWrapper>(1);
-
-        (Sender(tx), Reciever(rx))
-    }
-
-    pub struct Reciever(pub mpsc::Receiver<CloseConfirmationWrapper>);
-
-    pub struct Sender(mpsc::Sender<CloseConfirmationWrapper>);
-    impl Sender {
-        pub async fn wait_close(self) -> anyhow::Result<()> {
-            let (tx, mut rx) = mpsc::channel(1);
-            self.0.send(CloseConfirmationWrapper(tx)).await?;
-            rx.recv().await.unwrap();
-
-            Ok(())
-        }
-    }
-
-    pub struct CloseConfirmationWrapper(mpsc::Sender<()>);
-    impl Drop for CloseConfirmationWrapper {
-        fn drop(&mut self) {
-            let tx = self.0.clone();
-            spawn(async move {
-                _ = tx.send(()).await;
-            });
-        }
     }
 }
