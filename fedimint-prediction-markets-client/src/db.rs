@@ -19,19 +19,27 @@ pub enum DbKeyPrefix {
     /// [OrderId] to [Order]
     Order = 0x01,
 
-    /// Orders by market outcome
+    /// Orders by market outcome side
     ///
-    /// (Market's [OutPoint], [Outcome], [OrderId], [Side]) to ()
-    OrdersByMarketOutcomeSide = 0x21,
+    /// (Market's [OutPoint], [Outcome], [Side], [OrderId]) to ()
+    OrdersByMarketOutcomeSide = 0x20,
 
-    /// Orders with some kind of balance.
+    /// Client's orders placed into an orderbook.
+    /// Can also be used to get orders with non zero quantity waiting for match.
     ///
-    /// (Market's [OutPoint], [Outcome], [OrderId], [Side]) to ()
-    NonZeroOrdersByMarketOutcomeSide = 0x22,
-
     /// (Market's [OutPoint], [Outcome], [Side], Price priority [u64],
     /// [TimeOrdering]) to ([OrderId])
-    OrderPriceTimePriority = 0x23,
+    OrderPriceTimePriority = 0x21,
+
+    /// Orders with non zero contract of outcome balance.
+    ///
+    /// (Market's [OutPoint], [Outcome], [Side], [OrderId]) to ()
+    OrdersWithNonZeroContractOfOutcomeBalanceByMarketOutcomeSide = 0x22,
+
+    /// Orders with non zero contract of bitcoin balance.
+    ///
+    /// (Market's [OutPoint], [Outcome], [Side], [OrderId]) to ()
+    OrdersWithNonZeroBitcoinBalanceByMarketOutcomeSide = 0x23,
 
     /// (Market's [OutPoint]) to (Saved to db [UnixTimestamp])
     ClientSavedMarkets = 0x41,
@@ -130,9 +138,9 @@ impl_db_lookup!(
     query_prefix = OrdersByMarketOutcomePrefix3
 );
 
-// NonZeroOrdersByMarketOutcome
+// OrdersWithNonZeroContractOfOutcomeBalanceByMarketOutcomeSide
 #[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash)]
-pub struct NonZeroOrdersByMarketOutcomeKey {
+pub struct OrdersWithNonZeroContractOfOutcomeBalanceByMarketOutcomeSideKey {
     pub market: OutPoint,
     pub outcome: Outcome,
     pub side: Side,
@@ -140,38 +148,82 @@ pub struct NonZeroOrdersByMarketOutcomeKey {
 }
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct NonZeroOrdersByMarketOutcomePrefixAll;
+pub struct OrdersWithNonZeroContractOfOutcomeBalanceByMarketOutcomeSidePrefixAll;
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct NonZeroOrdersByMarketOutcomePrefix1 {
+pub struct OrdersWithNonZeroContractOfOutcomeBalanceByMarketOutcomeSidePrefix1 {
     pub market: OutPoint,
 }
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct NonZeroOrdersByMarketOutcomePrefix2 {
+pub struct OrdersWithNonZeroContractOfOutcomeBalanceByMarketOutcomeSidePrefix2 {
     pub market: OutPoint,
     pub outcome: Outcome,
 }
 
 #[derive(Debug, Encodable, Decodable)]
-pub struct NonZeroOrdersByMarketOutcomePrefix3 {
+pub struct OrdersWithNonZeroContractOfOutcomeBalanceByMarketOutcomeSidePrefix3 {
     pub market: OutPoint,
     pub outcome: Outcome,
     pub side: Side,
 }
 
 impl_db_record!(
-    key = NonZeroOrdersByMarketOutcomeKey,
+    key = OrdersWithNonZeroContractOfOutcomeBalanceByMarketOutcomeSideKey,
     value = (),
-    db_prefix = DbKeyPrefix::NonZeroOrdersByMarketOutcomeSide,
+    db_prefix = DbKeyPrefix::OrdersWithNonZeroContractOfOutcomeBalanceByMarketOutcomeSide,
 );
 
 impl_db_lookup!(
-    key = NonZeroOrdersByMarketOutcomeKey,
-    query_prefix = NonZeroOrdersByMarketOutcomePrefixAll,
-    query_prefix = NonZeroOrdersByMarketOutcomePrefix1,
-    query_prefix = NonZeroOrdersByMarketOutcomePrefix2,
-    query_prefix = NonZeroOrdersByMarketOutcomePrefix3
+    key = OrdersWithNonZeroContractOfOutcomeBalanceByMarketOutcomeSideKey,
+    query_prefix = OrdersWithNonZeroContractOfOutcomeBalanceByMarketOutcomeSidePrefixAll,
+    query_prefix = OrdersWithNonZeroContractOfOutcomeBalanceByMarketOutcomeSidePrefix1,
+    query_prefix = OrdersWithNonZeroContractOfOutcomeBalanceByMarketOutcomeSidePrefix2,
+    query_prefix = OrdersWithNonZeroContractOfOutcomeBalanceByMarketOutcomeSidePrefix3
+);
+
+// OrdersWithNonZeroBitcoinBalanceByMarketOutcomeSide
+#[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash)]
+pub struct OrdersWithNonZeroBitcoinBalanceByMarketOutcomeSideKey {
+    pub market: OutPoint,
+    pub outcome: Outcome,
+    pub side: Side,
+    pub order: OrderId,
+}
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct OrdersWithNonZeroBitcoinBalanceByMarketOutcomeSidePrefixAll;
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct OrdersWithNonZeroBitcoinBalanceByMarketOutcomeSidePrefix1 {
+    pub market: OutPoint,
+}
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct OrdersWithNonZeroBitcoinBalanceByMarketOutcomeSidePrefix2 {
+    pub market: OutPoint,
+    pub outcome: Outcome,
+}
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct OrdersWithNonZeroBitcoinBalanceByMarketOutcomeSidePrefix3 {
+    pub market: OutPoint,
+    pub outcome: Outcome,
+    pub side: Side,
+}
+
+impl_db_record!(
+    key = OrdersWithNonZeroBitcoinBalanceByMarketOutcomeSideKey,
+    value = (),
+    db_prefix = DbKeyPrefix::OrdersWithNonZeroBitcoinBalanceByMarketOutcomeSide,
+);
+
+impl_db_lookup!(
+    key = OrdersWithNonZeroBitcoinBalanceByMarketOutcomeSideKey,
+    query_prefix = OrdersWithNonZeroBitcoinBalanceByMarketOutcomeSidePrefixAll,
+    query_prefix = OrdersWithNonZeroBitcoinBalanceByMarketOutcomeSidePrefix1,
+    query_prefix = OrdersWithNonZeroBitcoinBalanceByMarketOutcomeSidePrefix2,
+    query_prefix = OrdersWithNonZeroBitcoinBalanceByMarketOutcomeSidePrefix3
 );
 
 // ClientSavedMarkets

@@ -73,7 +73,7 @@ pub struct PredictionMarketsClientModule {
     db: Database,
     module_api: DynModuleApi,
 
-    pub new_order_broadcast: Arc<(broadcast::Sender<OrderId>, broadcast::Receiver<OrderId>)>,
+    new_order_broadcast: Arc<(broadcast::Sender<OrderId>, broadcast::Receiver<OrderId>)>,
 }
 
 /// Data needed by the state machine
@@ -102,7 +102,6 @@ impl ModuleInit for PredictionMarketsClientInit {
     }
 }
 
-/// Generates the client module
 #[apply(async_trait_maybe_send!)]
 impl ClientModuleInit for PredictionMarketsClientInit {
     type Module = PredictionMarketsClientModule;
@@ -124,6 +123,53 @@ impl ClientModuleInit for PredictionMarketsClientInit {
 
             new_order_broadcast,
         })
+    }
+}
+
+#[apply(async_trait_maybe_send!)]
+impl ClientModule for PredictionMarketsClientModule {
+    type Init = PredictionMarketsClientInit;
+    type Common = PredictionMarketsModuleTypes;
+    type Backup = NoModuleBackup;
+    type ModuleStateMachineContext = PredictionMarketsClientContext;
+    type States = PredictionMarketsStateMachine;
+
+    fn context(&self) -> Self::ModuleStateMachineContext {
+        PredictionMarketsClientContext {
+            prediction_markets_decoder: self.decoder(),
+            new_order_broadcast_sender: self.new_order_broadcast.0.clone(),
+            root_secret: self.root_secret.clone(),
+        }
+    }
+
+    fn input_fee(&self, input: &<Self::Common as ModuleCommon>::Input) -> Option<Amount> {
+        Some(match input {
+            PredictionMarketsInput::CancelOrder { .. } => Amount::ZERO,
+            PredictionMarketsInput::ConsumeOrderBitcoinBalance { .. } => {
+                self.cfg.gc.consume_order_bitcoin_balance_fee
+            }
+            PredictionMarketsInput::NewSellOrder { .. } => self.cfg.gc.new_order_fee,
+        })
+    }
+
+    fn output_fee(&self, output: &<Self::Common as ModuleCommon>::Output) -> Option<Amount> {
+        Some(match output {
+            PredictionMarketsOutput::NewMarket { .. } => self.cfg.gc.new_market_fee,
+            PredictionMarketsOutput::NewBuyOrder { .. } => self.cfg.gc.new_order_fee,
+            PredictionMarketsOutput::PayoutMarket { .. } => Amount::ZERO,
+        })
+    }
+
+    #[cfg(feature = "cli")]
+    async fn handle_cli_command(
+        &self,
+        args: &[std::ffi::OsString],
+    ) -> anyhow::Result<serde_json::Value> {
+        cli::handle_cli_command(self, args).await
+    }
+
+    fn supports_backup(&self) -> bool {
+        false
     }
 }
 
@@ -363,7 +409,7 @@ impl PredictionMarketsClientModule {
                 let mut sources = BTreeMap::new();
                 let mut sources_keys_combined = None;
 
-                let non_zero_market_outcome_orders = Self::get_order_ids(
+                let possible_source_orders = Self::get_order_ids(
                     &mut dbtx.to_ref_nc(),
                     OrderFilter(
                         OrderPath::MarketOutcomeSide {
@@ -371,13 +417,13 @@ impl PredictionMarketsClientModule {
                             outcome,
                             side,
                         },
-                        OrderState::NonZero,
+                        OrderState::NonZeroContractOfOutcomeBalance,
                     ),
                 )
                 .await;
 
                 let mut sourced_quantity = ContractOfOutcomeAmount::ZERO;
-                for (i, loop_order_id) in non_zero_market_outcome_orders.into_iter().enumerate() {
+                for (i, loop_order_id) in possible_source_orders.into_iter().enumerate() {
                     if i == usize::from(self.cfg.gc.max_sell_order_sources) {
                         bail!("max number of sell order sources reached. try again with a quantity less than or equal to {}", sourced_quantity.0)
                     }
@@ -388,10 +434,6 @@ impl PredictionMarketsClientModule {
                         .unwrap()
                         .to_order()
                         .unwrap();
-
-                    if loop_order.contract_of_outcome_balance == ContractOfOutcomeAmount::ZERO {
-                        continue;
-                    }
 
                     let loop_order_key = self.order_id_to_key_pair(loop_order_id);
                     let loop_sourced_quantity_from_order = loop_order
@@ -628,21 +670,11 @@ impl PredictionMarketsClientModule {
 
         let mut dbtx = self.db.begin_transaction().await;
 
-        let non_zero_orders = dbtx
-            .find_by_prefix(&db::NonZeroOrdersByMarketOutcomePrefixAll)
-            .await
-            .map(|(key, _)| key.order)
-            .collect::<Vec<_>>()
-            .await;
-
-        let mut orders_with_non_zero_bitcoin_balance = vec![];
-        for order_id in non_zero_orders {
-            let order = self.get_order(order_id, true).await?.unwrap();
-
-            if order.bitcoin_balance != Amount::ZERO {
-                orders_with_non_zero_bitcoin_balance.push((order_id, order));
-            }
-        }
+        let orders_with_non_zero_bitcoin_balance = Self::get_order_ids(
+            &mut dbtx.to_ref_nc(),
+            OrderFilter(OrderPath::All, OrderState::NonZeroBitcoinBalance),
+        )
+        .await;
 
         if orders_with_non_zero_bitcoin_balance.len() == 0 {
             return Ok(Amount::ZERO);
@@ -650,12 +682,13 @@ impl PredictionMarketsClientModule {
 
         let mut total_amount = Amount::ZERO;
         let mut tx = TransactionBuilder::new();
-        for (order_id, order) in orders_with_non_zero_bitcoin_balance {
+        for order_id in orders_with_non_zero_bitcoin_balance {
+            let order = self.get_order(order_id, true).await?.unwrap();
             let order_key = self.order_id_to_key_pair(order_id);
 
             let input = ClientInput {
                 input: PredictionMarketsInput::ConsumeOrderBitcoinBalance {
-                    order: PublicKey::from_keypair(&order_key),
+                    order: order_key.public_key(),
                     amount: order.bitcoin_balance,
                 },
                 amount: order.bitcoin_balance,
@@ -712,11 +745,13 @@ impl PredictionMarketsClientModule {
         let markets_to_check_payout: BTreeSet<_> = match market_specifier {
             Some(market) => iter::once(market).collect(),
             None => {
-                dbtx.find_by_prefix(&db::NonZeroOrdersByMarketOutcomePrefixAll)
-                    .await
-                    .map(|(k, _)| k.market)
-                    .collect()
-                    .await
+                dbtx.find_by_prefix(
+                    &db::OrdersWithNonZeroContractOfOutcomeBalanceByMarketOutcomeSidePrefixAll,
+                )
+                .await
+                .map(|(k, _)| k.market)
+                .collect()
+                .await
             }
         };
 
@@ -733,14 +768,16 @@ impl PredictionMarketsClientModule {
                 continue;
             }
 
-            let mut market_orders: BTreeSet<_> = dbtx
-                .find_by_prefix(&db::NonZeroOrdersByMarketOutcomePrefix1 { market })
-                .await
-                .map(|(k, _)| k.order)
-                .collect()
-                .await;
+            let mut market_orders_mutated_by_payout: BTreeSet<_> = Self::get_order_ids(
+                &mut dbtx.to_ref_nc(),
+                OrderFilter(
+                    OrderPath::Market { market },
+                    OrderState::NonZeroContractOfOutcomeBalance,
+                ),
+            )
+            .await;
 
-            orders_to_update.append(&mut market_orders);
+            orders_to_update.append(&mut market_orders_mutated_by_payout);
         }
 
         self.sync_orders_from_federation_concurrent_with_self(
@@ -1049,12 +1086,17 @@ impl PredictionMarketsClientModule {
         )
         .await;
 
-        if order.quantity_waiting_for_match != ContractOfOutcomeAmount::ZERO
-            || order.contract_of_outcome_balance != ContractOfOutcomeAmount::ZERO
-            || order.bitcoin_balance != Amount::ZERO
-        {
+        if order.quantity_waiting_for_match != ContractOfOutcomeAmount::ZERO {
+            dbtx.insert_entry(&db::OrderPriceTimePriorityKey::from_order(order), &id)
+                .await;
+        } else {
+            dbtx.remove_entry(&db::OrderPriceTimePriorityKey::from_order(order))
+                .await;
+        }
+
+        if order.contract_of_outcome_balance != ContractOfOutcomeAmount::ZERO {
             dbtx.insert_entry(
-                &db::NonZeroOrdersByMarketOutcomeKey {
+                &db::OrdersWithNonZeroContractOfOutcomeBalanceByMarketOutcomeSideKey {
                     market: order.market,
                     outcome: order.outcome,
                     side: order.side,
@@ -1064,21 +1106,36 @@ impl PredictionMarketsClientModule {
             )
             .await;
         } else {
-            dbtx.remove_entry(&db::NonZeroOrdersByMarketOutcomeKey {
+            dbtx.remove_entry(
+                &db::OrdersWithNonZeroContractOfOutcomeBalanceByMarketOutcomeSideKey {
+                    market: order.market,
+                    outcome: order.outcome,
+                    side: order.side,
+                    order: id,
+                },
+            )
+            .await;
+        }
+
+        if order.bitcoin_balance != Amount::ZERO {
+            dbtx.insert_entry(
+                &db::OrdersWithNonZeroBitcoinBalanceByMarketOutcomeSideKey {
+                    market: order.market,
+                    outcome: order.outcome,
+                    side: order.side,
+                    order: id,
+                },
+                &(),
+            )
+            .await;
+        } else {
+            dbtx.remove_entry(&db::OrdersWithNonZeroBitcoinBalanceByMarketOutcomeSideKey {
                 market: order.market,
                 outcome: order.outcome,
                 side: order.side,
                 order: id,
             })
             .await;
-        }
-
-        if order.quantity_waiting_for_match != ContractOfOutcomeAmount::ZERO {
-            dbtx.insert_entry(&db::OrderPriceTimePriorityKey::from_order(order), &id)
-                .await;
-        } else {
-            dbtx.remove_entry(&db::OrderPriceTimePriorityKey::from_order(order))
-                .await;
         }
     }
 
@@ -1225,40 +1282,7 @@ impl PredictionMarketsClientModule {
                 .collect()
                 .await
             }
-            OrderState::NonZero => {
-                match filter.0 {
-                    OrderPath::All => {
-                        dbtx.find_by_prefix(&db::NonZeroOrdersByMarketOutcomePrefixAll)
-                            .await
-                    }
-                    OrderPath::Market { market } => {
-                        dbtx.find_by_prefix(&db::NonZeroOrdersByMarketOutcomePrefix1 { market })
-                            .await
-                    }
-                    OrderPath::MarketOutcome { market, outcome } => {
-                        dbtx.find_by_prefix(&db::NonZeroOrdersByMarketOutcomePrefix2 {
-                            market,
-                            outcome,
-                        })
-                        .await
-                    }
-                    OrderPath::MarketOutcomeSide {
-                        market,
-                        outcome,
-                        side,
-                    } => {
-                        dbtx.find_by_prefix(&db::NonZeroOrdersByMarketOutcomePrefix3 {
-                            market,
-                            outcome,
-                            side,
-                        })
-                        .await
-                    }
-                }
-                .map(|(k, _)| k.order)
-                .collect()
-                .await
-            }
+
             OrderState::NonZeroQuantityWaitingForMatch => {
                 match filter.0 {
                     OrderPath::All => {
@@ -1287,6 +1311,92 @@ impl PredictionMarketsClientModule {
                     }
                 }
                 .map(|(_, v)| v)
+                .collect()
+                .await
+            }
+            OrderState::NonZeroContractOfOutcomeBalance => match filter.0 {
+                OrderPath::All => {
+                    dbtx.find_by_prefix(
+                        &db::OrdersWithNonZeroContractOfOutcomeBalanceByMarketOutcomeSidePrefixAll,
+                    )
+                    .await
+                }
+                OrderPath::Market { market } => {
+                    dbtx.find_by_prefix(
+                        &db::OrdersWithNonZeroContractOfOutcomeBalanceByMarketOutcomeSidePrefix1 {
+                            market,
+                        },
+                    )
+                    .await
+                }
+                OrderPath::MarketOutcome { market, outcome } => {
+                    dbtx.find_by_prefix(
+                        &db::OrdersWithNonZeroContractOfOutcomeBalanceByMarketOutcomeSidePrefix2 {
+                            market,
+                            outcome,
+                        },
+                    )
+                    .await
+                }
+                OrderPath::MarketOutcomeSide {
+                    market,
+                    outcome,
+                    side,
+                } => {
+                    dbtx.find_by_prefix(
+                        &db::OrdersWithNonZeroContractOfOutcomeBalanceByMarketOutcomeSidePrefix3 {
+                            market,
+                            outcome,
+                            side,
+                        },
+                    )
+                    .await
+                }
+            }
+            .map(|(k, _)| k.order)
+            .collect()
+            .await,
+            OrderState::NonZeroBitcoinBalance => {
+                match filter.0 {
+                    OrderPath::All => {
+                        dbtx.find_by_prefix(
+                            &db::OrdersWithNonZeroBitcoinBalanceByMarketOutcomeSidePrefixAll,
+                        )
+                        .await
+                    }
+                    OrderPath::Market { market } => {
+                        dbtx.find_by_prefix(
+                            &db::OrdersWithNonZeroBitcoinBalanceByMarketOutcomeSidePrefix1 {
+                                market,
+                            },
+                        )
+                        .await
+                    }
+                    OrderPath::MarketOutcome { market, outcome } => {
+                        dbtx.find_by_prefix(
+                            &db::OrdersWithNonZeroBitcoinBalanceByMarketOutcomeSidePrefix2 {
+                                market,
+                                outcome,
+                            },
+                        )
+                        .await
+                    }
+                    OrderPath::MarketOutcomeSide {
+                        market,
+                        outcome,
+                        side,
+                    } => {
+                        dbtx.find_by_prefix(
+                            &db::OrdersWithNonZeroBitcoinBalanceByMarketOutcomeSidePrefix3 {
+                                market,
+                                outcome,
+                                side,
+                            },
+                        )
+                        .await
+                    }
+                }
+                .map(|(k, _)| k.order)
                 .collect()
                 .await
             }
@@ -1428,53 +1538,6 @@ impl PredictionMarketsClientModule {
         );
 
         Ok(stop_tx)
-    }
-}
-
-#[apply(async_trait_maybe_send!)]
-impl ClientModule for PredictionMarketsClientModule {
-    type Init = PredictionMarketsClientInit;
-    type Common = PredictionMarketsModuleTypes;
-    type Backup = NoModuleBackup;
-    type ModuleStateMachineContext = PredictionMarketsClientContext;
-    type States = PredictionMarketsStateMachine;
-
-    fn context(&self) -> Self::ModuleStateMachineContext {
-        PredictionMarketsClientContext {
-            prediction_markets_decoder: self.decoder(),
-            new_order_broadcast_sender: self.new_order_broadcast.0.clone(),
-            root_secret: self.root_secret.clone(),
-        }
-    }
-
-    fn input_fee(&self, input: &<Self::Common as ModuleCommon>::Input) -> Option<Amount> {
-        Some(match input {
-            PredictionMarketsInput::CancelOrder { .. } => Amount::ZERO,
-            PredictionMarketsInput::ConsumeOrderBitcoinBalance { .. } => {
-                self.cfg.gc.consume_order_bitcoin_balance_fee
-            }
-            PredictionMarketsInput::NewSellOrder { .. } => self.cfg.gc.new_order_fee,
-        })
-    }
-
-    fn output_fee(&self, output: &<Self::Common as ModuleCommon>::Output) -> Option<Amount> {
-        Some(match output {
-            PredictionMarketsOutput::NewMarket { .. } => self.cfg.gc.new_market_fee,
-            PredictionMarketsOutput::NewBuyOrder { .. } => self.cfg.gc.new_order_fee,
-            PredictionMarketsOutput::PayoutMarket { .. } => Amount::ZERO,
-        })
-    }
-
-    #[cfg(feature = "cli")]
-    async fn handle_cli_command(
-        &self,
-        args: &[std::ffi::OsString],
-    ) -> anyhow::Result<serde_json::Value> {
-        cli::handle_cli_command(self, args).await
-    }
-
-    fn supports_backup(&self) -> bool {
-        false
     }
 }
 

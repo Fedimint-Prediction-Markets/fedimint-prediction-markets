@@ -1,4 +1,3 @@
-
 use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::{Amount, OutPoint};
 use fedimint_prediction_markets_common::{ContractOfOutcomeAmount, Order, Side};
@@ -23,14 +22,13 @@ impl OrderFilter {
             } => &order.market == market && &order.outcome == outcome && &order.side == side,
         } && match &self.1 {
             OrderState::Any => true,
-            OrderState::NonZero => {
-                order.quantity_waiting_for_match != ContractOfOutcomeAmount::ZERO
-                    && order.contract_of_outcome_balance != ContractOfOutcomeAmount::ZERO
-                    && order.bitcoin_balance != Amount::ZERO
-            }
             OrderState::NonZeroQuantityWaitingForMatch => {
                 order.quantity_waiting_for_match != ContractOfOutcomeAmount::ZERO
             }
+            OrderState::NonZeroContractOfOutcomeBalance => {
+                order.contract_of_outcome_balance != ContractOfOutcomeAmount::ZERO
+            }
+            OrderState::NonZeroBitcoinBalance => order.bitcoin_balance != Amount::ZERO,
         };
 
         res
@@ -57,6 +55,7 @@ pub enum OrderPath {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub enum OrderState {
     Any,
-    NonZero,
     NonZeroQuantityWaitingForMatch,
+    NonZeroContractOfOutcomeBalance,
+    NonZeroBitcoinBalance,
 }
