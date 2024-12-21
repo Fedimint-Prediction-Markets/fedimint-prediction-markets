@@ -270,6 +270,8 @@ async fn general1() -> anyhow::Result<()> {
         )
         .await?;
 
+    // orderbook setup
+
     let client1_order0 = client1_pm
         .new_order(
             market_outpoint,
@@ -330,6 +332,18 @@ async fn general1() -> anyhow::Result<()> {
         )
         .await?;
 
+    // orderbook state
+    //
+    // outcome 0
+    // 50 - 15
+    // 30 - 10
+    // 10 - 30
+    //
+    // outcome 1
+    // 45 - 10
+    // 25 - 10
+    // 15 - 10
+
     let client1_order3 = client1_pm
         .new_order(
             market_outpoint,
@@ -355,7 +369,8 @@ async fn general1() -> anyhow::Result<()> {
             },
             bitcoin_acquired_from_payout: Amount::ZERO,
         },
-    ).await;
+    )
+    .await;
     assert_order_mutated_values(
         &client2_pm,
         client2_order2,
@@ -368,7 +383,8 @@ async fn general1() -> anyhow::Result<()> {
             bitcoin_acquired_from_order_matches: SignedAmount::ZERO,
             bitcoin_acquired_from_payout: Amount::ZERO,
         },
-    ).await;
+    )
+    .await;
     assert_order_mutated_values(
         &client2_pm,
         client2_order2,
@@ -384,7 +400,154 @@ async fn general1() -> anyhow::Result<()> {
             },
             bitcoin_acquired_from_payout: Amount::ZERO,
         },
-    ).await;
+    )
+    .await;
+
+    // orderbook state
+    //
+    // outcome 0
+    // 60 - 5
+    // 50 - 15
+    // 30 - 10
+    // 10 - 30
+    //
+    // outcome 1
+    // 25 - 10
+    // 15 - 10
+
+    let client1_order4 = client1_pm
+        .new_order(
+            market_outpoint,
+            0,
+            Side::Buy,
+            Amount::from_msats(80),
+            ContractOfOutcomeAmount(5),
+        )
+        .await?;
+    assert_order_mutated_values(
+        &client1_pm,
+        client1_order4,
+        true,
+        AssertOrderMutatedValues {
+            quantity_waiting_for_match: ContractOfOutcomeAmount(0),
+            contract_of_outcome_balance: ContractOfOutcomeAmount(5),
+            bitcoin_balance: Amount::from_msats(25),
+            quantity_fulfilled: ContractOfOutcomeAmount(5),
+            bitcoin_acquired_from_order_matches: SignedAmount {
+                amount: Amount::from_msats(375),
+                negative: true,
+            },
+            bitcoin_acquired_from_payout: Amount::ZERO,
+        },
+    )
+    .await;
+    assert_order_mutated_values(
+        &client2_pm,
+        client2_order1,
+        false,
+        AssertOrderMutatedValues {
+            quantity_waiting_for_match: ContractOfOutcomeAmount(5),
+            contract_of_outcome_balance: ContractOfOutcomeAmount(5),
+            bitcoin_balance: Amount::from_msats(0),
+            quantity_fulfilled: ContractOfOutcomeAmount(5),
+            bitcoin_acquired_from_order_matches: SignedAmount {
+                amount: Amount::from_msats(125),
+                negative: true,
+            },
+            bitcoin_acquired_from_payout: Amount::ZERO,
+        },
+    )
+    .await;
+
+    // orderbook state
+    //
+    // outcome 0
+    // 60 - 5
+    // 50 - 15
+    // 30 - 10
+    // 10 - 30
+    //
+    // outcome 1
+    // 25 - 5
+    // 15 - 10
+
+    let client2_order3 = client2_pm
+        .new_order(
+            market_outpoint,
+            1,
+            Side::Buy,
+            Amount::from_msats(80),
+            ContractOfOutcomeAmount(35),
+        )
+        .await?;
+    assert_order_mutated_values(
+        &client2_pm,
+        client2_order3,
+        true,
+        AssertOrderMutatedValues {
+            quantity_waiting_for_match: ContractOfOutcomeAmount(5),
+            contract_of_outcome_balance: ContractOfOutcomeAmount(30),
+            bitcoin_balance: Amount::from_msats(40 * 5 + 30 * 15 + 10 * 10),
+            quantity_fulfilled: ContractOfOutcomeAmount(30),
+            bitcoin_acquired_from_order_matches: SignedAmount {
+                amount: Amount::from_msats(40 * 5 + 50 * 15 + 70 * 10),
+                negative: true,
+            },
+            bitcoin_acquired_from_payout: Amount::ZERO,
+        },
+    )
+    .await;
+    assert_order_mutated_values(
+        &client1_pm,
+        client1_order3,
+        false,
+        AssertOrderMutatedValues {
+            quantity_waiting_for_match: ContractOfOutcomeAmount(0),
+            contract_of_outcome_balance: ContractOfOutcomeAmount(15),
+            bitcoin_balance: Amount::from_msats(50),
+            quantity_fulfilled: ContractOfOutcomeAmount(15),
+            bitcoin_acquired_from_order_matches: SignedAmount {
+                amount: Amount::from_msats(550 + 300),
+                negative: true,
+            },
+            bitcoin_acquired_from_payout: Amount::ZERO,
+        },
+    )
+    .await;
+    assert_order_mutated_values(
+        &client1_pm,
+        client1_order1,
+        false,
+        AssertOrderMutatedValues {
+            quantity_waiting_for_match: ContractOfOutcomeAmount(0),
+            contract_of_outcome_balance: ContractOfOutcomeAmount(15),
+            bitcoin_balance: Amount::from_msats(0),
+            quantity_fulfilled: ContractOfOutcomeAmount(15),
+            bitcoin_acquired_from_order_matches: SignedAmount {
+                amount: Amount::from_msats(750),
+                negative: true,
+            },
+            bitcoin_acquired_from_payout: Amount::ZERO,
+        },
+    )
+    .await;
+    assert_order_mutated_values(
+        &client1_pm,
+        client1_order2,
+        false,
+        AssertOrderMutatedValues {
+            quantity_waiting_for_match: ContractOfOutcomeAmount(0),
+            contract_of_outcome_balance: ContractOfOutcomeAmount(10),
+            bitcoin_balance: Amount::from_msats(0),
+            quantity_fulfilled: ContractOfOutcomeAmount(10),
+            bitcoin_acquired_from_order_matches: SignedAmount {
+                amount: Amount::from_msats(300),
+                negative: true,
+            },
+            bitcoin_acquired_from_payout: Amount::ZERO,
+        },
+    )
+    .await;
 
     Ok(())
 }
