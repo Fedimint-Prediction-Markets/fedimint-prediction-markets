@@ -1,11 +1,10 @@
 use fedimint_core::encoding::{Decodable, Encodable};
-use fedimint_core::OutPoint;
+use fedimint_core::{Amount, OutPoint};
 use secp256k1::PublicKey;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Candlestick, ContractOfOutcomeAmount, Market, MarketDynamic, NostrEventJson, Order, Outcome,
-    Seconds, UnixTimestamp,
+    Candlestick, ContractOfOutcomeAmount, Market, MarketDynamic, NostrEventJson, Order, Outcome, Seconds, UnixTimestamp
 };
 
 //
@@ -112,4 +111,20 @@ pub struct WaitMarketOutcomeCandlesticksParams {
 #[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
 pub struct WaitMarketOutcomeCandlesticksResult {
     pub candlesticks: Vec<(UnixTimestamp, Candlestick)>,
+}
+
+//
+// Get Market Outcome Order Book
+//
+
+pub const GET_MARKET_OUTCOME_ORDER_BOOK_ENDPOINT: &str = "get_market_outcome_order_book";
+#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+pub struct GetMarketOutcomeOrderBookParams {
+    pub market: OutPoint,
+    pub outcome: Outcome,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+pub struct GetMarketOutcomeOrderBookResult {
+    pub buys: Vec<(Amount, ContractOfOutcomeAmount)>,
+    pub sells: Vec<(Amount, ContractOfOutcomeAmount)>,
 }

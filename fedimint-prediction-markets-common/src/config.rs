@@ -61,6 +61,9 @@ impl Default for PredictionMarketsGenParams {
                         15,
                     ],
                     max_candlesticks_kept_per_market_outcome_interval: 500,
+
+                    // order book data
+                    order_book_precision: 100,
                 },
             },
         }
@@ -136,4 +139,7 @@ pub struct GeneralConsensus {
     // match data
     pub candlestick_intervals: Vec<Seconds>,
     pub max_candlesticks_kept_per_market_outcome_interval: u64,
+
+    // order book data
+    pub order_book_precision: u64,
 }

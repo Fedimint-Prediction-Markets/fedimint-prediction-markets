@@ -335,14 +335,16 @@ async fn general1() -> anyhow::Result<()> {
     // orderbook state
     //
     // outcome 0
-    // 50 - 15
-    // 30 - 10
     // 10 - 30
+    // 30 - 10
+    // 50 - 15
     //
     // outcome 1
-    // 45 - 10
-    // 25 - 10
     // 15 - 10
+    // 25 - 10
+    // 45 - 10
+    dbg!(client1_pm.get_order_book(market_outpoint, 0).await?);
+    dbg!(client1_pm.get_order_book(market_outpoint, 1).await?);
 
     let client1_order3 = client1_pm
         .new_order(
@@ -406,14 +408,16 @@ async fn general1() -> anyhow::Result<()> {
     // orderbook state
     //
     // outcome 0
-    // 60 - 5
-    // 50 - 15
-    // 30 - 10
     // 10 - 30
+    // 30 - 10
+    // 50 - 15
+    // 60 - 5
     //
     // outcome 1
-    // 25 - 10
     // 15 - 10
+    // 25 - 10
+    dbg!(client1_pm.get_order_book(market_outpoint, 0).await?);
+    dbg!(client1_pm.get_order_book(market_outpoint, 1).await?);
 
     let client1_order4 = client1_pm
         .new_order(
@@ -462,14 +466,16 @@ async fn general1() -> anyhow::Result<()> {
     // orderbook state
     //
     // outcome 0
-    // 60 - 5
-    // 50 - 15
-    // 30 - 10
     // 10 - 30
+    // 30 - 10
+    // 50 - 15
+    // 60 - 5
     //
     // outcome 1
-    // 25 - 5
     // 15 - 10
+    // 25 - 5
+    dbg!(client1_pm.get_order_book(market_outpoint, 0).await?);
+    dbg!(client1_pm.get_order_book(market_outpoint, 1).await?);
 
     let client2_order3 = client2_pm
         .new_order(
@@ -548,6 +554,18 @@ async fn general1() -> anyhow::Result<()> {
         },
     )
     .await;
+
+    // orderbook state
+    //
+    // outcome 0
+    // 10 - 30
+    //
+    // outcome 1
+    // 15 - 10
+    // 25 - 5
+    // 80 - 5
+    dbg!(client1_pm.get_order_book(market_outpoint, 0).await?);
+    dbg!(client1_pm.get_order_book(market_outpoint, 1).await?);
 
     Ok(())
 }

@@ -6,11 +6,13 @@ use fedimint_prediction_markets_common::api::{
     GetEventPayoutAttestationsUsedToPermitPayoutParams,
     GetEventPayoutAttestationsUsedToPermitPayoutResult, GetMarketDynamicParams,
     GetMarketDynamicResult, GetMarketOutcomeCandlesticksParams, GetMarketOutcomeCandlesticksResult,
-    GetMarketParams, GetMarketResult, GetOrderParams, GetOrderResult,
-    WaitMarketOutcomeCandlesticksParams, WaitMarketOutcomeCandlesticksResult, WaitOrderMatchParams,
-    WaitOrderMatchResult, GET_EVENT_PAYOUT_ATTESTATIONS_USED_TO_PERMIT_PAYOUT_ENDPOINT,
-    GET_MARKET_DYNAMIC_ENDPOINT, GET_MARKET_ENDPOINT, GET_MARKET_OUTCOME_CANDLESTICKS_ENDPOINT,
-    GET_ORDER_ENDPOINT, WAIT_MARKET_OUTCOME_CANDLESTICKS_ENDPOINT, WAIT_ORDER_MATCH_ENDPOINT,
+    GetMarketOutcomeOrderBookParams, GetMarketOutcomeOrderBookResult, GetMarketParams,
+    GetMarketResult, GetOrderParams, GetOrderResult, WaitMarketOutcomeCandlesticksParams,
+    WaitMarketOutcomeCandlesticksResult, WaitOrderMatchParams, WaitOrderMatchResult,
+    GET_EVENT_PAYOUT_ATTESTATIONS_USED_TO_PERMIT_PAYOUT_ENDPOINT, GET_MARKET_DYNAMIC_ENDPOINT,
+    GET_MARKET_ENDPOINT, GET_MARKET_OUTCOME_CANDLESTICKS_ENDPOINT,
+    GET_MARKET_OUTCOME_ORDER_BOOK_ENDPOINT, GET_ORDER_ENDPOINT,
+    WAIT_MARKET_OUTCOME_CANDLESTICKS_ENDPOINT, WAIT_ORDER_MATCH_ENDPOINT,
 };
 
 #[apply(async_trait_maybe_send!)]
@@ -37,6 +39,10 @@ pub trait PredictionMarketsFederationApi {
         &self,
         params: WaitMarketOutcomeCandlesticksParams,
     ) -> FederationResult<WaitMarketOutcomeCandlesticksResult>;
+    async fn get_market_outcome_order_book(
+        &self,
+        params: GetMarketOutcomeOrderBookParams,
+    ) -> FederationResult<GetMarketOutcomeOrderBookResult>;
 }
 
 #[apply(async_trait_maybe_send!)]
@@ -104,6 +110,17 @@ where
     ) -> FederationResult<WaitMarketOutcomeCandlesticksResult> {
         self.request_current_consensus(
             WAIT_MARKET_OUTCOME_CANDLESTICKS_ENDPOINT.into(),
+            ApiRequestErased::new(params),
+        )
+        .await
+    }
+
+    async fn get_market_outcome_order_book(
+        &self,
+        params: GetMarketOutcomeOrderBookParams,
+    ) -> FederationResult<GetMarketOutcomeOrderBookResult> {
+        self.request_current_consensus(
+            GET_MARKET_OUTCOME_ORDER_BOOK_ENDPOINT.into(),
             ApiRequestErased::new(params),
         )
         .await

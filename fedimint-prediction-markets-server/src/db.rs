@@ -1,5 +1,5 @@
 use fedimint_core::encoding::{Decodable, Encodable};
-use fedimint_core::{impl_db_lookup, impl_db_record, OutPoint, PeerId};
+use fedimint_core::{impl_db_lookup, impl_db_record, Amount, OutPoint, PeerId};
 use fedimint_prediction_markets_common::{
     Candlestick, ContractOfOutcomeAmount, MarketDynamic, MarketStatic, NostrEventJson, Order,
     PredictionMarketsOutputOutcome, Seconds, Side, TimeOrdering, UnixTimestamp,
@@ -37,11 +37,11 @@ pub enum DbKeyPrefix {
     /// (Market's [OutPoint], Order's [OutPoint]) to ()
     OrdersByMarket = 0x21,
 
-    /// Used to implement orderbook. Only holds orders with non-zero
-    /// quantity_waiting_for_match.
+    /// Used by order matching code to find matches. Only holds orders with
+    /// non-zero quantity_waiting_for_match.
     ///
-    /// Amount is (contract_price - price of order) for buys
-    /// Amount is (price of order) for sells
+    /// Amount is (`u64::MAX` - price of order msats) for buys
+    /// Amount is (price of order msats) for sells
     ///
     /// (Market's [OutPoint], [Outcome], [Side], Price priority [u64],
     /// [TimeOrdering]) to (Order's [PublicKey])
@@ -59,6 +59,11 @@ pub enum DbKeyPrefix {
     /// (Market's [OutPoint], [Outcome], candlestick interval [Seconds]) to
     /// (Candle's [UnixTimestamp], [ContractOfOutcomeAmount])
     MarketOutcomeNewestCandlestickVolume = 0x25,
+
+    /// Used to implement order book data
+    /// (Market's [OutPoint], [Outcome], [Side], [Amount]) to
+    /// [ContractOfOutcomeAmount]
+    MarketOutcomeOrderBook = 0x26,
 
     /// Stores timestamps proposed by peers.
     /// Used to create consensus timestamps.
@@ -301,6 +306,36 @@ impl_db_record!(
 impl_db_lookup!(
     key = MarketOutcomeNewestCandlestickVolumeKey,
     query_prefix = MarketOutcomeNewestCandlestickVolumePrefixAll
+);
+
+// MarketOutcomeOrderBook
+#[derive(Debug, Clone, Encodable, Decodable, Eq, PartialEq, Hash, Serialize)]
+pub struct MarketOutcomeOrderBookKey {
+    pub market: OutPoint,
+    pub outcome: Outcome,
+    pub side: Side,
+    pub price: Amount,
+}
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct MarketOutcomeOrderBookPrefixAll;
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct MarketOutcomeOrderBookPrefix2 {
+    pub market: OutPoint,
+    pub outcome: Outcome,
+}
+
+impl_db_record!(
+    key = MarketOutcomeOrderBookKey,
+    value = ContractOfOutcomeAmount,
+    db_prefix = DbKeyPrefix::MarketOutcomeOrderBook,
+);
+
+impl_db_lookup!(
+    key = MarketOutcomeOrderBookKey,
+    query_prefix = MarketOutcomeOrderBookPrefixAll,
+    query_prefix = MarketOutcomeOrderBookPrefix2
 );
 
 /// PeersProposedTimestamp

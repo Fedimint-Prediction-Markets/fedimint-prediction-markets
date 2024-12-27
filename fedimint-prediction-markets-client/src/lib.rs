@@ -28,10 +28,7 @@ use fedimint_core::task::{sleep_until, spawn};
 use fedimint_core::util::BoxStream;
 use fedimint_core::{apply, async_trait_maybe_send, Amount, OutPoint, TransactionId};
 use fedimint_prediction_markets_common::api::{
-    GetEventPayoutAttestationsUsedToPermitPayoutParams, GetMarketDynamicParams,
-    GetMarketOutcomeCandlesticksParams, GetMarketOutcomeCandlesticksResult, GetMarketParams,
-    GetOrderParams, WaitMarketOutcomeCandlesticksParams, WaitMarketOutcomeCandlesticksResult,
-    WaitOrderMatchParams, WaitOrderMatchResult,
+    GetEventPayoutAttestationsUsedToPermitPayoutParams, GetMarketDynamicParams, GetMarketOutcomeCandlesticksParams, GetMarketOutcomeCandlesticksResult, GetMarketOutcomeOrderBookParams, GetMarketOutcomeOrderBookResult, GetMarketParams, GetOrderParams, WaitMarketOutcomeCandlesticksParams, WaitMarketOutcomeCandlesticksResult, WaitOrderMatchParams, WaitOrderMatchResult
 };
 use fedimint_prediction_markets_common::config::{GeneralConsensus, PredictionMarketsClientConfig};
 use fedimint_prediction_markets_common::{
@@ -991,6 +988,10 @@ impl PredictionMarketsClientModule {
                 sleep_until(now + min_duration_between_requests).await;
             }
         })
+    }
+
+    pub async fn get_order_book(&self, market: OutPoint, outcome: Outcome) -> anyhow::Result<GetMarketOutcomeOrderBookResult> {
+        Ok(self.module_api.get_market_outcome_order_book(GetMarketOutcomeOrderBookParams{ market, outcome }).await?)
     }
 
     /// Interacts with client saved markets.

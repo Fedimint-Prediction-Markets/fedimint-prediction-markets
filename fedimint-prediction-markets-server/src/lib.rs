@@ -11,15 +11,16 @@ use fedimint_core::config::{
 };
 use fedimint_core::core::ModuleInstanceId;
 use fedimint_core::db::{
-    Committable, CoreMigrationFn, Database, DatabaseTransaction, DatabaseVersion, IDatabaseTransactionOpsCoreTyped
-    
+    CoreMigrationFn, Database, DatabaseTransaction, DatabaseVersion,
+    IDatabaseTransactionOpsCoreTyped,
 };
 use fedimint_core::encoding::{Decodable, Encodable};
 use fedimint_core::module::audit::Audit;
 use fedimint_core::module::{
     api_endpoint, ApiEndpoint, ApiEndpointContext, ApiError, ApiVersion, CoreConsensusVersion,
     InputMeta, ModuleConsensusVersion, ModuleInit, MultiApiVersion, PeerHandle, ServerModuleInit,
-    ServerModuleInitArgs, SupportedModuleApiVersions, TransactionItemAmount, CORE_CONSENSUS_VERSION,
+    ServerModuleInitArgs, SupportedModuleApiVersions, TransactionItemAmount,
+    CORE_CONSENSUS_VERSION,
 };
 use fedimint_core::server::DynServerModule;
 use fedimint_core::{push_db_pair_items, Amount, OutPoint, PeerId, ServerModule};
@@ -34,6 +35,7 @@ use fedimint_prediction_markets_common::{
 };
 use futures::{future, StreamExt};
 use highest_priority_order_cache::HighestPriorityOrderCache;
+use order_book_data_creator::OrderBookDataCreator;
 use order_cache::OrderCache;
 use prediction_market_event::nostr_event_types::NostrEventUtils;
 use prediction_market_event::Event;
@@ -44,6 +46,7 @@ use strum::IntoEnumIterator;
 mod candlestick_data_creator;
 mod db;
 mod highest_priority_order_cache;
+mod order_book_data_creator;
 mod order_cache;
 
 /// Generates the module
@@ -165,6 +168,16 @@ impl ModuleInit for PredictionMarketsInit {
                         (UnixTimestamp, ContractOfOutcomeAmount),
                         items,
                         "MarketOutcomeNewestCandlestick"
+                    );
+                }
+                DbKeyPrefix::MarketOutcomeOrderBook => {
+                    push_db_pair_items!(
+                        dbtx,
+                        db::MarketOutcomeOrderBookPrefixAll,
+                        db::MarketOutcomeOrderBookKey,
+                        ContractOfOutcomeAmount,
+                        items,
+                        "MarketOutcomeOrderBook"
                     );
                 }
                 DbKeyPrefix::PeersProposedTimestamp => {
@@ -834,28 +847,28 @@ impl ServerModule for PredictionMarkets {
                 api::GET_MARKET_ENDPOINT,
                 ApiVersion::new(0, 0),
                 async |module: &PredictionMarkets, context, params: api::GetMarketParams| -> api::GetMarketResult {
-                    module.api_get_market(&mut context.dbtx(), params).await
+                    module.api_get_market(context, params).await
                 }
             },
             api_endpoint! {
                 api::GET_MARKET_DYNAMIC_ENDPOINT,
                 ApiVersion::new(0, 0),
                 async |module: &PredictionMarkets, context, params: api::GetMarketDynamicParams| -> api::GetMarketDynamicResult {
-                    module.api_get_market_dynamic(&mut context.dbtx(), params).await
+                    module.api_get_market_dynamic(context, params).await
                 }
             },
             api_endpoint! {
                 api::GET_EVENT_PAYOUT_ATTESTATIONS_USED_TO_PERMIT_PAYOUT_ENDPOINT,
                 ApiVersion::new(0, 0),
                 async |module: &PredictionMarkets, context, params: api::GetEventPayoutAttestationsUsedToPermitPayoutParams| -> api::GetEventPayoutAttestationsUsedToPermitPayoutResult {
-                    module.api_get_event_payout_attestations_used_to_permit_payout(&mut context.dbtx(), params).await
+                    module.api_get_event_payout_attestations_used_to_permit_payout(context, params).await
                 }
             },
             api_endpoint! {
                 api::GET_ORDER_ENDPOINT,
                 ApiVersion::new(0, 0),
                 async |module: &PredictionMarkets, context, params: api::GetOrderParams| -> api::GetOrderResult {
-                    module.api_get_order(&mut context.dbtx(), params).await
+                    module.api_get_order(context, params).await
                 }
             },
             api_endpoint! {
@@ -869,7 +882,7 @@ impl ServerModule for PredictionMarkets {
                 api::GET_MARKET_OUTCOME_CANDLESTICKS_ENDPOINT,
                 ApiVersion::new(0, 0),
                 async |module: &PredictionMarkets, context, params: api::GetMarketOutcomeCandlesticksParams| -> api::GetMarketOutcomeCandlesticksResult {
-                    module.api_get_market_outcome_candlesticks(&mut context.dbtx(), params).await
+                    module.api_get_market_outcome_candlesticks(context, params).await
                 }
             },
             api_endpoint! {
@@ -877,6 +890,13 @@ impl ServerModule for PredictionMarkets {
                 ApiVersion::new(0, 0),
                 async |module: &PredictionMarkets, context, params: api::WaitMarketOutcomeCandlesticksParams| -> api::WaitMarketOutcomeCandlesticksResult {
                     module.api_wait_market_outcome_candlesticks(context, params).await
+                }
+            },
+            api_endpoint! {
+                api::GET_MARKET_OUTCOME_ORDER_BOOK_ENDPOINT,
+                ApiVersion::new(0, 0),
+                async |module: &PredictionMarkets, context, params: api::GetMarketOutcomeOrderBookParams| -> api::GetMarketOutcomeOrderBookResult {
+                    module.api_get_market_outcome_order_book(context, params).await
                 }
             },
         ]
@@ -889,13 +909,18 @@ impl ServerModule for PredictionMarkets {
 impl PredictionMarkets {
     async fn api_get_market(
         &self,
-        dbtx: &mut DatabaseTransaction<'_, Committable>,
+        context: &mut ApiEndpointContext<'_>,
         params: api::GetMarketParams,
     ) -> Result<api::GetMarketResult, ApiError> {
-        let Some(market_static) = dbtx.get_value(&db::MarketStaticKey(params.market)).await else {
+        let Some(market_static) = context
+            .dbtx()
+            .get_value(&db::MarketStaticKey(params.market))
+            .await
+        else {
             return Ok(api::GetMarketResult { market: None });
         };
-        let market_dynamic = dbtx
+        let market_dynamic = context
+            .dbtx()
             .get_value(&db::MarketDynamicKey(params.market))
             .await
             .unwrap();
@@ -907,21 +932,25 @@ impl PredictionMarkets {
 
     async fn api_get_market_dynamic(
         &self,
-        dbtx: &mut DatabaseTransaction<'_, Committable>,
+        context: &mut ApiEndpointContext<'_>,
         params: api::GetMarketDynamicParams,
     ) -> Result<api::GetMarketDynamicResult, ApiError> {
         Ok(api::GetMarketDynamicResult {
-            market_dynamic: dbtx.get_value(&db::MarketDynamicKey(params.market)).await,
+            market_dynamic: context
+                .dbtx()
+                .get_value(&db::MarketDynamicKey(params.market))
+                .await,
         })
     }
 
     async fn api_get_event_payout_attestations_used_to_permit_payout(
         &self,
-        dbtx: &mut DatabaseTransaction<'_, Committable>,
+        context: &mut ApiEndpointContext<'_>,
         params: api::GetEventPayoutAttestationsUsedToPermitPayoutParams,
     ) -> Result<api::GetEventPayoutAttestationsUsedToPermitPayoutResult, ApiError> {
         Ok(api::GetEventPayoutAttestationsUsedToPermitPayoutResult {
-            event_payout_attestations: dbtx
+            event_payout_attestations: context
+                .dbtx()
                 .get_value(&db::EventPayoutAttestationsUsedToPermitPayoutKey(
                     params.market,
                 ))
@@ -931,11 +960,11 @@ impl PredictionMarkets {
 
     async fn api_get_order(
         &self,
-        dbtx: &mut DatabaseTransaction<'_, Committable>,
+        context: &mut ApiEndpointContext<'_>,
         params: api::GetOrderParams,
     ) -> Result<api::GetOrderResult, ApiError> {
         Ok(api::GetOrderResult {
-            order: dbtx.get_value(&db::OrderKey(params.order)).await,
+            order: context.dbtx().get_value(&db::OrderKey(params.order)).await,
         })
     }
 
@@ -955,10 +984,11 @@ impl PredictionMarkets {
 
     async fn api_get_market_outcome_candlesticks(
         &self,
-        dbtx: &mut DatabaseTransaction<'_, Committable>,
+        context: &mut ApiEndpointContext<'_>,
         params: api::GetMarketOutcomeCandlesticksParams,
     ) -> Result<api::GetMarketOutcomeCandlesticksResult, ApiError> {
-        let candlesticks = dbtx
+        let candlesticks = context
+            .dbtx()
             .find_by_prefix_sorted_descending(&db::MarketOutcomeCandlesticksPrefix3 {
                 market: params.market,
                 outcome: params.outcome,
@@ -994,20 +1024,54 @@ impl PredictionMarkets {
             )
             .await;
 
-        let api::GetMarketOutcomeCandlesticksResult { candlesticks } =
-            Self::api_get_market_outcome_candlesticks(
-                &self,
-                &mut self.db.begin_transaction().await,
-                api::GetMarketOutcomeCandlesticksParams {
-                    market: params.market,
-                    outcome: params.outcome,
-                    candlestick_interval: params.candlestick_interval,
-                    min_candlestick_timestamp: params.candlestick_timestamp,
-                },
-            )
-            .await?;
+        let candlesticks = context
+            .dbtx()
+            .find_by_prefix_sorted_descending(&db::MarketOutcomeCandlesticksPrefix3 {
+                market: params.market,
+                outcome: params.outcome,
+                candlestick_interval: params.candlestick_interval,
+            })
+            .await
+            .take_while(|(k, _)| {
+                future::ready(k.candlestick_timestamp >= params.candlestick_timestamp)
+            })
+            .map(|(k, v)| (k.candlestick_timestamp, v))
+            .collect::<Vec<(UnixTimestamp, Candlestick)>>()
+            .await;
 
         Ok(api::WaitMarketOutcomeCandlesticksResult { candlesticks })
+    }
+
+    async fn api_get_market_outcome_order_book(
+        &self,
+        context: &mut ApiEndpointContext<'_>,
+        params: api::GetMarketOutcomeOrderBookParams,
+    ) -> Result<api::GetMarketOutcomeOrderBookResult, ApiError> {
+        let mut buys = Vec::new();
+        let mut sells = Vec::new();
+
+        let mut dbtx = context.dbtx();
+        let mut db_order_book_stream = dbtx
+            .find_by_prefix(&db::MarketOutcomeOrderBookPrefix2 {
+                market: params.market,
+                outcome: params.outcome,
+            })
+            .await;
+
+        while let Some((
+            db::MarketOutcomeOrderBookKey { side, price, .. },
+            contract_of_outcome_amount,
+        )) = db_order_book_stream.next().await
+        {
+            match side {
+                Side::Buy => buys.push((price, contract_of_outcome_amount)),
+                Side::Sell => sells.push((price, contract_of_outcome_amount)),
+            }
+        }
+
+        let result = api::GetMarketOutcomeOrderBookResult { buys, sells };
+
+        Ok(result)
     }
 }
 
@@ -1088,6 +1152,9 @@ impl PredictionMarkets {
             market,
             &market_specifications,
         );
+        let mut order_book_data_creator =
+            OrderBookDataCreator::new(&self.cfg.consensus.gc, market, &market_specifications);
+        order_book_data_creator.process_addition(outcome, side, price, quantity);
 
         let time_ordering = {
             let n = market_specifications.next_time_ordering;
@@ -1175,14 +1242,14 @@ impl PredictionMarkets {
                     &mut order_cache,
                     &mut highest_priority_order_cache,
                     &mut candlestick_data_creator,
+                    &mut order_book_data_creator,
                     order.outcome,
                     satisfied_quantity,
                 )
                 .await;
 
                 order.quantity_waiting_for_match -= satisfied_quantity;
-
-                order.quantity_fulfilled = order.quantity_fulfilled + satisfied_quantity;
+                order.quantity_fulfilled += satisfied_quantity;
 
                 match side {
                     Side::Buy => {
@@ -1204,6 +1271,12 @@ impl PredictionMarkets {
                 candlestick_data_creator
                     .add(dbtx, outcome, own_price, satisfied_quantity)
                     .await;
+                order_book_data_creator.process_subtraction(
+                    order.outcome,
+                    order.side,
+                    order.price,
+                    satisfied_quantity,
+                );
 
             // process other outcome match (contract creation/destruction)
             } else if matches_other {
@@ -1220,6 +1293,7 @@ impl PredictionMarkets {
                         &mut order_cache,
                         &mut highest_priority_order_cache,
                         &mut candlestick_data_creator,
+                        &mut order_book_data_creator,
                         outcome,
                         satisfied_quantity,
                     )
@@ -1227,7 +1301,6 @@ impl PredictionMarkets {
                 }
 
                 order.quantity_waiting_for_match -= satisfied_quantity;
-
                 order.quantity_fulfilled += satisfied_quantity;
 
                 match side {
@@ -1263,6 +1336,12 @@ impl PredictionMarkets {
                         satisfied_quantity,
                     )
                     .await;
+                order_book_data_creator.process_subtraction(
+                    order.outcome,
+                    order.side,
+                    order.price,
+                    satisfied_quantity,
+                );
 
             // nothing satisfies
             } else {
@@ -1302,6 +1381,9 @@ impl PredictionMarkets {
         if order.original_quantity != order.quantity_waiting_for_match {
             candlestick_data_creator.save(dbtx).await;
         }
+
+        // save order book data creator
+        order_book_data_creator.save(dbtx).await;
     }
 
     async fn get_outcome_side_highest_priority_order_price_quantity(
@@ -1405,6 +1487,7 @@ impl PredictionMarkets {
         order_cache: &mut OrderCache,
         highest_priority_order_cache: &mut HighestPriorityOrderCache,
         candlestick_data_creator: &mut CandlestickDataCreator,
+        order_book_data_creator: &mut OrderBookDataCreator,
         outcome: Outcome,
         satisfied_quantity: ContractOfOutcomeAmount,
     ) {
@@ -1442,6 +1525,12 @@ impl PredictionMarkets {
         candlestick_data_creator
             .add(dbtx, order.outcome, order.price, satisfied_quantity)
             .await;
+        order_book_data_creator.process_subtraction(
+            order.outcome,
+            order.side,
+            order.price,
+            satisfied_quantity,
+        );
     }
 
     async fn cancel_order(
