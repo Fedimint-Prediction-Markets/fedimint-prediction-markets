@@ -28,7 +28,11 @@ use fedimint_core::task::{sleep_until, spawn};
 use fedimint_core::util::BoxStream;
 use fedimint_core::{apply, async_trait_maybe_send, Amount, OutPoint, TransactionId};
 use fedimint_prediction_markets_common::api::{
-    GetEventPayoutAttestationsUsedToPermitPayoutParams, GetMarketDynamicParams, GetMarketOutcomeCandlesticksParams, GetMarketOutcomeCandlesticksResult, GetMarketOutcomeOrderBookParams, GetMarketOutcomeOrderBookResult, GetMarketParams, GetOrderParams, WaitMarketOutcomeCandlesticksParams, WaitMarketOutcomeCandlesticksResult, WaitOrderMatchParams, WaitOrderMatchResult
+    GetEventPayoutAttestationsUsedToPermitPayoutParams, GetMarketDynamicParams,
+    GetMarketOutcomeCandlesticksParams, GetMarketOutcomeCandlesticksResult,
+    GetMarketOutcomeOrderBookParams, GetMarketParams,
+    GetOrderParams, WaitMarketOutcomeCandlesticksParams, WaitMarketOutcomeCandlesticksResult,
+    WaitOrderMatchParams, WaitOrderMatchResult,
 };
 use fedimint_prediction_markets_common::config::{GeneralConsensus, PredictionMarketsClientConfig};
 use fedimint_prediction_markets_common::{
@@ -990,8 +994,20 @@ impl PredictionMarketsClientModule {
         })
     }
 
-    pub async fn get_order_book(&self, market: OutPoint, outcome: Outcome) -> anyhow::Result<GetMarketOutcomeOrderBookResult> {
-        Ok(self.module_api.get_market_outcome_order_book(GetMarketOutcomeOrderBookParams{ market, outcome }).await?)
+    pub async fn get_order_book(
+        &self,
+        market: OutPoint,
+        outcome: Outcome,
+    ) -> anyhow::Result<OrderBookInformation> {
+        let res = self
+            .module_api
+            .get_market_outcome_order_book(GetMarketOutcomeOrderBookParams { market, outcome })
+            .await?;
+
+        Ok(OrderBookInformation {
+            buys: res.buys.into_iter().collect(),
+            sells: res.sells.into_iter().collect(),
+        })
     }
 
     /// Interacts with client saved markets.
@@ -1583,4 +1599,10 @@ pub fn market_outpoint_from_tx_id(tx_id: TransactionId) -> OutPoint {
         txid: tx_id,
         out_idx: 0,
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Encodable, Decodable, PartialEq, Eq, Hash)]
+pub struct OrderBookInformation {
+    buys: BTreeMap<Amount, ContractOfOutcomeAmount>,
+    sells: BTreeMap<Amount, ContractOfOutcomeAmount>,
 }

@@ -570,6 +570,59 @@ async fn general1() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn order_book() -> anyhow::Result<()> {
+    let fed = fixtures().new_default_fed().await;
+    let client1 = fed.new_client_rocksdb().await;
+
+    let client1_dummy = client1.get_first_module::<DummyClientModule>();
+    client1_dummy.print_money(Amount::from_sats(10000)).await?;
+
+    let client1_pm = client1.get_first_module::<PredictionMarketsClientModule>();
+
+    let event_json = Event::new_with_random_nonce(2, 1, Information::None).try_to_json_string()?;
+    let contract_price = Amount::from_msats(10000);
+    let payout_control_weight_map: BTreeMap<NostrPublicKeyHex, Weight> =
+        iter::once((Keys::generate().public_key.to_hex(), 1u16)).collect();
+    let weight_required_for_payout = 1;
+    let market = client1_pm
+        .new_market(
+            event_json.clone(),
+            contract_price,
+            payout_control_weight_map.clone(),
+            weight_required_for_payout,
+        )
+        .await?;
+
+    let iter = 1u64..501;
+    iter.map(|msat| {
+        let client1_pm =  client1.get_first_module::<PredictionMarketsClientModule>();
+
+        async move {
+            let res = client1_pm
+                .new_order(
+                    market,
+                    0,
+                    Side::Buy,
+                    Amount::from_msats(msat),
+                    ContractOfOutcomeAmount(1),
+                )
+                .await;
+
+            if let Err(e) = res {
+                info!("error creating order: {e}");
+            }
+        }
+    })
+    .collect::<FuturesUnordered<_>>()
+    .collect::<()>()
+    .await;
+
+    dbg!(client1_pm.get_order_book(market, 0).await?);
+
+    Ok(())
+}
+
 async fn assert_order_mutated_values(
     client_pm: &ClientModuleInstance<'_, PredictionMarketsClientModule>,
     order_id: OrderId,

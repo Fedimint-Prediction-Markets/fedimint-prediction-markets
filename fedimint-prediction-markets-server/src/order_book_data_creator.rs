@@ -72,7 +72,7 @@ impl OrderBookDataCreator {
                 panic!("OrderBookDataCreator: addition should always be set")
             };
 
-            let price = round_price(
+            let price = round_price_down(
                 self.market_contract_price,
                 self.round_increment,
                 side,
@@ -98,7 +98,7 @@ impl OrderBookDataCreator {
         // subtractions
         {
             for ((outcome, side, price), quantity) in self.subtractions {
-                let price = round_price(
+                let price = round_price_down(
                     self.market_contract_price,
                     self.round_increment,
                     side,
@@ -128,7 +128,7 @@ impl OrderBookDataCreator {
     }
 }
 
-fn round_price(
+fn round_price_down(
     market_contract_price: Amount,
     round_increment: u64,
     side: Side,
