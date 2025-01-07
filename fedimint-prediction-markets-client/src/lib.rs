@@ -30,9 +30,9 @@ use fedimint_core::{apply, async_trait_maybe_send, Amount, OutPoint, Transaction
 use fedimint_prediction_markets_common::api::{
     GetEventPayoutAttestationsUsedToPermitPayoutParams, GetMarketDynamicParams,
     GetMarketOutcomeCandlesticksParams, GetMarketOutcomeCandlesticksResult,
-    GetMarketOutcomeOrderBookParams, GetMarketParams,
-    GetOrderParams, WaitMarketOutcomeCandlesticksParams, WaitMarketOutcomeCandlesticksResult,
-    WaitOrderMatchParams, WaitOrderMatchResult,
+    GetMarketOutcomeOrderBookParams, GetMarketParams, GetOrderParams,
+    WaitMarketOutcomeCandlesticksParams, WaitMarketOutcomeCandlesticksResult, WaitOrderMatchParams,
+    WaitOrderMatchResult,
 };
 use fedimint_prediction_markets_common::config::{GeneralConsensus, PredictionMarketsClientConfig};
 use fedimint_prediction_markets_common::{
@@ -60,6 +60,7 @@ mod api;
 #[cfg(feature = "cli")]
 mod cli;
 mod db;
+mod rpc;
 mod states;
 
 pub mod order_filter;
@@ -167,6 +168,14 @@ impl ClientModule for PredictionMarketsClientModule {
         args: &[std::ffi::OsString],
     ) -> anyhow::Result<serde_json::Value> {
         cli::handle_cli_command(self, args).await
+    }
+
+    async fn handle_rpc(
+        &self,
+        method: String,
+        request: serde_json::Value,
+    ) -> BoxStream<'_, anyhow::Result<serde_json::Value>> {
+        rpc::handle_rpc(self, method, request).await
     }
 
     fn supports_backup(&self) -> bool {
