@@ -16,7 +16,7 @@ use fedimint_prediction_markets_client::{
 use fedimint_prediction_markets_common::config::PredictionMarketsGenParams;
 use fedimint_prediction_markets_common::{
     ContractAmount, ContractOfOutcomeAmount, Market, MarketDynamic, MarketStatic,
-    NostrPublicKeyHex, Order, Side, SignedAmount, UnixTimestamp, Weight,
+    NostrPublicKeyHex, Side, SignedAmount, UnixTimestamp, Weight,
 };
 use fedimint_prediction_markets_server::PredictionMarketsInit;
 use fedimint_testing::fixtures::Fixtures;
@@ -166,8 +166,8 @@ async fn order_stream() -> anyhow::Result<()> {
         )
         .await?;
 
-    let watch_for_order_matches_stop_future = client1_pm
-        .watch_for_order_matches(OrderPath::Market { market })
+    let watch_matches_id = client1_pm
+        .start_watch_matches(OrderPath::Market { market })
         .await?;
 
     client1_pm
@@ -192,12 +192,17 @@ async fn order_stream() -> anyhow::Result<()> {
     //         .await?;
     // }
 
-    let mut stream_of_order_streams = client1_pm
-        .stream_orders_from_db(OrderFilter(OrderPath::All, OrderState::Any))
-        .await;
+    let client1_s = client1.clone();
     spawn(async move {
+        let client1_pm = client1_s.get_first_module::<PredictionMarketsClientModule>();
+        let mut stream_of_order_ids = client1_pm
+            .stream_order_ids(OrderFilter(OrderPath::All, OrderState::Any))
+            .await;
+
         loop {
-            let (order_id, mut order_stream) = stream_of_order_streams.next_or_pending().await;
+            let order_id = stream_of_order_ids.next_or_pending().await;
+            let mut order_stream = client1_pm.stream_order_from_db(order_id).await;
+
             spawn(async move {
                 loop {
                     let order = order_stream.next_or_pending().await;
@@ -230,8 +235,7 @@ async fn order_stream() -> anyhow::Result<()> {
     .collect::<FuturesUnordered<_>>()
     .collect::<()>()
     .await;
-
-    watch_for_order_matches_stop_future.await?;
+    client1_pm.stop_watch_matches(watch_matches_id).await?;
 
     info!("test_main end");
 
@@ -596,7 +600,7 @@ async fn order_book() -> anyhow::Result<()> {
 
     let iter = 1u64..501;
     iter.map(|msat| {
-        let client1_pm =  client1.get_first_module::<PredictionMarketsClientModule>();
+        let client1_pm = client1.get_first_module::<PredictionMarketsClientModule>();
 
         async move {
             let res = client1_pm

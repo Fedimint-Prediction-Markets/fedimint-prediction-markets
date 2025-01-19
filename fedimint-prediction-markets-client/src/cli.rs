@@ -51,7 +51,7 @@ enum Opts {
         id: OrderId,
     },
     WithdrawAvailableBitcoin,
-    SyncPossiblePayouts {
+    SyncPayouts {
         #[clap(short, long)]
         market_txid: Option<TransactionId>,
     },
@@ -243,9 +243,9 @@ pub async fn handle_cli_command(
 
             json!(res)
         }
-        Opts::SyncPossiblePayouts { market_txid } => {
+        Opts::SyncPayouts { market_txid } => {
             let res = prediction_markets
-                .sync_possible_payouts(market_txid.map(|v| market_outpoint_from_tx_id(v)))
+                .sync_payouts(market_txid.map(|v| market_outpoint_from_tx_id(v)))
                 .await?;
 
             json!(res)

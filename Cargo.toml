@@ -29,7 +29,7 @@ futures = "0.3.30"
 rand = "0.8.5"
 secp256k1 = "0.27.0"
 serde = { version = "1.0.203", features = ["derive"] }
-serde_json = { version = "1.0.120" }
+serde_json = { version = "1.0.132" }
 strum = "0.26"
 strum_macros = "0.26"
 thiserror = "1.0.61"

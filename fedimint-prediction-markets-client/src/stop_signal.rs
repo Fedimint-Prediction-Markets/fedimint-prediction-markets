@@ -8,8 +8,10 @@ pub fn new() -> (Sender, Reciever) {
     (Sender(tx), Reciever(rx))
 }
 
+#[derive(Debug)]
 pub struct Reciever(pub mpsc::Receiver<CloseConfirmationWrapper>);
 
+#[derive(Debug)]
 pub struct Sender(mpsc::Sender<CloseConfirmationWrapper>);
 impl Sender {
     pub async fn wait_close(self) -> anyhow::Result<()> {
@@ -21,6 +23,7 @@ impl Sender {
     }
 }
 
+#[derive(Debug)]
 pub struct CloseConfirmationWrapper(mpsc::Sender<()>);
 impl Drop for CloseConfirmationWrapper {
     fn drop(&mut self) {

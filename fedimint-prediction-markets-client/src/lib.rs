@@ -1,9 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::future::Future;
 use std::iter;
-use std::pin::Pin;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{anyhow, bail};
@@ -75,7 +74,10 @@ pub struct PredictionMarketsClientModule {
     db: Database,
     module_api: DynModuleApi,
 
-    new_order_broadcast: Arc<(broadcast::Sender<OrderId>, broadcast::Receiver<OrderId>)>,
+    new_order_broadcast: (broadcast::Sender<OrderId>, broadcast::Receiver<OrderId>),
+
+    watch_matches_id_incrementor: AtomicU64,
+    watch_matches_stop_map: Mutex<HashMap<u64, Vec<stop_signal::Sender>>>,
 }
 
 /// Data needed by the state machine
@@ -113,8 +115,6 @@ impl ClientModuleInit for PredictionMarketsClientInit {
     }
 
     async fn init(&self, args: &ClientModuleInitArgs<Self>) -> anyhow::Result<Self::Module> {
-        let new_order_broadcast = Arc::new(broadcast::channel(100));
-
         Ok(PredictionMarketsClientModule {
             cfg: args.cfg().to_owned(),
             root_secret: args.module_root_secret().to_owned(),
@@ -123,7 +123,10 @@ impl ClientModuleInit for PredictionMarketsClientInit {
             db: args.db().to_owned(),
             module_api: args.module_api().to_owned(),
 
-            new_order_broadcast,
+            new_order_broadcast: broadcast::channel(100),
+
+            watch_matches_id_incrementor: AtomicU64::new(0),
+            watch_matches_stop_map: Mutex::new(HashMap::new()),
         })
     }
 }
@@ -595,38 +598,30 @@ impl PredictionMarketsClientModule {
         Self::stream_order_from_db_internal(db, id).await
     }
 
-    pub async fn stream_orders_from_db<'a>(
-        &self,
-        filter: OrderFilter,
-    ) -> BoxStream<'a, (OrderId, BoxStream<'a, Option<Order>>)> {
+    pub async fn stream_order_ids<'a>(&self, filter: OrderFilter) -> BoxStream<'a, OrderId> {
         let db = self.db.clone();
         let mut new_order_reciever = self.new_order_broadcast.0.subscribe();
 
-        let mut orders_to_stream =
+        let initial_orders =
             Self::get_order_ids(&mut db.begin_transaction_nc().await, filter).await;
-        let stream = Box::pin(stream! {
+
+        Box::pin(stream! {
+            for order_id in initial_orders.iter() {
+                yield *order_id;
+            }
+
             loop {
-                while let Some(order_id) = orders_to_stream.pop_first() {
-                    let stream = Self::stream_order_from_db_internal(db.clone(), order_id).await;
-
-                    yield (order_id, stream);
-                }
-
-                select! {
-                    res = new_order_reciever.recv() => {
-                        if let Ok(order_id) = res {
-                            let mut dbtx = db.begin_transaction_nc().await;
-                            let order = dbtx.get_value(&db::OrderKey(order_id)).await.unwrap().to_order().unwrap();
-                            if filter.filter(&order) {
-                                orders_to_stream.insert(order_id);
-                            }
+                if let Ok(order_id) = new_order_reciever.recv().await {
+                    if !initial_orders.contains(&order_id) {
+                        let mut dbtx = db.begin_transaction_nc().await;
+                        let order = dbtx.get_value(&db::OrderKey(order_id)).await.unwrap().to_order().unwrap();
+                        if filter.filter(&order) {
+                            yield order_id;
                         }
                     }
                 }
             }
-        });
-
-        stream
+        })
     }
 
     pub async fn cancel_order(&self, order_id: OrderId) -> anyhow::Result<()> {
@@ -746,10 +741,7 @@ impl PredictionMarketsClientModule {
     }
 
     /// TODO docs
-    pub async fn sync_possible_payouts(
-        &self,
-        market_specifier: Option<OutPoint>,
-    ) -> anyhow::Result<()> {
+    pub async fn sync_payouts(&self, market_specifier: Option<OutPoint>) -> anyhow::Result<()> {
         let mut dbtx = self.db.begin_transaction().await;
 
         let markets_to_check_payout: BTreeSet<_> = match market_specifier {
@@ -798,7 +790,7 @@ impl PredictionMarketsClientModule {
         Ok(())
     }
 
-    pub async fn sync_possible_order_matches(&self, order_path: OrderPath) -> anyhow::Result<()> {
+    pub async fn sync_matches(&self, order_path: OrderPath) -> anyhow::Result<()> {
         let active_quantiy_orders: BTreeSet<_> = Self::get_order_ids(
             &mut self.db.begin_transaction_nc().await,
             OrderFilter(order_path, OrderState::NonZeroQuantityWaitingForMatch),
@@ -813,10 +805,7 @@ impl PredictionMarketsClientModule {
         Ok(())
     }
 
-    pub async fn watch_for_order_matches(
-        &self,
-        order_path: OrderPath,
-    ) -> anyhow::Result<Pin<Box<dyn Future<Output = anyhow::Result<()>>>>> {
+    pub async fn start_watch_matches(&self, order_path: OrderPath) -> anyhow::Result<u64> {
         let mut watch_args = Vec::new();
         match order_path {
             OrderPath::All => unimplemented!(),
@@ -873,21 +862,33 @@ impl PredictionMarketsClientModule {
             }
             bail!("failed initialization of order match watchers")
         }
-        let stop_future = Box::pin(async move {
-            let mut last_error = None;
-            for s in close_signals {
-                if let Err(e) = s.wait_close().await {
-                    last_error = Some(e);
-                }
-            }
-            if let Some(e) = last_error {
-                bail!("failed to stop 1 or more watchers: {e}")
-            }
+        let id = self
+            .watch_matches_id_incrementor
+            .fetch_add(1, Ordering::Relaxed);
+        self.watch_matches_stop_map
+            .lock()
+            .unwrap()
+            .insert(id, close_signals);
 
-            Ok(())
-        });
+        Ok(id)
+    }
 
-        Ok(stop_future)
+    pub async fn stop_watch_matches(&self, id: u64) -> anyhow::Result<()> {
+        let Some(close_signals) = self.watch_matches_stop_map.lock().unwrap().remove(&id) else {
+            bail!("close signals attached to id could not be found.")
+        };        
+
+        let mut last_error = None;
+        for s in close_signals {
+            if let Err(e) = s.wait_close().await {
+                last_error = Some(e);
+            }
+        }
+        if let Some(e) = last_error {
+            bail!("failed to stop 1 or more watchers: {e}")
+        }
+
+        Ok(())
     }
 
     /// Scans for all orders that the client owns.
@@ -1441,7 +1442,7 @@ impl PredictionMarketsClientModule {
         let mut new_order_reciever = self.new_order_broadcast.0.subscribe();
         let (stop_tx, mut stop_rx) = stop_signal::new();
 
-        self.sync_possible_order_matches(OrderPath::MarketOutcomeSide {
+        self.sync_matches(OrderPath::MarketOutcomeSide {
             market,
             outcome,
             side,
